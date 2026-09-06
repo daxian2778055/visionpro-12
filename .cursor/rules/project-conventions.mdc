@@ -1,0 +1,49 @@
+---
+description: 项目核心约定 - 相机使能、布局、线程安全
+globs: **/*.cs
+alwaysApply: false
+---
+
+# 项目核心约定
+
+本项目的所有 `.cs` 文件应遵循以下约定。
+
+## 1. 相机使能规则（配置窗按钮）
+
+相机使能按钮必须保持 **从1到12连续使能，中间最多只能有一个"缺口"（禁用的相机）**。
+
+- **思路**：相机1始终可见。找到第一个被禁用的相机N，N的按钮保留显示"屏蔽中"，N+1~12的所有按钮隐藏。
+- **位置**：`UpdateEnableButtonsVisibility()` 集中管理此逻辑，所有使能按钮点击后和`display()`中均需调用。
+
+## 2. 布局规则（tableLayoutPanel1）
+
+`tableLayoutPanel1` 的布局根据使能相机数动态调整：
+- **1个相机**：全屏（`SetRowSpan(4)` + `SetColumnSpan(3)`）
+- **2个相机**：1×2上下排列（column只有1列生效，row 0给cam1，row 1给cam2）
+- **3~4个相机**：2×2
+- **5~6个相机**：2×3
+- **7~9个相机**：3×3（第4行隐藏 `RowStyle(SizeType.Absolute, 0F)`）
+- **10~12个相机**：4×3（所有行均分）
+
+## 3. 线程安全
+
+- **cogRecordDisplay 操作**：必须在UI线程执行（使用 `BeginInvoke` 或 `Invoke`）
+- **跨线程访问**：通过 `InvokeRequired` 判断，用 `this.Invoke()` 封送
+- **`++m_nFrames`**：使用 `Interlocked.Increment` 保证线程安全
+- **计数器 `camera_sum`**：统计被屏蔽的相机数（不是使能数），只在 `display()` 中使用
+
+## 4. 相机使能UI按钮
+
+配置窗里的相机使能按钮（`button18`~`button84`）点击后需调用：
+- `UpdateTabNavVisibility()` — 刷新导航栏（如果使用）
+- `UpdateEnableButtonsVisibility()` — 刷新使能按钮间的连续可见性
+
+### 使能按钮连续规则
+
+`UpdateEnableButtonsVisibility()` 中：
+- 找到第一个 `myjobs[i].en == 0` 的相机N，N的按钮保留可见显示"N屏蔽中"
+- N+1~12的所有按钮**隐藏**，同时强制设置 `myjobs[x].en = 0`、文字改为"x屏蔽中"
+- 这是为了保证：重新启用某个中间相机时，后续第一个禁用相机正确显示
+
+例如：使能1~7，点禁用cam2 → cam2~12全变屏蔽中，cam3~12隐藏且en=0
+→ 再点使能cam2 → cam3作为新缺口正确显示"3屏蔽中"

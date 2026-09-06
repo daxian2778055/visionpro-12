@@ -1,0 +1,31 @@
+# ===== 构建输出 =====
+bin/
+obj/
+
+# ===== IDE / 用户配置 =====
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# ===== 运行时产物（随时可重新生成） =====
+Log/
+CrashDumps/
+
+# ===== NuGet 包（可由 packages.config 还原，不入库） =====
+packages/
+
+# ===== 备份 / 临时 / 升级日志 =====
+_refactor_backup/
+_deleted_mes_db_backup/
+*.bak
+*.log
+*.tmp
+UpgradeLog*.htm
+
+# ===== 编辑器/IDE 元数据 =====
+.reasonix/
+
+# ===== 安装包 / 发布产物（体积大，不应入库） =====
+Setup2/Debug/

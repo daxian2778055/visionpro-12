@@ -1,0 +1,8 @@
+* text=auto 
+*.cs text eol=crlf 
+*.csproj text eol=crlf 
+*.sln text eol=crlf 
+*.resx text eol=crlf 
+*.txt text eol=crlf 
+*.ini text eol=crlf 
+*.toml text eol=crlf
