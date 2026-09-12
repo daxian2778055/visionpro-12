@@ -79,7 +79,20 @@ namespace WindowsFormsApplication1
         public void UpdatePollCell(int row, string value) { CommGridHelper.SetPollCell(_gridUi, fins_data, row, value); }
         public void RaiseSelectionChanged(string dataVal, string camKey, string third, int linkId)
         {
-            if (getData != null) getData(this, new SelectionChangedEventArgs(dataVal, camKey) { LinkId = linkId });
+            if (getData == null) return;
+            var args = new SelectionChangedEventArgs(dataVal, camKey) { LinkId = linkId };
+            // ★A3 修复：本方法由轮询线程调用。直接同步派发会让订阅方（Form1 的触发/切型处理器）
+            // 在后台线程上操作 UI 与共享状态，并把轮询线程拖在 UI 线程上。有窗口句柄时改投递到 UI 线程执行。
+            if (IsHandleCreated && InvokeRequired)
+            {
+                try
+                {
+                    BeginInvoke(new Action(() => { if (getData != null) getData(this, args); }));
+                    return;
+                }
+                catch { }
+            }
+            getData(this, args);
         }
 
         /// <summary>

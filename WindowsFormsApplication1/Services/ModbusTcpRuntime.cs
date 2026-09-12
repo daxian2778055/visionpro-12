@@ -123,6 +123,8 @@ namespace WindowsFormsApplication1
             if (Context == null)
             {
                 if (_host.PollThread != null && _host.PollThread.IsAlive) return;
+                // ★A2 修复：必须复位停止标志，否则"停止后再启动"的新线程会在 while(!StopRequested) 处立即退出
+                _host.StopRequested = false;
                 _host.PollThread = new Thread(new ThreadStart(_host.RunPollLoop));
                 _host.PollThread.IsBackground = true;
                 _host.PollThread.Start();
@@ -144,15 +146,23 @@ namespace WindowsFormsApplication1
             {
                 _host.StopRequested = true;
                 Thread t = _host.PollThread;
-                if (t != null) { try { t.Join(1000); } catch { } }
-                _host.PollThread = null;
+                if (t != null)
+                {
+                    try { t.Join(1000); } catch { }
+                    // ★A2 修复：只有线程确实退出才释放引用。Join 超时仍存活时保留引用，
+                    // 否则"旧线程还在跑却失去引用"，再次 Start 会起出第二条轮询线程（重复触发）。
+                    if (!t.IsAlive) _host.PollThread = null;
+                }
             }
             else
             {
                 _stopPolling = true;
                 Thread t = _pollThread;
-                if (t != null) { try { t.Join(1000); } catch { } }
-                _pollThread = null;
+                if (t != null)
+                {
+                    try { t.Join(1000); } catch { }
+                    if (!t.IsAlive) _pollThread = null;
+                }
             }
         }
 

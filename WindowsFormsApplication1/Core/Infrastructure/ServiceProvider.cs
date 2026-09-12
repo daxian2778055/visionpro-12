@@ -52,20 +52,31 @@ namespace WindowsFormsApplication1.Core.Infrastructure
 
         private bool TryResolveInternal(Type type, out object instance)
         {
+            // ★ N2：工厂执行移到锁外，避免持锁调用用户工厂导致跨线程嵌套 Resolve 死锁。
+            //   持锁只做字典查找 + 写缓存；工厂在锁外执行，写缓存时幂等单例化
+            //   （并发重复解析时后写覆盖，值一致，语义不变）。
             lock (_sync)
             {
                 if (_singletons.TryGetValue(type, out instance)) return true;
+            }
 
-                Func<object> factory;
-                if (_factories.TryGetValue(type, out factory))
+            Func<object> factory;
+            lock (_sync)
+            {
+                if (_singletons.TryGetValue(type, out instance)) return true; // 双检：其它线程可能已创建
+                if (!_factories.TryGetValue(type, out factory))
                 {
-                    instance = factory();
-                    _singletons[type] = instance; // 首次解析后单例化
-                    return true;
+                    instance = null;
+                    return false;
                 }
             }
-            instance = null;
-            return false;
+
+            instance = factory();          // 锁外执行用户工厂
+            lock (_sync)                   // 写缓存
+            {
+                _singletons[type] = instance;
+            }
+            return true;
         }
 
         /// <summary>

@@ -48,7 +48,10 @@ namespace WindowsFormsApplication1
         /// <summary>建链超时（毫秒）。默认 3000，防止不可达/半开网关时同步阻塞卡死调用线程。</summary>
         public int ConnectTimeOutMs { get; set; } = 3000;
 
-        public bool IsConnected { get { return Client != null; } }
+        // ★A1 修复：以 ConnectServer 的真实结果为准（旧实现 "Client != null" 会把建链失败误判为已连接）。
+        private volatile bool _connected;
+
+        public bool IsConnected { get { return _connected; } }
 
         /// <summary>
         /// 用当前参数创建客户端并连接。等价于原 button1_Click 中的建链逻辑。
@@ -59,6 +62,7 @@ namespace WindowsFormsApplication1
             try
             {
                 Close();
+                ReleaseClient();          // ★B2：丢弃旧客户端，避免反复建链泄漏
                 Client = new OmronFinsNet();
                 Client.IpAddress = Ip;
                 Client.Port = Port;
@@ -67,10 +71,13 @@ namespace WindowsFormsApplication1
                 Client.ConnectTimeOut = ConnectTimeOutMs;   // ★ 2026-09-11：设置建链超时，避免网关卡顿时长时间挂起
                 if (dataFormat.HasValue)
                     Client.ByteTransform.DataFormat = dataFormat.Value;
-                return Client.ConnectServer();
+                OperateResult result = Client.ConnectServer();
+                _connected = result.IsSuccess;
+                return result;
             }
             catch (Exception ex)
             {
+                _connected = false;
                 return new OperateResult(ex.Message);
             }
         }
@@ -84,19 +91,36 @@ namespace WindowsFormsApplication1
         /// <summary>断开连接。</summary>
         public void Close()
         {
+            _connected = false;
             if (Client == null) return;
             try { Client.ConnectClose(); }
             catch { }
         }
 
+        /// <summary>★B2：释放并丢弃旧客户端（避免 FormOmron 构造时预建 / 反复建链造成的实例泄漏）。</summary>
+        private void ReleaseClient()
+        {
+            OmronFinsNet old = Client;
+            Client = null;
+            if (old == null) return;
+            try { old.ConnectClose(); } catch { }
+            var disposable = old as IDisposable;
+            if (disposable != null) { try { disposable.Dispose(); } catch { } }
+        }
+
         /// <summary>重连：先关再连。</summary>
         public bool Reconnect()
         {
-            if (Client == null) return false;
+            if (Client == null) { _connected = false; return false; }
             try { Client.ConnectClose(); }
             catch { }
-            try { return Client.ConnectServer().IsSuccess; }
-            catch { return false; }
+            try
+            {
+                bool ok = Client.ConnectServer().IsSuccess;
+                _connected = ok;
+                return ok;
+            }
+            catch { _connected = false; return false; }
         }
     }
 }

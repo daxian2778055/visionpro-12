@@ -49,7 +49,9 @@ namespace WindowsFormsApplication1
         // 当前嵌入的是否为“仅配置”编辑器（是则切换时只 Hide+Remove，不恢复顶级）。
         private bool _currentIsEditor = false;
         // 已挂滚轮转发的事件源集合：同一嵌入窗体（尤其连接 1 共享单例）反复切换只挂一次，防止滚轮事件多播叠加。
+        // ★B1：控件 Dispose 时会从集合移除（见 WheelHookedControlDisposed），故访问统一加锁。
         private readonly HashSet<Control> _wheelHooked = new HashSet<Control>();
+        private readonly object _wheelSync = new object();
         // 连接 1 直接嵌入 CommunicationService.Omron 单例。
         private Form _finsConn1Host;
         // Modbus-TCP / Modbus-RTU 各 1 路主连接：直接嵌入 CommunicationService 中的对应单例窗口（阶段 6）。
@@ -808,10 +810,23 @@ namespace WindowsFormsApplication1
             CollectScrollChildren(root, list);
             foreach (var c in list)
             {
-                if (_wheelHooked.Contains(c)) continue;
-                _wheelHooked.Add(c);
+                bool added;
+                lock (_wheelSync) { added = _wheelHooked.Add(c); }
+                if (!added) continue;
                 c.MouseWheel += HostMouseWheel;
+                // ★B1 修复：控件被释放时自动从登记表移除。
+                // 旧实现只 Add 从不 Remove，已 Dispose 的子窗体控件被 HashSet 长期强引用，阻止 GC（内存泄漏）。
+                c.Disposed += WheelHookedControlDisposed;
             }
+        }
+
+        /// <summary>★B1：被登记控件释放时自动反注册，避免强引用泄漏。</summary>
+        private void WheelHookedControlDisposed(object sender, EventArgs e)
+        {
+            var c = sender as Control;
+            if (c == null) return;
+            try { c.MouseWheel -= HostMouseWheel; } catch { }
+            lock (_wheelSync) { _wheelHooked.Remove(c); }
         }
 
         private static void CollectScrollChildren(Control c, List<Control> list)

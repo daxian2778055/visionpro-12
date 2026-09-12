@@ -143,10 +143,20 @@ namespace WindowsFormsApplication1
         private Dictionary<int, ModbusRtuRuntime> _runtimes = new Dictionary<int, ModbusRtuRuntime>();
 
         // 多连接 child host（阶段 7，仿 FormOmron/FormModbus）：连接 1 主窗体登记各连接整窗实例，对外 API 按 linkId 路由到对应 child。
-        private Dictionary<int, FormModbusRtu> _childLinks = new Dictionary<int, FormModbusRtu>();
+        // ★A4 修复：该字典会被 UI 线程（注册/注销）与轮询线程（路由查询）并发访问，必须加锁（对齐 FormOmron）。
+        private readonly Dictionary<int, FormModbusRtu> _childLinks = new Dictionary<int, FormModbusRtu>();
+        private readonly object _childLinksSync = new object();
 
-        internal void RegisterChildLink(int linkId, FormModbusRtu host) { _childLinks[linkId] = host; }
-        internal void UnregisterChildLink(int linkId) { _childLinks.Remove(linkId); }
+        internal void RegisterChildLink(int linkId, FormModbusRtu host)
+        {
+            if (host == null) return;
+            lock (_childLinksSync) { _childLinks[linkId] = host; }
+        }
+
+        internal void UnregisterChildLink(int linkId)
+        {
+            lock (_childLinksSync) { _childLinks.Remove(linkId); }
+        }
 
         // ---- 阶段 7 补强：多连接触发/切方案的按连接访问器（对齐 FormModbus / FormOmron，供 Form1 处理器按 linkId 路由） ----
 
@@ -184,8 +194,10 @@ namespace WindowsFormsApplication1
         public bool CanWriteResultOutput()
         {
             if (fins_en && chushihua) return true;
-            foreach (var kv in _childLinks)
-                if (kv.Value != null && kv.Value.fins_en && kv.Value.chushihua) return true;
+            List<FormModbusRtu> children;
+            lock (_childLinksSync) { children = new List<FormModbusRtu>(_childLinks.Values); }
+            foreach (var child in children)
+                if (child != null && child.fins_en && child.chushihua) return true;
             return false;
         }
 
@@ -193,7 +205,11 @@ namespace WindowsFormsApplication1
         private FormModbusRtu ResolveLinkHost(int linkId)
         {
             if (linkId == 1) return this;
-            return _childLinks.ContainsKey(linkId) ? _childLinks[linkId] : null;
+            lock (_childLinksSync)
+            {
+                FormModbusRtu host;
+                return _childLinks.TryGetValue(linkId, out host) ? host : null;
+            }
         }
 
         // ===== ICommRuntimeHost 实现（阶段 4-B）：引擎通过它回调轮询循环、读写停止标志与线程句柄 =====
@@ -219,7 +235,20 @@ namespace WindowsFormsApplication1
         public void UpdatePollCell(int row, string value) { CommGridHelper.SetPollCell(_gridUi, fins_data, row, value); }
         public void RaiseSelectionChanged(string dataVal, string camKey, string third, int linkId)
         {
-            if (getData != null) getData(this, new SelectionChangedEventArgs(dataVal, camKey, third, linkId));
+            if (getData == null) return;
+            var args = new SelectionChangedEventArgs(dataVal, camKey, third, linkId);
+            // ★A3 修复：本方法由轮询线程调用。直接同步派发会让订阅方（Form1 的触发/切型处理器）
+            // 在后台线程上操作 UI 与共享状态，并把轮询线程拖在 UI 线程上。有窗口句柄时改投递到 UI 线程执行。
+            if (IsHandleCreated && InvokeRequired)
+            {
+                try
+                {
+                    BeginInvoke(new Action(() => { if (getData != null) getData(this, args); }));
+                    return;
+                }
+                catch { }
+            }
+            getData(this, args);
         }
         public void WriteTriggerFeedback(string[] block, string value, ref int xuanzhong, ref string fins)
         {

@@ -76,7 +76,8 @@ namespace WindowsFormsApplication1
                     "port=" + txtPort.Text.Trim(),
                     "user=" + txtUser.Text.Trim(),
                     "database=" + txtDatabase.Text.Trim(),
-                    "rememberpwd=" + (chkRemember.Checked ? "1" : "0")
+                    "rememberpwd=" + (chkRemember.Checked ? "1" : "0"),
+                    "ssl_enabled=" + (chkSsl.Checked ? "1" : "0")
                 };
                 if (chkRemember.Checked && !string.IsNullOrEmpty(txtPwd.Text))
                     lines.Add("pwd_enc=" + Protect(txtPwd.Text));   // ★ 2026-09-11：改 DPAPI 加密写盘，不再明文保存口令
@@ -107,6 +108,7 @@ namespace WindowsFormsApplication1
                             break;
                         case "pwd": txtPwd.Text = v; break;
                         case "rememberpwd": chkRemember.Checked = (v == "1"); break;
+                        case "ssl_enabled": chkSsl.Checked = (v == "1"); break;
                     }
                 }
                 // 未勾选记住密码时不回填密码
@@ -178,8 +180,11 @@ namespace WindowsFormsApplication1
                 UserID = txtUser.Text.Trim(),
                 Password = txtPwd.Text,
                 Database = txtDatabase.Text.Trim(),
-                SslMode = MySqlSslMode.None,
-                AllowUserVariables = true
+                // ★ S2：SSL 由界面上的"启用SSL"复选框决定，默认不勾选（兼容内网部署）；
+                //   勾选后强制 TLS。
+                SslMode = chkSsl.Checked ? MySqlSslMode.Required : MySqlSslMode.None,
+                // ★ S2：关闭用户变量通道——仅允许可信 SQL，降低注入/篡改面
+                AllowUserVariables = false
             };
             return b.ConnectionString;
         }

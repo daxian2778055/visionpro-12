@@ -49,7 +49,12 @@ namespace WindowsFormsApplication1
         /// </summary>
         public ModbusTcpNet Client { get; set; }
 
-        public bool IsConnected { get { return Client != null; } }
+        // ★A1 修复：以 ConnectServer 的真实结果为准。
+        // 旧实现是 "Client != null"，而 Connect 先赋值 Client 再 ConnectServer，
+        // 导致建链失败时仍被判为"已连接"。
+        private volatile bool _connected;
+
+        public bool IsConnected { get { return _connected; } }
 
         /// <summary>
         /// 用当前参数创建客户端并连接。等价于原 button1_Click 中的建链逻辑。
@@ -61,6 +66,7 @@ namespace WindowsFormsApplication1
             try
             {
                 Close();
+                ReleaseClient();          // ★B2：丢弃旧客户端，避免反复建链泄漏 Socket/心跳线程
                 Client = new ModbusTcpNet(Ip, Port, Station);
                 Client.AddressStartWithZero = AddressStartWithZero;
                 Client.SetLoginAccount(UserName, Password);
@@ -68,10 +74,13 @@ namespace WindowsFormsApplication1
                     Client.DataFormat = dataFormat.Value;
                 Client.IsStringReverse = IsStringReverse;
                 Client.ConnectTimeOut = 3000;   // 2026-09-06：3 秒超时，防止同步建链阻塞 UI
-                return Client.ConnectServer();
+                OperateResult result = Client.ConnectServer();
+                _connected = result.IsSuccess;
+                return result;
             }
             catch (Exception ex)
             {
+                _connected = false;
                 return new OperateResult(ex.Message);
             }
         }
@@ -85,20 +94,37 @@ namespace WindowsFormsApplication1
         /// <summary>断开连接。原实现直接调 ConnectClose，此处补了空引用保护，其余等价。</summary>
         public void Close()
         {
+            _connected = false;
             if (Client == null) return;
             try { Client.ConnectClose(); }
             catch { }
         }
 
+        /// <summary>★B2：释放并丢弃旧客户端（Hsl 客户端持有 Socket 等资源，反复建链不释放会泄漏）。</summary>
+        private void ReleaseClient()
+        {
+            ModbusTcpNet old = Client;
+            Client = null;
+            if (old == null) return;
+            try { old.ConnectClose(); } catch { }
+            var disposable = old as IDisposable;
+            if (disposable != null) { try { disposable.Dispose(); } catch { } }
+        }
+
         /// <summary>重连：先关再连。等价于原 PerformReconnectCore。</summary>
         public bool Reconnect()
         {
-            if (Client == null) return false;
+            if (Client == null) { _connected = false; return false; }
             try { Client.ConnectClose(); }
             catch { }
             Client.ConnectTimeOut = 3000;   // 2026-09-06：统一 3 秒超时
-            try { return Client.ConnectServer().IsSuccess; }
-            catch { return false; }
+            try
+            {
+                bool ok = Client.ConnectServer().IsSuccess;
+                _connected = ok;
+                return ok;
+            }
+            catch { _connected = false; return false; }
         }
     }
 }

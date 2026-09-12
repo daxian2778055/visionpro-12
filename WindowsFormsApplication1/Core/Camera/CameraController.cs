@@ -47,40 +47,49 @@ namespace WindowsFormsApplication1.Core.Camera
 
         /// <summary>
         /// 释放全部 12 路相机：停止抓流 → 关闭设备 → 销毁句柄，并清空槽位。
-        /// <para>逐路、逐操作容错：某一步失败不影响其它路；已为空的槽位直接跳过（可重复调用）。</para>
-        /// <para>★ 与 Form1 原先的三处手写循环语义一致，仅把"释放所有权"收口到本类。</para>
+        /// <para>
+        /// ★ 性能修复（三阶段批量）：旧实现 12 路逐路 Sleep（最坏 12×150ms=1.8s 阻塞 UI 线程），
+        /// 改为三阶段批量：Phase1 12 路 StopGrabbing → 统一 Sleep(stopSleepMs) →
+        /// Phase2 12 路 CloseDevice → 统一 Sleep(closeSleepMs) →
+        /// Phase3 12 路 DestroyDevice + 清空槽位。总耗时从 1.8s 降到 150ms。
+        /// 每阶段内 SDK P/Invoke 调用本身 &lt;1ms/路，瓶颈全在等待 SDK 回调线程退出，
+        /// 批量执行等价于"让所有相机的回调线程同时退场"。
+        /// </para>
+        /// <para>逐路逐操作容错：某一步失败不影响其它路；已为空的槽位自动跳过（可重复调用）。</para>
         /// </summary>
-        /// <param name="stopSleepMs">停止抓流后等待 SDK 回调线程退出的时间（毫秒，0=不等待）。</param>
-        /// <param name="closeSleepMs">关闭设备后等待时间（毫秒，0=不等待）。</param>
+        /// <param name="stopSleepMs">停止抓流后统一等待 SDK 回调线程退出的时间（毫秒，0=不等待）。</param>
+        /// <param name="closeSleepMs">关闭设备后统一等待时间（毫秒，0=不等待）。</param>
         /// <returns>实际释放的路数。</returns>
         public int ReleaseAllCameras(int stopSleepMs = 100, int closeSleepMs = 50)
         {
             int released = 0;
+
+            // Phase 1：停止所有相机的抓流
             for (int i = 0; i < _cameras.Length; i++)
             {
                 MyCamera cam = _cameras[i];
                 if (cam == null) continue;
+                try { cam.MV_CC_StopGrabbing_NET(); } catch { }
+            }
+            if (stopSleepMs > 0) Thread.Sleep(stopSleepMs);
 
-                try
-                {
-                    // 1. 停止抓流（未在抓流的相机调用此接口只会返回错误码，不会抛异常）
-                    try { cam.MV_CC_StopGrabbing_NET(); } catch { }
-                    if (stopSleepMs > 0) Thread.Sleep(stopSleepMs);
+            // Phase 2：关闭所有设备
+            for (int i = 0; i < _cameras.Length; i++)
+            {
+                MyCamera cam = _cameras[i];
+                if (cam == null) continue;
+                try { cam.MV_CC_CloseDevice_NET(); } catch { }
+            }
+            if (closeSleepMs > 0) Thread.Sleep(closeSleepMs);
 
-                    // 2. 关闭设备
-                    try { cam.MV_CC_CloseDevice_NET(); } catch { }
-                    if (closeSleepMs > 0) Thread.Sleep(closeSleepMs);
-
-                    // 3. 销毁设备对象（MyCamera.Dispose 内亦为幂等实现）
-                    try { cam.MV_CC_DestroyDevice_NET(); } catch { }
-
-                    released++;
-                }
-                catch { }
-                finally
-                {
-                    _cameras[i] = null;
-                }
+            // Phase 3：销毁所有句柄 + 清空槽位
+            for (int i = 0; i < _cameras.Length; i++)
+            {
+                MyCamera cam = _cameras[i];
+                if (cam == null) continue;
+                try { cam.MV_CC_DestroyDevice_NET(); } catch { }
+                _cameras[i] = null;
+                released++;
             }
             return released;
         }

@@ -40,6 +40,7 @@ namespace WindowsFormsApplication1
             this.label5 = new System.Windows.Forms.Label();
             this.txtDatabase = new System.Windows.Forms.TextBox();
             this.chkRemember = new System.Windows.Forms.CheckBox();
+            this.chkSsl = new System.Windows.Forms.CheckBox();
             this.btnConnect = new System.Windows.Forms.Button();
             this.txtSql = new System.Windows.Forms.TextBox();
             this.btnExec = new System.Windows.Forms.Button();
@@ -52,6 +53,7 @@ namespace WindowsFormsApplication1
             // 
             // gbConn
             // 
+            this.gbConn.Controls.Add(this.chkSsl);
             this.gbConn.Controls.Add(this.chkRemember);
             this.gbConn.Controls.Add(this.label5);
             this.gbConn.Controls.Add(this.txtDatabase);
@@ -161,6 +163,16 @@ namespace WindowsFormsApplication1
             this.chkRemember.Text = "记住密码";
             this.chkRemember.UseVisualStyleBackColor = true;
             // 
+            // chkSsl
+            // 
+            this.chkSsl.AutoSize = true;
+            this.chkSsl.Location = new System.Drawing.Point(300, 52);
+            this.chkSsl.Name = "chkSsl";
+            this.chkSsl.Size = new System.Drawing.Size(110, 16);
+            this.chkSsl.TabIndex = 15;
+            this.chkSsl.Text = "启用SSL(内网可关)";
+            this.chkSsl.UseVisualStyleBackColor = true;
+            // 
             // btnConnect
             // 
             this.btnConnect.Location = new System.Drawing.Point(632, 12);
@@ -266,6 +278,7 @@ namespace WindowsFormsApplication1
         private System.Windows.Forms.TextBox txtDatabase;
         private System.Windows.Forms.Button btnConnect;
         private System.Windows.Forms.CheckBox chkRemember;
+        private System.Windows.Forms.CheckBox chkSsl;
         private System.Windows.Forms.TextBox txtSql;
         private System.Windows.Forms.Button btnExec;
         private System.Windows.Forms.Button btnExport;

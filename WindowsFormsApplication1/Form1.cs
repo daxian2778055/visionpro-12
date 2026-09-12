@@ -159,7 +159,14 @@ namespace WindowsFormsApplication1
             //  this.skinEngine1 = new Sunisoft.IrisSkin.SkinEngine(((System.ComponentModel.Component)(this)));
             // this.skinEngine1.SkinFile = Application.StartupPath + "//Skins//GlassGreen.ssk";
             // skinEngine1.DisableTag = 9999;      //设置不需要被渲染的控件Tag值为9999
+            // ★ S3 分阶段守卫：Debug 保留 WinForms 跨线程校验（后台线程误改 UI 会立即抛异常暴露 bug），
+            //   Release 维持原有"关闭校验"行为（不改变已部署产线的运行表现）。
+            //   待 12 路检测线程改 UI 的调用点全部套 BeginInvoke 收口后，可移除 #if 让 Release 也开启校验。
+#if DEBUG
+            System.Windows.Forms.Control.CheckForIllegalCrossThreadCalls = true;
+#else
             System.Windows.Forms.Control.CheckForIllegalCrossThreadCalls = false;
+#endif
             // 初始化相机作业数组，便于按索引访问（现由 JobService 持有，已在组合根构建）
             tbExposure = new TextBox[] { tbExposure1, tbExposure2, tbExposure3, tbExposure4, tbExposure5, tbExposure6, tbExposure7, tbExposure8, tbExposure9, tbExposure10, tbExposure11, tbExposure12 };
             // 相机渲染控件按索引访问，用于收口渲染界面块（_cogDisplay[0] 对应相机1）

@@ -35,6 +35,10 @@ namespace WindowsFormsApplication1
         public FormModbus(int linkId)
         {
             _linkId = linkId;
+            // ★D1 修复：把连接号同步给底层连接对象。
+            // 旧实现只设了窗体的 _linkId，而 Fins_duxie 派发触发事件时用的是 _modbusLink.LinkId（恒为默认值 1），
+            // 连接 2~4 的事件里 LinkId 会是错的（目前被 FormCommManager 桥接层用捕获的 link 掩盖）。
+            _modbusLink.LinkId = linkId;
             wdini.ReadINIFile(AppDomain.CurrentDomain.BaseDirectory + "//test.ini");
             InitializeComponent( );
 
@@ -75,7 +79,9 @@ namespace WindowsFormsApplication1
         private Dictionary<int, ModbusTcpRuntime> _runtimes = new Dictionary<int, ModbusTcpRuntime>();
 
         // 多连接 child host（阶段 7，仿 FormOmron）：连接 1 主窗体登记各连接整窗实例，对外 API 按 linkId 路由到对应 child。
-        private Dictionary<int, FormModbus> _childLinks = new Dictionary<int, FormModbus>();
+        // ★A4 修复：本字典会被 UI 线程（注册/注销）与轮询线程（路由查询）并发访问，必须加锁（对齐 FormOmron）。
+        private readonly Dictionary<int, FormModbus> _childLinks = new Dictionary<int, FormModbus>();
+        private readonly object _childLinksSync = new object();
 
         /// <summary>对外暴露本窗体持有的连接实例，供 CommLinkManager 登记与多实例调度。</summary>
         public ModbusTcpLink Link { get { return _modbusLink; } }
@@ -105,7 +111,20 @@ namespace WindowsFormsApplication1
         public void UpdatePollCell(int row, string value) { CommGridHelper.SetPollCell(_gridUi, fins_data, row, value); }
         public void RaiseSelectionChanged(string dataVal, string camKey, string third, int linkId)
         {
-            if (getData != null) getData(this, new SelectionChangedEventArgs(dataVal, camKey, third, linkId));
+            if (getData == null) return;
+            var args = new SelectionChangedEventArgs(dataVal, camKey, third, linkId);
+            // ★A3 修复：本方法由轮询线程调用。直接同步派发会让订阅方（Form1 的触发/切型处理器）
+            // 在后台线程上操作 UI 与共享状态，并把轮询线程拖在 UI 线程上。有窗口句柄时改投递到 UI 线程执行。
+            if (IsHandleCreated && InvokeRequired)
+            {
+                try
+                {
+                    BeginInvoke(new Action(() => { if (getData != null) getData(this, args); }));
+                    return;
+                }
+                catch { }
+            }
+            getData(this, args);
         }
         public void WriteTriggerFeedback(string[] block, string value, ref int xuanzhong, ref string fins)
         {
@@ -1381,12 +1400,12 @@ namespace WindowsFormsApplication1
         public void RegisterChildLink(int linkId, FormModbus host)
         {
             if (host == null) return;
-            _childLinks[linkId] = host;
+            lock (_childLinksSync) { _childLinks[linkId] = host; }
         }
 
         public void UnregisterChildLink(int linkId)
         {
-            _childLinks.Remove(linkId);
+            lock (_childLinksSync) { _childLinks.Remove(linkId); }
         }
 
         // ---- 阶段 7 补强：多连接触发/切方案的按连接访问器（对齐 FormOmron，供 Form1 处理器按 linkId 路由） ----
@@ -1425,8 +1444,10 @@ namespace WindowsFormsApplication1
         public bool CanWriteResultOutput()
         {
             if (fins_en && chushihua) return true;
-            foreach (var kv in _childLinks)
-                if (kv.Value != null && kv.Value.fins_en && kv.Value.chushihua) return true;
+            List<FormModbus> children;
+            lock (_childLinksSync) { children = new List<FormModbus>(_childLinks.Values); }
+            foreach (var child in children)
+                if (child != null && child.fins_en && child.chushihua) return true;
             return false;
         }
 
@@ -1434,8 +1455,11 @@ namespace WindowsFormsApplication1
         private FormModbus ResolveLinkHost(int linkId)
         {
             if (linkId <= 1) return this;
-            FormModbus host;
-            if (_childLinks.TryGetValue(linkId, out host) && host != null) return host;
+            lock (_childLinksSync)
+            {
+                FormModbus host;
+                if (_childLinks.TryGetValue(linkId, out host) && host != null) return host;
+            }
             return null;
         }
 
