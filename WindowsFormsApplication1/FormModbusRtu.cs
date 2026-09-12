@@ -69,7 +69,8 @@ namespace WindowsFormsApplication1
         private string fins_mingcheng = "";
         public string zifu;
         public string lujing;
-        public int qiehuanzhong = 0;
+        // ★P2：切型锁会被轮询线程与线程池线程并发读写，必须是 volatile（同 FormModbus）。
+        public volatile int qiehuanzhong = 0;
         ErrorLog MsgErroeLog = new ErrorLog();
         bool fins_lunxunen = false;
         public bool fins_en = false;
@@ -756,6 +757,13 @@ namespace WindowsFormsApplication1
 
             _rtuLink.IsStringReverse = checkBox3.Checked;
 
+            // ★P4：手动建链与后台自动重连互斥，避免两条线程同时 Close/Open 同一个 Hsl 客户端
+            if (System.Threading.Interlocked.CompareExchange(ref _reconnecting, 1, 0) != 0)
+            {
+                Log("正在进行后台自动重连，请稍后再试。");
+                return;
+            }
+
             button1.Enabled = false;   // 2026-09-06：防重复点击
             _connecting = true;
             try
@@ -783,6 +791,7 @@ namespace WindowsFormsApplication1
             finally
             {
                 _connecting = false;
+                System.Threading.Interlocked.Exchange(ref _reconnecting, 0);   // ★P4：释放与自动重连的互斥
             }
         }
 

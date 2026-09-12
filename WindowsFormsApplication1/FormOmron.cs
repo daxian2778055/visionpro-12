@@ -261,7 +261,8 @@ namespace WindowsFormsApplication1
         private string fins_mingcheng = "";
         public string zifu;
         public string lujing;
-        public int qiehuanzhong = 0;
+        // ★P2：切型锁会被轮询线程与线程池线程并发读写，必须是 volatile（同 FormModbus）。
+        public volatile int qiehuanzhong = 0;
 
         public class SelectionChangedEventArgs : EventArgs
         {
@@ -680,10 +681,19 @@ namespace WindowsFormsApplication1
             _finsLink.Port = port;
             _finsLink.SA1 = SA1;
             _finsLink.DA2 = DA2;
+            // ★P4：与后台自动重连互斥，避免两条线程同时操作同一 Hsl 客户端
+            if (System.Threading.Interlocked.CompareExchange(ref _reconnecting, 1, 0) != 0)
+            {
+                Log("正在进行后台自动重连，请稍后再试。");
+                return;
+            }
+
             _connecting = true;
             try
             {
                 var connect = await _finsLink.ConnectAsync( (HslCommunication.Core.DataFormat)comboBox1.SelectedItem );
+                // ★P4：建链动作已完成，立即释放互斥（放在此处而非 UI 回调里，避免回调异常导致永久锁死）
+                System.Threading.Interlocked.Exchange(ref _reconnecting, 0);
                 // 建链在后台线程完成，结果回写 UI 需切回界面线程
                 if (IsDisposed || Disposing) { _connecting = false; return; }
                 BeginInvoke(new Action(() =>
@@ -707,6 +717,7 @@ namespace WindowsFormsApplication1
             catch (Exception ex)
             {
                 _connecting = false;
+                System.Threading.Interlocked.Exchange(ref _reconnecting, 0);   // ★P4：异常也要释放互斥
                 Log( "连接异常: " + ex.Message );
                 try { button1.Enabled = true; } catch { }
             }

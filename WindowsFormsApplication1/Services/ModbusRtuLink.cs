@@ -53,7 +53,12 @@ namespace WindowsFormsApplication1
         /// <summary>底层客户端（收口为属性，原窗体 busRtuClient 字段经代理访问）。</summary>
         public ModbusRtu Client { get; set; }
 
-        public bool IsConnected { get { return Client != null; } }
+        // ★P6：串口无法实时探活，但至少要反映"已成功打开过且未断开"。
+        // 旧实现 "Client != null" 在 Close() 之后仍返回 true（Connect 是 Open() 成功后才赋 Client，
+        // 所以并不存在"建链失败被误判为已连接"的问题，只是断开后状态不更新）。
+        private volatile bool _connected;
+
+        public bool IsConnected { get { return _connected; } }
 
         /// <summary>
         /// 用当前串口参数创建客户端并打开串口。等价于原 button1_Click 中的建链逻辑。
@@ -90,10 +95,12 @@ namespace WindowsFormsApplication1
                 });
                 rtu.Open();
                 Client = rtu;
+                _connected = true;
                 return OperateResult.CreateSuccessResult();
             }
             catch (Exception ex)
             {
+                _connected = false;
                 if (SerialPortGuard.IsComPort(PortName))
                     SerialPortGuard.Release(PortName, OwnerDesc);
                 return new OperateResult(ex.Message);
@@ -109,6 +116,7 @@ namespace WindowsFormsApplication1
         /// <summary>关闭串口。原实现直接调 Close，此处补了空引用保护并释放 COM 互斥登记，其余等价。</summary>
         public void Close()
         {
+            _connected = false;   // ★P6：断开后不再显示"已连接"
             if (Client == null) return;
             try { Client.Close(); }
             catch { }
@@ -119,19 +127,28 @@ namespace WindowsFormsApplication1
         /// <summary>重开串口：先关再开（重新确认占用登记）。等价于原 PerformReconnectCore 思路。</summary>
         public bool Reconnect()
         {
-            if (Client == null) return false;
+            if (Client == null) { _connected = false; return false; }
             string p = (PortName ?? "").Trim();
             if (SerialPortGuard.IsComPort(p))
             {
                 string busy;
                 if (!SerialPortGuard.TryAcquire(p, OwnerDesc, out busy))
+                {
+                    _connected = false;
                     return false;   // 串口已被其它连接占用，本次重开不执行
+                }
             }
             try { Client.Close(); }
             catch { }
-            try { Client.Open(); return true; }
+            try
+            {
+                Client.Open();
+                _connected = true;
+                return true;
+            }
             catch
             {
+                _connected = false;
                 if (SerialPortGuard.IsComPort(p))
                     SerialPortGuard.Release(p, OwnerDesc);
                 return false;

@@ -181,7 +181,9 @@ namespace WindowsFormsApplication1
         private string fins_mingcheng = "";
         public string zifu;
         public string lujing;
-        public int qiehuanzhong = 0;
+        // ★P2：切型锁会被轮询线程（置 1）与线程池线程（Form1 的 Task.Run finally 置 0）并发读写，
+        // 必须是 volatile，否则极端情况下轮询线程长期读到过期值 → 切型"锁死"或锁不生效。
+        public volatile int qiehuanzhong = 0;
        
         ErrorLog MsgErroeLog = new ErrorLog();
         public class SelectionChangedEventArgs : EventArgs
@@ -694,6 +696,14 @@ namespace WindowsFormsApplication1
             HslCommunication.Core.DataFormat fmt;
             bool hasFmt = TryGetSelectedDataFormat(out fmt);   // 原先由 ComboBox1_SelectedIndexChanged 完成
 
+            // ★P4：手动建链与后台自动重连互斥。否则两条线程会同时 Close/Open 同一个 Hsl 客户端，
+            // 可能导致其内部状态错乱（现场表现为"重连成功但读全 Failed"）。
+            if (Interlocked.CompareExchange(ref _reconnecting, 1, 0) != 0)
+            {
+                Log("正在进行后台自动重连，请稍后再试。");
+                return;
+            }
+
             button1.Enabled = false;   // 2026-09-06：防重复点击
             _connecting = true;
             try
@@ -725,6 +735,7 @@ namespace WindowsFormsApplication1
             finally
             {
                 _connecting = false;
+                Interlocked.Exchange(ref _reconnecting, 0);   // ★P4：释放与自动重连的互斥
             }
         }
 
