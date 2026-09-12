@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.IO;
 using System.Text;
@@ -16,6 +17,58 @@ namespace demo
         private static extern bool WritePrivateProfileString(string section, string key, string val, string filePath);
         [System.Runtime.InteropServices.DllImport("kernel32")]
         private static extern int GetPrivateProfileString(string section, string key, string def, byte[] retVal, int size, string filePath);
+
+        // ── P7：内存读缓存 ──────────────────────────────────────────────
+        // 读 INI 走 kernel32 P/Invoke，频繁读取（尤其保存相机绑定时成百上千次）
+        // 会造成明显卡顿。这里按"规范化全路径"维护一份进程内读缓存，所有指向同一
+        // 文件的 ClassIni 实例共享；任意实例的写/删/清段都会同步失效对应条目。
+        // 前提：本进程是 test.ini 的唯一写者（不被外部实时编辑），故缓存不会读到陈旧值；
+        //       若文件被外部修改需主动作废，可调用 ClearCache()。
+        private static readonly object _cacheLock = new object();
+        private static readonly Dictionary<string, FileCache> _fileCaches =
+            new Dictionary<string, FileCache>(StringComparer.OrdinalIgnoreCase);
+
+        private sealed class FileCache
+        {
+            // (section\0ident) 小写键 -> 已 Trim 的值
+            public readonly Dictionary<string, string> Values =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // section -> 该段所有 ident（已 Trim）
+            public readonly Dictionary<string, List<string>> SectionIdents =
+                new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            // 该文件全部 section 名（已 Trim）；null 表示未缓存
+            public List<string> AllSections;
+        }
+
+        private static string CacheKey(string section, string ident) => section + "\0" + ident;
+
+        private static FileCache GetCache(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return null;
+            string key = Path.GetFullPath(fileName);
+            lock (_cacheLock)
+            {
+                if (!_fileCaches.TryGetValue(key, out var fc))
+                {
+                    fc = new FileCache();
+                    _fileCaches[key] = fc;
+                }
+                return fc;
+            }
+        }
+
+        private static void InvalidateSection(FileCache fc, string section)
+        {
+            if (fc == null) return;
+            string prefix = section + "\0";
+            var toRemove = new List<string>();
+            foreach (var k in fc.Values.Keys)
+                if (k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    toRemove.Add(k);
+            foreach (var k in toRemove) fc.Values.Remove(k);
+            fc.SectionIdents.Remove(section);
+            fc.AllSections = null;
+        }
 
         //类的构造函数，传递INI文件名
         public void ReadINIFile(string AFileName)
@@ -57,6 +110,19 @@ namespace demo
             {
                 throw new ApplicationException("写Ini文件出错，Section=" + Section + ", Ident=" + Ident);
             }
+
+            // P7：写成功后同步缓存，保证同进程内后续读立即看到新值
+            var fc = GetCache(FileName);
+            if (fc != null && !string.IsNullOrEmpty(Ident))
+            {
+                string ck = CacheKey(Section, Ident);
+                lock (_cacheLock)
+                {
+                    fc.Values[ck] = (Value ?? string.Empty).Trim();
+                    fc.SectionIdents.Remove(Section); // ident 集合可能新增/变化
+                    fc.AllSections = null;            // 段集合可能新增
+                }
+            }
         }
 
         //读取INI文件指定
@@ -65,6 +131,30 @@ namespace demo
             if (string.IsNullOrEmpty(FileName))
                 return Default;
 
+            // 整段/整文件查询（section 或 ident 为空）无法走单键缓存，直接 P/Invoke
+            if (string.IsNullOrEmpty(Section) || string.IsNullOrEmpty(Ident))
+                return RawReadString(Section, Ident, Default);
+
+            var fc = GetCache(FileName);
+            string ck = CacheKey(Section, Ident);
+            lock (_cacheLock)
+            {
+                if (fc != null && fc.Values.TryGetValue(ck, out var cached))
+                    return cached;
+            }
+
+            string value = RawReadString(Section, Ident, Default);
+
+            lock (_cacheLock)
+            {
+                if (fc != null) fc.Values[ck] = value;
+            }
+            return value;
+        }
+
+        // 真正的 P/Invoke 读（被 ReadString 缓存封装调用），保持与原 ReadString 完全一致的行为
+        private string RawReadString(string Section, string Ident, string Default)
+        {
             try
             {
                 Byte[] Buffer = new Byte[65535];
@@ -135,9 +225,31 @@ namespace demo
             if (string.IsNullOrEmpty(FileName))
                 return;
 
-            Byte[] Buffer = new Byte[16384];
-            int bufLen = GetPrivateProfileString(Section, null, null, Buffer, Buffer.GetUpperBound(0), FileName);
-            GetStringsFromBuffer(Buffer, bufLen, Idents);
+            var fc = GetCache(FileName);
+            List<string> cached = null;
+            lock (_cacheLock)
+            {
+                if (fc != null && fc.SectionIdents.TryGetValue(Section, out var list))
+                    cached = list;
+            }
+
+            if (cached == null)
+            {
+                Byte[] Buffer = new Byte[16384];
+                int bufLen = GetPrivateProfileString(Section, null, null, Buffer, Buffer.GetUpperBound(0), FileName);
+                var col = new StringCollection();
+                GetStringsFromBuffer(Buffer, bufLen, col);
+                var list = new List<string>();
+                foreach (string s in col) list.Add(s);
+                cached = list;
+                lock (_cacheLock)
+                {
+                    if (fc != null) fc.SectionIdents[Section] = cached;
+                }
+            }
+
+            Idents.Clear();
+            foreach (string s in cached) Idents.Add(s);
         }
 
         private void GetStringsFromBuffer(Byte[] Buffer, int bufLen, StringCollection Strings)
@@ -164,9 +276,31 @@ namespace demo
             if (string.IsNullOrEmpty(FileName))
                 return;
 
-            byte[] Buffer = new byte[65535];
-            int bufLen = GetPrivateProfileString(null, null, null, Buffer, Buffer.GetUpperBound(0), FileName);
-            GetStringsFromBuffer(Buffer, bufLen, SectionList);
+            var fc = GetCache(FileName);
+            List<string> cached = null;
+            lock (_cacheLock)
+            {
+                if (fc != null && fc.AllSections != null)
+                    cached = fc.AllSections;
+            }
+
+            if (cached == null)
+            {
+                byte[] Buffer = new byte[65535];
+                int bufLen = GetPrivateProfileString(null, null, null, Buffer, Buffer.GetUpperBound(0), FileName);
+                var col = new StringCollection();
+                GetStringsFromBuffer(Buffer, bufLen, col);
+                var list = new List<string>();
+                foreach (string s in col) list.Add(s);
+                cached = list;
+                lock (_cacheLock)
+                {
+                    if (fc != null) fc.AllSections = cached;
+                }
+            }
+
+            SectionList.Clear();
+            foreach (string s in cached) SectionList.Add(s);
         }
 
         //读取指定的Section的所有Value到列表中
@@ -188,12 +322,22 @@ namespace demo
             {
                 throw new ApplicationException("无法清除Ini文件中的Section: " + Section);
             }
+            InvalidateSection(GetCache(FileName), Section);
         }
 
         //删除某个Section下的键
         public void DeleteKey(string Section, string Ident)
         {
             WritePrivateProfileString(Section, Ident, null, FileName);
+            var fc = GetCache(FileName);
+            if (fc != null)
+            {
+                lock (_cacheLock)
+                {
+                    fc.Values.Remove(CacheKey(Section, Ident));
+                    fc.SectionIdents.Remove(Section);
+                }
+            }
         }
 
         //执行完对Ini文件的修改之后，应该调用本方法更新缓冲区。
@@ -208,6 +352,36 @@ namespace demo
             StringCollection Idents = new StringCollection();
             ReadSection(Section, Idents);
             return Idents.IndexOf(Ident) > -1;
+        }
+
+        /// <summary>
+        /// P7：作废本实例对应文件的读缓存（如文件被外部修改后调用）。
+        /// </summary>
+        public void ClearCache()
+        {
+            var fc = GetCache(FileName);
+            if (fc != null)
+            {
+                lock (_cacheLock)
+                {
+                    fc.Values.Clear();
+                    fc.SectionIdents.Clear();
+                    fc.AllSections = null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// P7：作废指定 INI 文件的读缓存。
+        /// </summary>
+        public static void ClearCache(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return;
+            string key = Path.GetFullPath(fileName);
+            lock (_cacheLock)
+            {
+                _fileCaches.Remove(key);
+            }
         }
 
         /// <summary>
