@@ -167,6 +167,37 @@ namespace WindowsFormsApplication1
             triggerLatch?.Clear();
         }
 
+        /// <summary>
+        /// ★P1：轮询线程遍历用的数据块快照。
+        /// UI 线程会原地增删/清空 <paramref name="finsDic"/>（例如"清除"会调用 Clear()），
+        /// 轮询直接 foreach 会抛 "Collection was modified" 并被外层 catch 吞掉（丢一圈 + 日志刷屏）。
+        /// 拷贝失败（正在被修改）返回 null，调用方应静默跳过本圈。
+        /// </summary>
+        public static Dictionary<string, string[]> SnapshotFinsDic(Dictionary<string, string[]> finsDic)
+        {
+            try { return finsDic == null ? null : new Dictionary<string, string[]>(finsDic); }
+            catch { return null; }
+        }
+
+        /// <summary>★P1：相机绑定表快照（与 <see cref="SnapshotFinsDic"/> 同理）。</summary>
+        public static Dictionary<int, string[]> SnapshotCameraDic(Dictionary<int, string[]> cameraDic)
+        {
+            try { return cameraDic == null ? null : new Dictionary<int, string[]>(cameraDic); }
+            catch { return null; }
+        }
+
+        private static readonly HashSet<string> _dirtyBlocksLogged = new HashSet<string>();
+
+        /// <summary>
+        /// ★P5：非法数据块（起始地址/长度解析不了）只允许记一次日志，避免轮询每 20ms 刷屏。
+        /// 返回 true 表示这是首次出现，调用方应记一条日志。
+        /// </summary>
+        public static bool ShouldLogDirtyBlockOnce(string blockKey)
+        {
+            if (string.IsNullOrEmpty(blockKey)) blockKey = "(未命名)";
+            lock (_dirtyBlocksLogged) { return _dirtyBlocksLogged.Add(blockKey); }
+        }
+
         /// <summary>轮询线程安全写单元格（合并刷新，不阻塞读循环）。</summary>
         public static void SetPollCell(CommGridUiSink sink, Dictionary<int, int[]> finsData, int idx, object value)
         {

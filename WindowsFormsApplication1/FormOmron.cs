@@ -1403,12 +1403,27 @@ namespace WindowsFormsApplication1
                                 int xuanzhong_temp = 0;
                                 string fins_temp = "";
                                 string shuju_temp = "";
-                                if (fins_dic.Count > 0)
+                                // ★P1：UI 线程会原地增删/清空 fins_dic（"清除"会调用 Clear()），轮询直接遍历会抛
+                                // "Collection was modified" 并被外层 catch 吞掉（丢一圈 + 日志刷屏）。改为先快照再遍历。
+                                Dictionary<string, string[]> finsSnapshot = CommGridHelper.SnapshotFinsDic(fins_dic);
+                                if (finsSnapshot != null && finsSnapshot.Count > 0)
                                 {
-                                    foreach (var par in fins_dic)
+                                    foreach (var par in finsSnapshot)
                                     {
+                                        // ★P5：脏配置防御。qishi/changdu 解析不了时跳过本块并只记一次日志，
+                                        // 避免轮询每圈抛异常刷屏、且该数据块永远不触发。
+                                        int blkQishi;
+                                        int blkChangdu;
+                                        if (!int.TryParse(par.Value[1], out blkQishi)
+                                            || !int.TryParse(par.Value[2], out blkChangdu)
+                                            || blkChangdu <= 0)
+                                        {
+                                            if (CommGridHelper.ShouldLogDirtyBlockOnce(par.Key))
+                                                Log("数据块 " + par.Key + " 的起始地址/长度非法，已跳过（请检查配置）");
+                                            continue;
+                                        }
                                         shuju_temp = "";
-                                        for (int j = 0; j < int.Parse(par.Value[2]); j++)
+                                        for (int j = 0; j < blkChangdu; j++)
                                         {
                                             if (par.Value[4] == "int")
                                             {
@@ -1446,7 +1461,10 @@ namespace WindowsFormsApplication1
                                         }
                                         if (par.Value[3] == "触发")
                                         {
-                                            foreach (var pap in camera_dic)
+                                            // ★P1：相机绑定表同样用快照遍历，避免与 UI 改绑定并发时抛 "Collection was modified"
+                                            Dictionary<int, string[]> camSnapshot = CommGridHelper.SnapshotCameraDic(camera_dic);
+                                            if (camSnapshot == null) continue;
+                                            foreach (var pap in camSnapshot)
                                             {
                                                 if (pap.Value[0] == par.Value[0])
                                                 {
@@ -1473,8 +1491,8 @@ namespace WindowsFormsApplication1
                                                     }
                                                     else if (pap.Key != 13)
                                                     {
-                                                        if (!camera_dic.ContainsKey(pap.Key)) continue;
-                                                        string[] cam = camera_dic[pap.Key];
+                                                        if (!camSnapshot.ContainsKey(pap.Key)) continue;
+                                                        string[] cam = camSnapshot[pap.Key];
                                                         string dataVal = shuju_temp.Replace("\0", "").Trim();
                                                         if (cam[2] == "true" && dataVal != cam[1])
                                                         {
@@ -1610,11 +1628,15 @@ namespace WindowsFormsApplication1
                 if (!chushihua || fins_dic.Count == 0) return;
 
                 string fins_temp = "";
-                foreach (var pat in camera_dic)
+                // ★P1：xie 会被检测/回写路径调用，同样在遍历"活字典"；UI 清配置时会撞车导致本次回写丢失。
+                Dictionary<int, string[]> camSnapshot = CommGridHelper.SnapshotCameraDic(camera_dic);
+                Dictionary<string, string[]> finsSnapshot = CommGridHelper.SnapshotFinsDic(fins_dic);
+                if (camSnapshot == null || finsSnapshot == null) return;
+                foreach (var pat in camSnapshot)
                 {
                     if (pat.Value[5] != "无")
                     {
-                        foreach (var par in fins_dic)
+                        foreach (var par in finsSnapshot)
                         {
                             if (pat.Value[5] == par.Value[0])
                             {
