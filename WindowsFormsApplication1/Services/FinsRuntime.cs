@@ -181,10 +181,9 @@ namespace WindowsFormsApplication1
                                             {
                                                 if (pap.Key == 13)
                                                 {
-                                                    if (ctx.TrySchemeSwitch(shuju_temp.Replace("\0", "")))
-                                                    {
-                                                        ctx.RaiseSelectionChanged(shuju_temp, pap.Key.ToString(), "0", LinkId);
-                                                    }
+                                                    // TrySchemeSwitch 内部已通过 SchemeSwitchRaise 触发带 SchemePath 的切方案事件，
+                                                    // 无需再 RaiseSelectionChanged（否则会多抛一次无 SchemePath 的空事件（无实际消费者））。
+                                                    ctx.TrySchemeSwitch(shuju_temp.Replace("\0", ""));
                                                 }
                                                 else if (pap.Key != 13)
                                                 {

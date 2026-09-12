@@ -492,7 +492,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob2.trriger == 0)
                     {
                         _jobs.myjob2.trriger = 1;
-                        getrecord(_jobs.myjob2);
+                        getrecord(_jobs.myjob2, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger2_temp = 1;
                     timer8.Interval = int.Parse(textBox9.Text);
@@ -573,7 +573,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob2.trriger == 0)
                     {
                         _jobs.myjob2.trriger = 1;
-                        getrecord(_jobs.myjob2);
+                        getrecord(_jobs.myjob2, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                 }
             }
@@ -696,7 +696,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob3.trriger == 0)
                     {
                         _jobs.myjob3.trriger = 1;
-                        getrecord(_jobs.myjob3);
+                        getrecord(_jobs.myjob3, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger3_temp = 1;
                     timer11.Interval = int.Parse(textBox11.Text);
@@ -721,7 +721,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob4.trriger == 0)
                     {
                         _jobs.myjob4.trriger = 1;
-                        getrecord(_jobs.myjob4);
+                        getrecord(_jobs.myjob4, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger4_temp = 1;
                     timer12.Interval = int.Parse(textBox16.Text);
@@ -870,7 +870,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob3.trriger == 0)
                     {
                         _jobs.myjob3.trriger = 1;
-                        getrecord(_jobs.myjob3);
+                        getrecord(_jobs.myjob3, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                 }
             }
@@ -889,7 +889,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob4.trriger == 0)
                     {
                         _jobs.myjob4.trriger = 1;
-                        getrecord(_jobs.myjob4);
+                        getrecord(_jobs.myjob4, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                 }
             }
@@ -978,52 +978,6 @@ namespace WindowsFormsApplication1
         {
             frm6.Add(new Form6(_jobs.myjob4.block));
             frm6[frm6.Count - 1].Show();
-        }
-
-        private void listBox7_MouseDown_1(object sender, MouseEventArgs e)
-        {
-            Task.Run(() =>
-            {
-                try
-                {
-                    string[] time111 = listBox1.SelectedItem.ToString().Split(':');
-                    int ttt1 = int.Parse(time111[0] + time111[1] + time111[2]);
-                    string ttt2 = time111[3];
-                    int ttt3 = int.Parse(time111[4]);
-                    Process myProc = null;
-                    myProc = Process.Start(_jobs.myjob3.pathhead_ng + day1 + "\\" + ttt1 + ttt2 + "#" + ttt3 + ".bmp");//开启一个进程
-                    try
-                    {
-                        myProc.Kill();//关闭一个进程
-                    }
-                    catch { }
-                }
-                catch (Exception ex)
-                { _logger.WriteLog(ex.Message + "图片显示3"); };
-            });
-        }
-
-        private void listBox6_MouseDown_1(object sender, MouseEventArgs e)
-        {
-            Task.Run(() =>
-            {
-                try
-                {
-                    string[] time111 = listBox1.SelectedItem.ToString().Split(':');
-                    int ttt1 = int.Parse(time111[0] + time111[1] + time111[2]);
-                    string ttt2 = time111[3];
-                    int ttt3 = int.Parse(time111[4]);
-                    Process myProc = null;
-                    myProc = Process.Start(_jobs.myjob4.pathhead_ng + day1 + "\\" + ttt1 + ttt2 + "#" + ttt3 + ".bmp");//开启一个进程
-                    try
-                    {
-                        myProc.Kill();//关闭一个进程
-                    }
-                    catch { }
-                }
-                catch (Exception ex)
-                { _logger.WriteLog(ex.Message + "图片显示4"); };
-            });
         }
 
         private void checkBox24_CheckedChanged(object sender, EventArgs e)
@@ -1133,6 +1087,23 @@ namespace WindowsFormsApplication1
             catch
             {
 
+            }
+        }
+
+        // ★ 2026-09-11：存图保留天数控件值变化 → 更新字段并写回 ini [存图] baocun_tianshu
+        private void numericUpDown_saveDays_ValueChanged(object sender, EventArgs e)
+        {
+            try
+            {
+                int days = (int)numericUpDown_saveDays.Value;
+                if (days >= 1)
+                {
+                    _saveImageKeepDays = days;
+                    _config.WriteString("存图", "baocun_tianshu", days.ToString());
+                }
+            }
+            catch
+            {
             }
         }
 
@@ -1429,7 +1400,7 @@ namespace WindowsFormsApplication1
                 if (_jobs.yunxing == false && listBox5.Items.Count > 0)
                 {
                     listBox5.SelectedIndex = 0;
-                    button15.Text = "底";
+                    button14.Text = "底";
                 }
             }
             else if (button14.Text == "底" && listBox5.Visible == true)

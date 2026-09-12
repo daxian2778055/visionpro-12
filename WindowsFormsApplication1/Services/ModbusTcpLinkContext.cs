@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace WindowsFormsApplication1
 {
@@ -16,13 +18,16 @@ namespace WindowsFormsApplication1
     public class ModbusTcpLinkContext : ICommLinkContext
     {
         private readonly ModbusTcpLinkConfig _cfg;
+        private readonly ModbusTcpLink _link;
         private readonly ICommLinkContext _host;
         private readonly Dictionary<string, string[]> _finsDic;
         private readonly Dictionary<int, string[]> _cameraDic;
+        private int _reconnecting = 0;
 
-        public ModbusTcpLinkContext(ModbusTcpLinkConfig cfg, ICommLinkContext hostForm)
+        public ModbusTcpLinkContext(ModbusTcpLinkConfig cfg, ICommLinkContext hostForm, ModbusTcpLink link = null)
         {
             _cfg = cfg;
+            _link = link;
             _host = hostForm;
 
             // fin_dic[name] = { name, qishi, changdu, gaodiwei, geshi }（复刻窗体 Load 构造）
@@ -82,6 +87,32 @@ namespace WindowsFormsApplication1
         public void WriteTriggerFeedback(string[] block, string value, ref int xuanzhong, ref string fins) { _host.WriteTriggerFeedback(block, value, ref xuanzhong, ref fins); }
         public bool TrySchemeSwitch(string dataVal) { return _host.TrySchemeSwitch(dataVal); }
         public string MiddleValue(string str, string sta, string end) { return _host.MiddleValue(str, sta, end); }
-        public void OnReconnect() { _host.OnReconnect(); }
+
+        /// <summary>
+        /// 自动重连：只重连本连接（异步执行，避免阻塞本连接的轮询线程）。
+        /// 未注入本连接 <see cref="_link"/> 时退回宿主重连（向后兼容）。
+        /// </summary>
+        public void OnReconnect()
+        {
+            if (_link == null) { _host.OnReconnect(); return; }
+            if (Interlocked.CompareExchange(ref _reconnecting, 1, 0) != 0) return;
+            Log("Modbus-TCP连接" + _cfg.LinkId + " 通讯异常，后台自动重连中...");
+            Task.Run(() =>
+            {
+                try
+                {
+                    bool ok = _link.Reconnect();
+                    Log("Modbus-TCP连接" + _cfg.LinkId + (ok ? " 自动重连成功" : " 自动重连失败"));
+                }
+                catch (Exception ex)
+                {
+                    Log("Modbus-TCP连接" + _cfg.LinkId + " 自动重连异常:" + ex.Message);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _reconnecting, 0);
+                }
+            });
+        }
     }
 }

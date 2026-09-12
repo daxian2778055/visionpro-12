@@ -23,23 +23,6 @@ namespace WindowsFormsApplication1
            // cogToolBlockEdit1.Subject.Ran += new EventHandler(GetResult1_VisionPro);
         }
         //cogToolBlockEdit1绑定事件
-        public void GetResult1_VisionPro(object sender, EventArgs e)
-        {
-            //获取ToolBlock中输出参数内容
-            int OutPutElementsCount = cogToolBlockEdit1.Subject.Outputs.Count;
-            string[] OutPutElements = cogToolBlockEdit1.Subject.Outputs.GetFormattedTerminalStrings();
-            for (int i = 0; i < cogToolBlockEdit1.Subject.Outputs.Count; i++)
-            {
-
-                int StartPosition = OutPutElements[i].IndexOf('|');
-                int EndPosition = OutPutElements[i].LastIndexOf('|');
-                string OutPutElementsName = OutPutElements[i].Substring(StartPosition + 1, EndPosition - StartPosition - 1);
-                string OutPutElementsValue = (string)cogToolBlockEdit1.Subject.Outputs[OutPutElementsName].Value;
-                this.Result_label.Text = OutPutElementsName.ToString() + ":" + OutPutElementsValue + "\n";
-
-            }
-
-        }
         private void Form6_Load(object sender, EventArgs e)
         {
 

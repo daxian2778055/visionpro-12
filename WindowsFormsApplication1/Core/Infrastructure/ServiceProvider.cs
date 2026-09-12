@@ -67,5 +67,29 @@ namespace WindowsFormsApplication1.Core.Infrastructure
             instance = null;
             return false;
         }
+
+        /// <summary>
+        /// ★ N4/N3：释放所有已实例化的单例服务（仅处理实现 <see cref="IDisposable"/> 的），
+        /// 并清空容器，供组合根在退出时统一收口。逐个容错，可重复调用。
+        /// </summary>
+        public void DisposeAll()
+        {
+            List<object> instances;
+            lock (_sync)
+            {
+                instances = new List<object>(_singletons.Values);
+                _singletons.Clear();
+                _factories.Clear();
+            }
+
+            foreach (object o in instances)
+            {
+                var disposable = o as IDisposable;
+                if (disposable != null)
+                {
+                    try { disposable.Dispose(); } catch { }
+                }
+            }
+        }
     }
 }

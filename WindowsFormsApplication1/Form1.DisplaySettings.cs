@@ -1252,7 +1252,10 @@ namespace WindowsFormsApplication1
                         {
                             if (File.Exists(f))
                             {
-                                dt1 = Directory.GetCreationTime(f);
+                                // ★ 2026-09-12：用"最后写入时间"替代"创建时间"定位最旧图。
+                                //   CreationTime 在部分文件系统/首次写入后才生成，容易被复制或临时创建时间误导而删错；
+                                //   LastWriteTime 反映真实存图时刻，作为"最旧图应被淘汰"判据更准。纯读操作，低风险。
+                                dt1 = Directory.GetLastWriteTime(f);
                                 dt2 = DateTime.Now.Subtract(dt1).TotalMinutes;
                                 if (dt2 > dt3)
                                 {
@@ -1340,6 +1343,7 @@ namespace WindowsFormsApplication1
         {
             int dayt = 0;
             int dayz = 0;
+            int authV1 = 0;   // ★ 2026-09-07：授权到期日期（与 Form1_Load 同一门控口径）
             string zhongjian = "22";
 
             string code = _config.ReadString("code1", "code2", "");
@@ -1377,7 +1381,7 @@ namespace WindowsFormsApplication1
             string code2_val = duini.ReadString("1", "3", "");
             string code3 = duini.ReadString("1", "4", "");
             string beizhu = duini.ReadString("1", "1", "");
-            try { textBox7.Text = beizhu; } catch { }
+            try { this.Invoke(new Action(() => { textBox7.Text = beizhu; })); } catch { }
 
             // ★ 过期警告，用 today 作为基准（c3 是上次运行日期，尚未更新）
             Thread.Sleep(5);
@@ -1447,6 +1451,7 @@ namespace WindowsFormsApplication1
                     int.TryParse(code1, out v1);
                     int.TryParse(code2_val, out v2);
                     int.TryParse(code3, out v3);
+                    authV1 = v1;
                     if (v1 > now && v2 <= now && v3 <= now)
                         dayz = 1;
                     else
@@ -1472,24 +1477,40 @@ namespace WindowsFormsApplication1
             {
                 _logger.WriteLog(ex.Message + ":对比");
             };
+            // ★ 2026-09-06 ④：同步授权过期门控，供 initialize_FormSet/bnOpen_Click 自动开相机前判断
+            // ★ 2026-09-07：与 Form1_Load 同一口径 —— 授权数据读不到（authV1<=0）时不判为过期，
+            //   避免把"读不到 test.ini"误判成"授权过期"而禁用功能。
+            _authExpired = (authV1 > 0 && dayz == 0);
             if (dayz == 0)
             {
-                checkedListBox1.SetItemChecked(0, false);
-                checkedListBox1.SetItemChecked(1, false);
-                checkedListBox1.SetItemChecked(2, false);
-                checkedListBox1.SetItemChecked(3, false);
-                button2.Enabled = false;
-                button1.Enabled = false;
-                label12.Text = "加密中";
-                button5.Visible = true;
-                label172.Visible = true;
-                textBox7.Visible = true;
-                textBox4.Visible = true;
-                label172.Visible = true;
-                textBox7.Visible = true;
-                pictureBox1.Visible = true;
-                tableLayoutPanel1.Visible = false;
-                getCode();
+                // ★ 监控线程在后台运行，所有 UI 操作必须 Invoke 到 UI 线程。
+                //   窗体正在关闭时 Invoke 会抛 ObjectDisposedException，必须捕获，避免后台任务异常。
+                try
+                {
+                    this.Invoke(new Action(() =>
+                    {
+                    checkedListBox1.SetItemChecked(0, false);
+                    checkedListBox1.SetItemChecked(1, false);
+                    checkedListBox1.SetItemChecked(2, false);
+                    checkedListBox1.SetItemChecked(3, false);
+                    button2.Enabled = false;
+                    button1.Enabled = false;
+                    label12.Text = "加密中";
+                    button5.Visible = true;
+                    label172.Visible = true;
+                    textBox7.Visible = true;
+                    textBox4.Visible = true;
+                    label172.Visible = true;
+                    textBox7.Visible = true;
+                    pictureBox1.Visible = true;
+                    tableLayoutPanel1.Visible = false;
+                    getCode();
+                    }));
+                }
+                catch (Exception exUi)
+                {
+                    _logger.WriteLog("监控解码: 刷新加密界面失败(窗体可能正在关闭): " + exUi.Message);
+                }
             }
         }
         #endregion

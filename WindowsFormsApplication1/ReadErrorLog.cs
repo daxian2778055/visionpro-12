@@ -91,7 +91,8 @@ namespace WindowsFormsApplication1
                     return;
                 }
 
-                string[] arr = content.Split('/');
+                // 按行切分；旧实现按 '/' 切分，日志内容含 '/'（日期/路径）时会把行切碎
+                string[] arr = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
 
                 this.BeginInvoke(new Action(() =>
                 {

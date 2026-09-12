@@ -266,10 +266,11 @@ namespace WindowsFormsApplication1
                 return true;
             if (mode == "通讯触发")
             {
-                if (!_jobs.CommTriggerArmed || !_jobs.Myjobs[slot].commTriggerPending)
+                // ★ 2026-09-06 ⑤：门控改用“待处理触发计数”。旧写法在检测线程 finally 里把 bool 置 false，
+                //   会冲掉检测期间到达的新触发置位，使该触发对应的回帧被拒收（静默丢件）。
+                //   计数在触发时 +1、回帧被 EnqueueInspectFrame 接收时 -1，检测完成不再清零。
+                if (!_jobs.CommTriggerArmed || _jobs.Myjobs[slot].commTriggerPendingCount <= 0)
                     return false;
-                // ★ F22: 不在 SDK 回调线程清除 pending，改由检测线程处理完一帧后清除，
-                //        避免帧在入队/检测过程中被丢弃导致 PLC 触发无响应
                 return true;
             }
             return false;

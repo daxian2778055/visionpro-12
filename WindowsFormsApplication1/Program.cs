@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -145,6 +145,8 @@ namespace WindowsFormsApplication1
                 {
                     // 覆盖 Application.Exit 等正常退出路径（Environment.Exit 由 ProcessExit 兜底）
                     try { CrashMonitor.MarkExitedCleanly(); } catch { }
+                    // ★ N4：先释放服务（ConfigService → ClassIni 刷新），再关日志，保证收尾顺序
+                    try { AppHost.Shutdown(); } catch { }
                     try { LogManager.Shutdown(); }
                     catch { }
                 }
@@ -179,10 +181,12 @@ namespace WindowsFormsApplication1
             {
                 var log = GetErrorLog();
                 string errorInfo = e.ExceptionObject?.ToString() ?? "未知异常对象";
-                log.WriteLog("未处理AppDomain异常: " + errorInfo);
-                log.WriteLog("崩溃现场: " + CrashMonitor.GetCrashContext());
+                // ★ 2026-09-11：AppDomain 未处理异常是进程终止路径（IsTerminating=true），
+                //   处理完本回调进程即销毁，必须用同步 WriteLogSync，否则异步日志来不及落盘就丢失崩溃原因。
+                log.WriteLogSync("未处理AppDomain异常: " + errorInfo);
+                log.WriteLogSync("崩溃现场: " + CrashMonitor.GetCrashContext());
                 string dumpPath = CrashMonitor.WriteMinidump();
-                log.WriteLog("已生成崩溃转储: " + dumpPath);
+                log.WriteLogSync("已生成崩溃转储: " + dumpPath);
                 // 生成面向用户的大白话崩溃报告
                 string report = CrashMonitor.WriteCrashReport(GetExceptionTitle(e.ExceptionObject), errorInfo);
                 string tip = string.IsNullOrEmpty(report)
@@ -228,6 +232,9 @@ namespace WindowsFormsApplication1
         private static void OnProcessExit(object sender, EventArgs e)
         {
             try { CrashMonitor.MarkExitedCleanly(); } catch { }
+            // ★ N4：主窗体关闭走的是 FormClosed → Environment.Exit(0)，Main 的 finally 不会执行，
+            //   因此在这里释放组合根服务（ConfigService → ClassIni 刷新；相机为兜底释放）。
+            try { AppHost.Shutdown(); } catch { }
             try { LogManager.Shutdown(TimeSpan.FromSeconds(2)); }
             catch { }
         }

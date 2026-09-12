@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Runtime.InteropServices;
 using System.IO;
 
@@ -10,7 +11,7 @@ namespace MvCamCtrl.NET
     /// <summary>
     /// MyCamera
     /// </summary>
-    public class MyCamera
+    public class MyCamera : IDisposable
     {
         #region 委托声明
         /// <summary>
@@ -125,10 +126,27 @@ namespace MvCamCtrl.NET
 
         /// <summary>
         /// Destructor
+        /// 说明：保持原行为，不在终结器里调用 SDK —— GC 线程/进程退出期间操作原生句柄不安全。
         /// </summary>
         ~MyCamera()
         {
             //MV_CC_DestroyDevice_NET();
+        }
+
+        /// <summary>
+        /// ★ S4：显式释放设备句柄（幂等）。等价于调用 <see cref="MV_CC_DestroyDevice_NET"/>，
+        /// 供 <c>CameraController</c> 统一收口释放；句柄已为 0 时不做任何事。
+        /// </summary>
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            try
+            {
+                if (IntPtr.Zero != handle)
+                    MV_CC_DestroyDevice_NET();
+            }
+            catch { }
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
@@ -4203,6 +4221,7 @@ namespace MvCamCtrl.NET
 
         // 私有成员变量
         IntPtr handle;                                                          // 设备句柄
+        private int _disposed;                                                  // Dispose 幂等标记
 
         #region 从C/C++接口库导出的函数
         /************************************************************************/

@@ -174,9 +174,9 @@ namespace WindowsFormsApplication1
                 CogSerializer.SaveObjectToFile(Inspect1, Application.StartupPath + "//模板//" + textBox2.Text + ".vpp");
                 tishi = "保存模板成功";
             }
-            catch
+            catch (Exception ex)
             {
-                tishi = "保存模板成功";
+                tishi = "保存模板失败:" + ex.Message;
             }
         }
         int bian = 0;

@@ -206,7 +206,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob9.trriger == 0)
                     {
                         _jobs.myjob9.trriger = 1;
-                        getrecord(_jobs.myjob9);
+                        getrecord(_jobs.myjob9, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger9_temp = 1;
                     timer9.Interval = int.Parse(textBox42.Text);
@@ -278,7 +278,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob10.trriger == 0)
                     {
                         _jobs.myjob10.trriger = 1;
-                        getrecord(_jobs.myjob10);
+                        getrecord(_jobs.myjob10, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger10_temp = 1;
                     timer18.Interval = int.Parse(textBox45.Text);
@@ -350,7 +350,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob11.trriger == 0)
                     {
                         _jobs.myjob11.trriger = 1;
-                        getrecord(_jobs.myjob11);
+                        getrecord(_jobs.myjob11, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger11_temp = 1;
                     timer19.Interval = int.Parse(textBox48.Text);
@@ -422,7 +422,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob12.trriger == 0)
                     {
                         _jobs.myjob12.trriger = 1;
-                        getrecord(_jobs.myjob12);
+                        getrecord(_jobs.myjob12, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger12_temp = 1;
                     timer20.Interval = int.Parse(textBox51.Text);
@@ -1116,7 +1116,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob9.trriger == 0)
                     {
                         _jobs.myjob9.trriger = 1;
-                        getrecord(_jobs.myjob9);
+                        getrecord(_jobs.myjob9, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                 }
             }
@@ -1135,7 +1135,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob10.trriger == 0)
                     {
                         _jobs.myjob10.trriger = 1;
-                        getrecord(_jobs.myjob10);
+                        getrecord(_jobs.myjob10, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                 }
             }
@@ -1154,7 +1154,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob11.trriger == 0)
                     {
                         _jobs.myjob11.trriger = 1;
-                        getrecord(_jobs.myjob11);
+                        getrecord(_jobs.myjob11, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                 }
             }
@@ -1173,7 +1173,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob12.trriger == 0)
                     {
                         _jobs.myjob12.trriger = 1;
-                        getrecord(_jobs.myjob12);
+                        getrecord(_jobs.myjob12, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                 }
             }

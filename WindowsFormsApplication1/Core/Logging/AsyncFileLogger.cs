@@ -50,6 +50,7 @@ namespace WindowsFormsApplication1.Core.Logging
         private DateTime _lastFlushUtc;
         private volatile bool _stopping;
         private int _dropped;
+        private int _reportedDropped;
         private int _disposed;
 
         /// <summary>使用默认参数：目录按天分文件、单日 10MB 轮转、队列 10000 条、500ms 批量刷盘。</summary>
@@ -152,7 +153,11 @@ namespace WindowsFormsApplication1.Core.Logging
 
             try
             {
-                lock (_fileLock) { CloseWriter(); }
+                lock (_fileLock)
+                {
+                    ReportDroppedIfAny(DateTime.Now);   // 退出前把最终丢弃数落盘
+                    CloseWriter();
+                }
             }
             catch { }
         }
@@ -200,7 +205,11 @@ namespace WindowsFormsApplication1.Core.Logging
             ManualResetEventSlim signal = entry.FlushSignal;
             if (signal != null)
             {
-                lock (_fileLock) { FlushInternal(); }
+                lock (_fileLock)
+                {
+                    FlushInternal();
+                    ReportDroppedIfAny(DateTime.Now);
+                }
                 signal.Set();
                 return;
             }
@@ -217,6 +226,9 @@ namespace WindowsFormsApplication1.Core.Logging
                 if (DateTime.UtcNow - _lastFlushUtc >= _flushInterval)
                     FlushInternal();
 
+                // ★ N6：把因队列满被丢弃的条数落到日志文件里，避免"日志静默消失"无人知晓
+                ReportDroppedIfAny(entry.Time);
+
                 // 达到阈值则标记轮转并关闭当前文件，下次 EnsureWriter 时归档。
                 // 注意：轮转依据累计写入量而非文件真实大小——_estimatedBytes 是按 UTF-16 放大估算的，
                 // 与 UTF-8 落盘的真实字节数不同步，若在此处用真实大小判断会导致反复关闭重开却不归档。
@@ -226,6 +238,26 @@ namespace WindowsFormsApplication1.Core.Logging
                     CloseWriter();
                 }
             }
+        }
+
+        /// <summary>
+        /// ★ N6：把"因队列满被丢弃的日志条数"写入日志文件。
+        /// 只在后台写线程上调用（调用方持 <see cref="_fileLock"/>），不给业务线程增加磁盘 IO。
+        /// 写不进去（writer 为 null，例如磁盘故障）时保留计数，等 writer 恢复后再报，不丢信息。
+        /// </summary>
+        private void ReportDroppedIfAny(DateTime now)
+        {
+            int dropped = Thread.VolatileRead(ref _dropped);
+            if (dropped <= _reportedDropped) return;
+            if (_writer == null) return;
+
+            int newly = dropped - _reportedDropped;
+            _reportedDropped = dropped;
+
+            WriteEntry(_writer, "日志丢弃",
+                "日志队列已满，丢弃 " + newly + " 条（累计 " + dropped +
+                " 条）。请检查磁盘空间与日志目录是否可写。", now);
+            FlushInternal();
         }
 
         /// <summary>文本格式与旧 ErrorLog 保持一致，保证 ReadErrorLog 兼容性。</summary>

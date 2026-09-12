@@ -138,7 +138,6 @@ namespace WindowsFormsApplication1
         private readonly object[] _inspectLocks = new object[12];
         private readonly AutoResetEvent[] _inspectSignal = new AutoResetEvent[12];
         private readonly Thread[] _inspectThreads = new Thread[12];
-        private readonly Bitmap[] _pendingFrame = new Bitmap[12];
         private readonly int[] _saveFlying = new int[12];   // ★ 性能优先：每相机存图任务"单飞"标志（0/1，忙则丢弃本帧存图，允许漏存）
         private readonly int[] _renderBusy = new int[12];   // ★ 性能优先：每相机渲染请求"单飞"标志（0/1，UI 未消化完则丢弃中间帧，允许漏显示）
         private volatile bool _inspectStop;
@@ -401,7 +400,7 @@ namespace WindowsFormsApplication1
                     _jobs.myjob1.myTable1 = new DataTable();
                     _jobs.myjob2.myTable1 = new DataTable();
                     int[] _changdu = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110 };
-                    for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].danwu_cishu = 0; _jobs.Myjobs[_i].time = 0; _jobs.Myjobs[_i].changdu = _changdu[_i]; _jobs.Myjobs[_i].state = ""; _jobs.Myjobs[_i].triggerMode = ""; _jobs.Myjobs[_i].triggerZifu = ""; _jobs.Myjobs[_i].jieshouZifu = "null"; _jobs.Myjobs[_i].commTriggerPending = false; }
+                    for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].danwu_cishu = 0; _jobs.Myjobs[_i].time = 0; _jobs.Myjobs[_i].changdu = _changdu[_i]; _jobs.Myjobs[_i].state = ""; _jobs.Myjobs[_i].triggerMode = ""; _jobs.Myjobs[_i].triggerZifu = ""; _jobs.Myjobs[_i].jieshouZifu = "null"; _jobs.Myjobs[_i].commTriggerPending = false; _jobs.Myjobs[_i].commTriggerPendingCount = 0; }
                     _jobs.myjob1.danwu_time = "";
                     _jobs.myjob2.danwu_time = "";
                     _jobs.myjob3.danwu_time = "";
@@ -462,7 +461,7 @@ namespace WindowsFormsApplication1
                     _jobs.myjob10.pathhead_ng = @"E:\fu10ng\";
                     _jobs.myjob11.pathhead_ng = @"E:\fu11ng\";
                     _jobs.myjob12.pathhead_ng = @"E:\fu12ng\";
-                    day1 = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(DateTime.Now.DayOfWeek);
+                    day1 = DateTime.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);   // ★ 存图子目录按日期命名（原为星期名，每周复用导致误删/堆叠）
                     _jobs.myjob1.fileng = new FileInfo(_jobs.myjob1.pathhead_ng + day1 + "\\");
                     _jobs.myjob2.fileng = new FileInfo(_jobs.myjob2.pathhead_ng + day1 + "\\");
                     _jobs.myjob1.fileok = new FileInfo(_jobs.myjob1.pathhead_ok + day1 + "\\");
@@ -816,7 +815,12 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog(path_1);
                 }
                 UpdateSplashProgress(18, "正在读取配置...");
-                Thread.Sleep(int.Parse(_config.ReadString("camera", "yanshi", "5")));
+                // ★ 修复（2026-09-06）：yanshi 非数字时 int.Parse 会抛异常，被下方大 catch 吞掉，
+                //   导致 12 路作业绑定整段跳过、软件“假运行”（相机取流但永不判定）。改用 TryParse，失败时回退默认 5。
+                int _yanshiMs;
+                if (!int.TryParse(_config.ReadString("camera", "yanshi", "5"), out _yanshiMs))
+                    _yanshiMs = 5;
+                Thread.Sleep(_yanshiMs);
                 item_sum = this.设置ToolStripMenuItem.DropDownItems.Count;
                 StreamReader sr = null;
                 try
@@ -2034,7 +2038,11 @@ namespace WindowsFormsApplication1
                 Thread zhenlv = new Thread(new ThreadStart(zhenlv_1));
                 zhenlv.IsBackground = true;
                 zhenlv.Start();
-                bnOpen_Click(null, null);
+                // ★ 2026-09-06 ④：授权过期时禁止自动打开相机（2037 门控）
+                if (!_authExpired)
+                    bnOpen_Click(null, null);
+                else
+                    _logger.WriteLog("启动流程: 授权未通过，跳过自动开相机");
                 display();
                 try
                 {
@@ -2585,6 +2593,9 @@ namespace WindowsFormsApplication1
         Dictionary<string, string> dict1 = new Dictionary<string, string>();
         #endregion
         #region 删除存图
+        // ★ 2026-09-11：存图保留天数（默认7），可在配置窗"存图限制"旁的可编辑控件设置，写回 ini [存图] baocun_tianshu。
+        private int _saveImageKeepDays = 7;
+
         private void delete12()
         {
             // 使用Timer替代while+Sleep，避免永久阻塞线程池
@@ -2593,18 +2604,15 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    DeleteOldFolders(info1ok1, @"E:\fu1ok\");
-                    DeleteOldFolders(info2ok1, @"E:\fu2ok\");
-                    DeleteOldFolders(info3ok1, @"E:\fu3ok\");
-                    DeleteOldFolders(info4ok1, @"E:\fu4ok\");
-                    DeleteOldFolders(info5ok1, @"E:\fu5ok\");
-                    DeleteOldFolders(info6ok1, @"E:\fu6ok\");
-                    DeleteOldFolders(info7ok1, @"E:\fu7ok\");
-                    DeleteOldFolders(info8ok1, @"E:\fu8ok\");
-                    DeleteOldFolders(info9ok1, @"E:\fu9ok\");
-                    DeleteOldFolders(info10ok1, @"E:\fu10ok\");
-                    DeleteOldFolders(info11ok1, @"E:\fu11ok\");
-                    DeleteOldFolders(info12ok1, @"E:\fu12ok\");
+                    // ★ 存图子目录已按 yyyyMMdd 命名，按"目录名日期早于今天-N 天"清理，OK/NG 两侧 12 路统一处理。
+                    int keepDays = _saveImageKeepDays;
+                    for (int i = 0; i < 12; i++)
+                    {
+                        var m = _jobs.Myjobs[i];
+                        if (m == null) continue;
+                        CleanupOldDayFolders(m.pathhead_ok, keepDays);
+                        CleanupOldDayFolders(m.pathhead_ng, keepDays);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -2613,24 +2621,33 @@ namespace WindowsFormsApplication1
             }, null, 100000, 100000);
         }
 
-        private void DeleteOldFolders(DirectoryInfo dirInfo, string basePath)
+        /// <summary>清理指定存图根目录下、目录名日期早于"今天-keepDays天"的子目录。</summary>
+        private void CleanupOldDayFolders(string basePath, int keepDays)
         {
+            if (string.IsNullOrEmpty(basePath) || !Directory.Exists(basePath)) return;
             try
             {
-                if (dirInfo == null) return;
-                foreach (DirectoryInfo NextFolder in dirInfo.GetDirectories())
+                DateTime today = DateTime.Today;
+                foreach (string dir in Directory.GetDirectories(basePath))
                 {
-                    try
+                    string name = Path.GetFileName(dir);
+                    DateTime dirDate;
+                    // 只处理 yyyyMMdd 日期目录，其它名字（非日期）不删，避免误删用户自建目录
+                    if (DateTime.TryParseExact(name, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out dirDate))
                     {
-                        if ((DateTime.Now - Directory.GetCreationTime(NextFolder.FullName)).TotalDays > 0)
+                        if ((today - dirDate.Date).TotalDays > keepDays)
                         {
-                            Directory.Delete(NextFolder.FullName, true);
+                            try { Directory.Delete(dir, true); }
+                            catch (Exception ex) { _logger.WriteLog("删除旧存图失败: " + dir + " " + ex.Message); }
                         }
                     }
-                    catch { }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.WriteLog("清理存图目录异常: " + basePath + " " + ex.Message);
+            }
         }
         #endregion
         #region 帧率检测
@@ -2731,6 +2748,7 @@ namespace WindowsFormsApplication1
         {
             int dayt = 0;
             int dayz = 0;
+            int authV1 = 0;   // ★ 2026-09-07：授权到期日期（用于统一计算 _authExpired，见下方）
             string zhongjian = "22";
 
             // ★ 读取加密码，带重试
@@ -2860,6 +2878,7 @@ namespace WindowsFormsApplication1
                     int.TryParse(code1, out v1);
                     int.TryParse(code2_val, out v2);
                     int.TryParse(code3, out v3);
+                    authV1 = v1;
                     if (v1 > now && v2 <= now && v3 <= now)
                     {
                         dayz = 1;
@@ -2893,6 +2912,13 @@ namespace WindowsFormsApplication1
             {
                 _logger.WriteLog("启动解码: code长度不足7位, 无法解码");
             }
+            // ★ 2026-09-07：统一计算授权门控。
+            //   必须限定「确实读到有效到期日期 authV1>0」才算过期 —— 否则 test.ini 读取失败或字段为空时
+            //   v1=0 会被误判成过期，进而阻止自动开相机（改动前无论授权结果如何都会自动开）。
+            //   授权数据不可读时保持"未过期"，仍由下方 dayz==0 的界面流程显示"加密中"并禁用按钮。
+            _authExpired = (authV1 > 0 && dayz == 0);
+            if (_authExpired)
+                _logger.WriteLog("启动解码: 授权门控生效，将跳过自动开相机");
             try
             {
                 day2 = GetCPUSerialnumber(zhongjian);
@@ -2986,6 +3012,55 @@ namespace WindowsFormsApplication1
             _cachedNumericUpDown6Value = numericUpDown6.Value;
             numericUpDown6.ValueChanged += (s_, e_) => _cachedNumericUpDown6Value = numericUpDown6.Value;
 
+            // —— 启动前相机关卡复查（三个协议的连接 1）——
+            // 兜底"误改 test.ini"导致的同协议相机归属冲突：启动阶段即写日志并明示，避免触发/反馈回写互相覆盖。
+            try
+            {
+                if (_comm != null && _comm.Omron != null && _comm.Omron.ConfigIni != null)
+                {
+                    var startupIni = _comm.Omron.ConfigIni;
+                    var conn1Conflicts = new System.Collections.Generic.List<string>();
+                    string fc = CommCameraGuard.CheckStartupFins(startupIni, 1);
+                    if (fc != null) conn1Conflicts.Add("FINS 连接 1：\r\n" + fc);
+                    string mc = CommCameraGuard.CheckStartupModbusTcp(startupIni, 1);
+                    if (mc != null) conn1Conflicts.Add("Modbus-TCP 连接 1：\r\n" + mc);
+                    string rc = CommCameraGuard.CheckStartupModbusRtu(startupIni, 1);
+                    if (rc != null) conn1Conflicts.Add("Modbus-RTU 连接 1：\r\n" + rc);
+                    if (conn1Conflicts.Count > 0)
+                    {
+                        foreach (var m in conn1Conflicts)
+                        {
+                            try { _logger.WriteLog("启动复查-相机归属冲突: " + m.Replace("\r\n", " | ")); } catch { }
+                        }
+                        System.Windows.Forms.MessageBox.Show(
+                            "检测到「相机归属冲突」，以下协议连接 1 配置被同协议其它连接占用，连接 1 已阻止自动启动。\r\n"
+                            + "为避免触发/反馈回写互相覆盖，请在占用相机的连接里清空冲突项并保存，再重启软件使配置生效。\r\n\r\n"
+                            + string.Join("\r\n\r\n", conn1Conflicts),
+                            "相机归属冲突 - 连接已阻止启动",
+                            System.Windows.Forms.MessageBoxButtons.OK,
+                            System.Windows.Forms.MessageBoxIcon.Warning);
+                    }
+                }
+            }
+            catch { }
+
+            // ★ 2026-09-11：读取存图保留天数（配置窗可编辑，写回 [存图] baocun_tianshu；默认7）
+            try
+            {
+                int keep;
+                if (int.TryParse(_config.ReadString("存图", "baocun_tianshu", "7"), out keep) && keep >= 1)
+                {
+                    _saveImageKeepDays = keep;
+                    if (numericUpDown_saveDays != null && !numericUpDown_saveDays.IsDisposed)
+                        numericUpDown_saveDays.Value = keep;
+                }
+            }
+            catch { }
+
+            // ★ 2026-09-11：启动自动清理任务，删除超过 7 天的存图目录（原 delete12 从未被调用，导致目录只增不减占满磁盘）
+            //   info*ok1 已在 InitializeJobManager 中赋值，safe 挂在此处；Timer 首跑延时 100 秒，避开启动期 IO 高峰。
+            try { delete12(); }
+            catch (Exception ex) { _logger.WriteLog("启动删除存图任务失败: " + ex.Message); }
         }
 
         /// <summary>
@@ -3887,11 +3962,7 @@ namespace WindowsFormsApplication1
                 if (_inspectLocks[i] == null) continue;
                 lock (_inspectLocks[i])
                 {
-                    if (_pendingFrame[i] != null)
-                    {
-                        try { _pendingFrame[i].Dispose(); } catch { }
-                        _pendingFrame[i] = null;
-                    }
+                    // 帧清理原保护 _pendingFrame（死字段已删），锁在此保持对称
                 }
             }
         }
@@ -3911,10 +3982,11 @@ namespace WindowsFormsApplication1
                 }
                 if (_inspectStop || _disposingFlag) break;
                 Bitmap frame = null;
+                System.Collections.Generic.KeyValuePair<string, string> payload = default(System.Collections.Generic.KeyValuePair<string, string>);
                 lock (_inspectLocks[slot])
                 {
-                    frame = _pendingFrame[slot];
-                    _pendingFrame[slot] = null;
+                    if (_frameQueue[slot] != null && _frameQueue[slot].TryDequeue(out frame))
+                        _framePayload[slot]?.TryDequeue(out payload);
                 }
                 if (frame == null) continue;
                 if (_switchingScheme || _disposingFlag)
@@ -3927,7 +3999,7 @@ namespace WindowsFormsApplication1
                     ReleaseFrameBitmap(slot);
                     bmp[slot] = frame;
                     if (_jobs.Myjobs != null && _jobs.Myjobs[slot] != null)
-                        getrecord(_jobs.Myjobs[slot]);
+                        getrecord(_jobs.Myjobs[slot], payload);
                 }
                 catch (Exception ex)
                 {
@@ -3937,10 +4009,8 @@ namespace WindowsFormsApplication1
                 {
                     if (slot >= 0 && slot < 12 && bmp[slot] == frame)
                         ReleaseFrameBitmap(slot);
-                    // ★ F22: 检测线程处理完一帧后清除通讯触发待处理标志，
-                    //        确保 PLC 触发只有在帧真正被检测后才视为已响应
-                    if (slot >= 0 && slot < 12)
-                        _jobs.ClearCommTriggerPending(slot);
+                    // ★ 2026-09-06 ⑤：待处理触发计数在 EnqueueInspectFrame 接收帧时已经递减，
+                    //   检测完成不再清零，避免冲掉检测期间到达的新触发置位。
                 }
             }
         }
@@ -3950,22 +4020,45 @@ namespace WindowsFormsApplication1
             for (int i = 0; i < 12; i++)
             {
                 if (_inspectLocks[i] == null) continue;
-                Bitmap dropped = null;
                 lock (_inspectLocks[i])
                 {
-                    dropped = _pendingFrame[i];
-                    _pendingFrame[i] = null;
-                }
-                if (dropped != null)
-                {
-                    try { dropped.Dispose(); } catch { }
+                    if (_frameQueue[i] != null)
+                    {
+                        Bitmap dropped;
+                        while (_frameQueue[i].TryDequeue(out dropped))
+                        {
+                            try { dropped.Dispose(); } catch { }
+                        }
+                    }
+                    if (_framePayload[i] != null)
+                    {
+                        System.Collections.Generic.KeyValuePair<string, string> droppedPayload;
+                        while (_framePayload[i].TryDequeue(out droppedPayload)) { }
+                    }
                 }
             }
         }
 
         /// <summary>
-        /// 入队最新帧；检测未完成时丢弃尚未处理的旧待检帧。
+        /// ★ 2026-09-06 ①：入队待检帧。单槽 latest-wins → 每相机深度 InspectQueueDepth 的有界队列，
+        /// 检测节拍慢于产线时不再静默丢件：队列满时丢弃最旧帧并累加丢弃计数（供日志/后续 NAK 上报），
+        /// 而不是“新帧替换旧帧且无计数无告警”。
+        /// ⑤：帧被接收即递减待处理触发计数，检测完成不再清零，避免冲掉在途新触发的置位。
+        /// ②：回帧时按 FIFO 从 TriggerPayloads 取出本次触发的参数快照，随帧携带到检测阶段。
         /// </summary>
+        private const int InspectQueueDepth = 3;
+        /// <summary>① 每相机待检帧队列（深度 InspectQueueDepth）</summary>
+        private System.Collections.Concurrent.ConcurrentQueue<Bitmap>[] _frameQueue =
+            new System.Collections.Concurrent.ConcurrentQueue<Bitmap>[12];
+        /// <summary>② 与 _frameQueue 逐元素对齐的 payload 快照队列：(inputKey, selection)</summary>
+        private System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[] _framePayload =
+            new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[12];
+        /// <summary>① 各相机因队列满被丢弃的帧计数（不再静默丢件，可对外暴露/回 NAK）</summary>
+        private int[] _droppedFrameCount = new int[12];
+        // ★ 2026-09-11：丢帧日志限频（每路每秒至多 1 条）。过载期队列满会连续丢帧，
+        //   若每帧都 WriteLog 会频繁刷盘 IO，反而加重检测过载并撑爆日志文件。
+        private readonly DateTime[] _lastDropLogAt = new DateTime[12];
+
         private void EnqueueInspectFrame(int slot, Bitmap owned)
         {
             if (owned == null) return;
@@ -3974,17 +4067,38 @@ namespace WindowsFormsApplication1
                 try { owned.Dispose(); } catch { }
                 return;
             }
-            Bitmap dropped = null;
+            // ② payload 快照：从触发队列按 FIFO 取出与本次回帧对应的参数（连续/硬触发模式为空）
+            System.Collections.Generic.KeyValuePair<string, string> payload = default(System.Collections.Generic.KeyValuePair<string, string>);
+            if (_jobs != null && _jobs.TriggerPayloads != null && _jobs.TriggerPayloads[slot] != null)
+                _jobs.TriggerPayloads[slot].TryDequeue(out payload);
+
             lock (_inspectLocks[slot])
             {
-                dropped = _pendingFrame[slot];
-                _pendingFrame[slot] = owned;
+                if (_frameQueue[slot] == null) _frameQueue[slot] = new System.Collections.Concurrent.ConcurrentQueue<Bitmap>();
+                if (_framePayload[slot] == null) _framePayload[slot] = new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>();
+                while (_frameQueue[slot].Count >= InspectQueueDepth)
+                {
+                    Bitmap old;
+                    if (!_frameQueue[slot].TryDequeue(out old)) break;
+                    System.Collections.Generic.KeyValuePair<string, string> oldPayload;
+                    _framePayload[slot].TryDequeue(out oldPayload);
+                    int n = System.Threading.Interlocked.Increment(ref _droppedFrameCount[slot]);
+                    try { old.Dispose(); } catch { }
+                    // ★ 2026-09-11：限频写入——过载期连续丢帧不再每帧刷盘，压制到每秒约 1 条。
+                    DateTime now = DateTime.Now;
+                    if ((now - _lastDropLogAt[slot]).TotalSeconds >= 1.0)
+                    {
+                        _lastDropLogAt[slot] = now;
+                        _logger.WriteLog("相机" + (slot + 1) + "检测过载：待检队列满，丢弃最旧帧（累计" + n + "）");
+                    }
+                }
+                _frameQueue[slot].Enqueue(owned);
+                _framePayload[slot].Enqueue(payload);
             }
-            if (dropped != null)
-            {
-                try { dropped.Dispose(); } catch { }
-                _logger.WriteLog("相机" + (slot + 1) + "检测未完成，丢旧待检帧");
-            }
+            // ⑤ 帧已被接收：递减待处理触发计数（不再等检测完成才清，避免冲掉在途新触发）
+            if (_jobs != null && _jobs.Myjobs != null && _jobs.Myjobs[slot] != null
+                && _jobs.Myjobs[slot].commTriggerPendingCount > 0)
+                System.Threading.Interlocked.Decrement(ref _jobs.Myjobs[slot].commTriggerPendingCount);
             try { _inspectSignal[slot].Set(); } catch { }
         }
 
@@ -4024,12 +4138,83 @@ namespace WindowsFormsApplication1
                 TryDisposeCogImage(old);
         }
 
+        /// <summary>
+        /// 保存方案前清洗失效的图像引用。
+        /// VisionPro 在程序长时间运行、或相机未采集时，工具输入图像的底层句柄可能已被系统回收，
+        /// 此时直接序列化保存整个工作管理器，会因访问"已释放对象"(ObjectDisposedException)而崩溃
+        /// （客户现场表现为"保存方案失败/一闪崩溃"，重启后重新采集句柄有效即恢复）。
+        /// <para>
+        /// ★ N1：不再只清洗名为 "Input" 的那一个终端 —— 遍历**全部输入终端**，把"已失效"的图像统一
+        /// 替换成有效、自拥有的空白图（保存 .vpp 本就不包含运行时输入帧，替换不影响方案内容，
+        /// 加载后再喂真实帧）；**输出终端只检测并记录**（输出通常只读，改输出会破坏结果语义）。
+        /// </para>
+        /// </summary>
+        private void SanitizeSchemeImagesForSave()
+        {
+            if (_jobs?.Myjobs == null || manager1 == null) return;
+            int cleaned = 0;
+            int suspiciousOutputs = 0;
+
+            foreach (var mj in _jobs.Myjobs)
+            {
+                CogToolBlock block = mj?.block;
+                if (block == null) continue;
+
+                // 1) 输入终端：失效图像替换为自拥有的空白图
+                try
+                {
+                    for (int i = 0; i < block.Inputs.Count; i++)
+                    {
+                        object v;
+                        try { v = block.Inputs[i].Value; } catch { continue; }
+                        ICogImage img = v as ICogImage;
+                        if (img == null || IsCogImageUsable(img)) continue;
+
+                        ICogImage replacement = mj.Color
+                            ? (ICogImage)new CogImage24PlanarColor(640, 480)
+                            : new CogImage8Grey(640, 480);
+                        try { block.Inputs[i].Value = replacement; } catch { }
+                        TryDisposeCogImage(v);
+                        cleaned++;
+                    }
+                }
+                catch { }
+
+                // 2) 输出终端：只检测，不修改
+                try
+                {
+                    for (int i = 0; i < block.Outputs.Count; i++)
+                    {
+                        object v;
+                        try { v = block.Outputs[i].Value; } catch { continue; }
+                        ICogImage img = v as ICogImage;
+                        if (img != null && !IsCogImageUsable(img)) suspiciousOutputs++;
+                    }
+                }
+                catch { }
+            }
+
+            if (cleaned > 0)
+                _logger.WriteLog("保存前已替换 " + cleaned + " 张失效图像引用，避免保存序列化崩溃");
+            if (suspiciousOutputs > 0)
+                _logger.WriteLog("保存前检测到 " + suspiciousOutputs + " 个输出终端仍引用失效图像（未修改；若保存失败请先重启软件）");
+        }
+
+        /// <summary>图像对象是否仍可访问（底层句柄未被释放）。</summary>
+        private static bool IsCogImageUsable(ICogImage img)
+        {
+            try { int w = img.Width; int h = img.Height; return true; }
+            catch { return false; }
+        }
+
         #endregion
         #region 检测主流程（getrecord）
         /// <summary>
         /// 检测主流程：取图→block.Run 检测→输出 OK/NG→统计/存图（检测线程执行，不在海康回调里跑）
+        /// ★ 2026-09-06（②参数错位修复）：增加 payload 参数，将通讯触发时刻的 inputKey/selection 快照
+        /// 在检测前写入 block 输入，避免多触发连续到达时共享 block.Inputs 被覆盖。
         /// </summary>
-        private void getrecord(Myjob myjob)
+        private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload)
         {
             try
             {
@@ -4091,6 +4276,12 @@ namespace WindowsFormsApplication1
                                 }
                                 #endregion
 
+                                // ★ 2026-09-06（②参数错位修复）：把随帧携带的 payload 写入 block 输入
+                                if (!string.IsNullOrEmpty(payload.Key) && myjob.block != null && myjob.block.Inputs.Contains(payload.Key))
+                                {
+                                    try { myjob.block.Inputs[payload.Key].Value = payload.Value; }
+                                    catch (Exception exPayload) { _logger.WriteLog("相机" + myjob.path_number + " payload 写入失败: " + exPayload.Message); }
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -4258,13 +4449,22 @@ namespace WindowsFormsApplication1
                                     });
                                 }
                             }
+                            // 阶段：无协议连接2~4 的结果回写“发出触发的那条无协议连接”的端口，而非固定 connection 1
+                            Form3 nprotoTarget = null;
+                            if (myjob.triggerProto == NoProtoProto && myjob.triggerLinkId > 1)
+                                nprotoTarget = frmCommManager.GetNoProtoLink(myjob.triggerLinkId);
+                            Form3 noProtoOut = nprotoTarget ?? frm3;
                             if (myjob.tcp)
                             {
+                                // 在检测线程上快照输出值，避免后台任务跨线程读 VisionPro COM(block.Outputs) 引发竞态
+                                string tcpVal;
+                                try { tcpVal = myjob.block.Outputs["tcp"].Value.ToString(); }
+                                catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " TCP输出失败: " + ex.Message); tcpVal = "无"; }
                                 Task.Run(() =>
                                 {
                                     try
                                     {
-                                        frm3.changeok(myjob.block.Outputs["tcp"].Value.ToString());
+                                        noProtoOut.changeok(tcpVal);
                                     }
                                     catch (Exception ex)
                                     {
@@ -4274,12 +4474,14 @@ namespace WindowsFormsApplication1
                             }
                             if (myjob.serial)
                             {
+                                string serialVal;
+                                try { serialVal = myjob.block.Outputs["serial"].Value.ToString(); }
+                                catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 串口输出失败: " + ex.Message); serialVal = "无"; }
                                 Task.Run(() =>
                                 {
                                     try
                                     {
-                                        string out1temp1 = myjob.block.Outputs["serial"].Value.ToString();
-                                        frm3.changeok(out1temp1);
+                                        noProtoOut.changeok(serialVal);
                                     }
                                     catch (Exception ex)
                                     {
@@ -4287,7 +4489,7 @@ namespace WindowsFormsApplication1
                                     }
                                 });
                             }
-                            if (_comm.Omron.fins_en && _comm.Omron.chushihua)
+                            if (_comm.Omron.CanWriteResultOutput())
                             {
                                 try
                                 {
@@ -4298,7 +4500,7 @@ namespace WindowsFormsApplication1
                                     fins = "无";
                                 }
                             }
-                            if (_comm.Modbustcp.fins_en && _comm.Modbustcp.chushihua)
+                            if (_comm.Modbustcp.CanWriteResultOutput())
                             {
                                 try
                                 {
@@ -4309,7 +4511,7 @@ namespace WindowsFormsApplication1
                                     modbustcps = "无";
                                 }
                             }
-                            if (_comm.ModbusRtu.fins_en && _comm.ModbusRtu.chushihua)
+                            if (_comm.ModbusRtu.CanWriteResultOutput())
                             {
                                 try
                                 {
@@ -4356,11 +4558,20 @@ namespace WindowsFormsApplication1
                             if (myjob.zidongbaoguang && camIdx >= 0 && camIdx < 12 && _cameraCtrl.Cameras[camIdx] != null)
                             {
                                 // ★ 按需创建（性能优先）：未启用自动曝光的相机不再每帧生成空转任务
+                                // 在调用线程快照 UI 曝光基准与补偿输出值，避免后台任务跨线程读控件/VisionPro COM
+                                string exposureText = tbExposure1.Text;
+                                string buchangOut;
+                                try { buchangOut = myjob.block.Outputs["buchang"].Value.ToString(); }
+                                catch { buchangOut = "无"; }
                                 Task.Run(() =>
                                 {
                                     try
                                     {
-                                        float baoguang_temp = float.Parse(tbExposure1.Text) * (255 - float.Parse(myjob.block.Outputs["buchang"].Value.ToString()) / 255);
+                                        float baseExposure;
+                                        if (!float.TryParse(exposureText.Trim(), out baseExposure)) baseExposure = 0f;
+                                        float compens;
+                                        if (!float.TryParse(buchangOut, out compens)) compens = 0f;
+                                        float baoguang_temp = baseExposure * (255 - compens / 255);
                                         _cameraCtrl.Cameras[camIdx].MV_CC_SetEnumValue_NET("ExposureAuto", 0);
                                         int nRet = _cameraCtrl.Cameras[camIdx].MV_CC_SetFloatValue_NET("ExposureTime", baoguang_temp);
                                         if (nRet != MyCamera.MV_OK)
@@ -4601,21 +4812,20 @@ namespace WindowsFormsApplication1
                                     {
                                         if (bmp[camIdx] != null)
                                         {
-                                            // ★ 修复（2026-09-05）：绝不能用 bmp[camIdx].Clone()。
-                                            //   Bitmap.Clone() 仅浅拷贝、与原图共享底层像素缓冲区；原图 bmp[camIdx]
-                                            //   在本帧 getrecord 返回后由 InspectWorker.finally 立即 Dispose，
-                                            //   后台写盘任务再读像素会读到已释放内存（概率性黑图/损坏或 GDI+ 异常）。
-                                            //   改用 DrawImage 生成完全独立的像素副本，解除与原始 Bitmap 的生命周期耦合。
+                                            // ★ 存图修复：Bitmap.Clone(Rectangle, PixelFormat) 为真深拷贝，
+                                            //   生成完全独立的像素副本，与源 Bitmap 生命周期解耦；对黑白 Mono8
+                                            //   (Format8bppIndexed) 与彩色(24bpp) 均有效。
+                                            //   原 DrawImage 方案对索引格式调用 Graphics.FromImage 每帧必抛
+                                            //   （GDI+ 不允许为 8bppIndexed 创建 Graphics），导致黑白相机存图静默失败。
                                             Bitmap src = bmp[camIdx];
-                                            saveCopy = new Bitmap(src.Width, src.Height, src.PixelFormat);
-                                            using (var g = System.Drawing.Graphics.FromImage(saveCopy))
-                                            {
-                                                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
-                                                g.DrawImage(src, new Rectangle(0, 0, src.Width, src.Height), 0, 0, src.Width, src.Height, GraphicsUnit.Pixel);
-                                            }
+                                            saveCopy = src.Clone(new Rectangle(0, 0, src.Width, src.Height), src.PixelFormat);
                                         }
                                     }
-                                    catch { saveCopy = null; }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.WriteLog("相机" + (camIdx + 1) + " 存图拷贝失败: " + ex.Message);
+                                        saveCopy = null;
+                                    }
                                     if (saveCopy == null)
                                     {
                                         Volatile.Write(ref _saveFlying[camIdx], 0);
@@ -6307,25 +6517,9 @@ namespace WindowsFormsApplication1
                 StopInspectWorkers();
                 // ★ F14: 退出时释放各相机持有的 VisionPro COM 对象
                 ReleaseAllMyjobVisionObjects();
-                // 1. 尝试停止抓流（仅针对可能未正常关闭的相机）
-                bool[] isGrabbing = new bool[] { m_bGrabbing1, m_bGrabbing2, m_bGrabbing3, m_bGrabbing4,
-                                                  m_bGrabbing5, m_bGrabbing6, m_bGrabbing7, m_bGrabbing8, m_bGrabbing9, m_bGrabbing10, m_bGrabbing11, m_bGrabbing12 };
-                for (int i = 0; i < 12; i++)
-                {
-                    try
-                    {
-                        // 只处理还未释放的相机对象（防止重复释放）
-                        if (_cameraCtrl.Cameras[i] != null)
-                        {
-                            if (i < isGrabbing.Length && isGrabbing[i])
-                                _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET();
-                            _cameraCtrl.Cameras[i].MV_CC_CloseDevice_NET();
-                            _cameraCtrl.Cameras[i].MV_CC_DestroyDevice_NET();
-                            _cameraCtrl.Cameras[i] = null;
-                        }
-                    }
-                    catch { }
-                }
+                // 1. 释放全部相机（停止抓流 → 关闭设备 → 销毁句柄），释放所有权收口到 CameraController。
+                //    此处不逐路等待，由后面的统一 Sleep 等待 SDK 回调线程退出。
+                _cameraCtrl.ReleaseAllCameras(0, 0);
 
                 // ★ 关键：给足够时间让相机 SDK 的回调线程完全退出（至少500ms）
                 Thread.Sleep(500);
@@ -6445,38 +6639,9 @@ namespace WindowsFormsApplication1
             // ★ F24：先设置释放标志，让 ImageCallBack 入口立即返回，避免回调进入正在释放的 SDK
             _disposingFlag = true;
 
-            bool[] isGrabbing = new bool[] { m_bGrabbing1, m_bGrabbing2, m_bGrabbing3, m_bGrabbing4,
-                                              m_bGrabbing5, m_bGrabbing6, m_bGrabbing7, m_bGrabbing8, m_bGrabbing9, m_bGrabbing10, m_bGrabbing11, m_bGrabbing12 };
-
-            for (int i = 0; i < 12; i++)
-            {
-                try
-                {
-                    if (_cameraCtrl.Cameras[i] != null)
-                    {
-                        // 1. 先停止抓流（如果正在抓取）- 增加等待时间确保回调停止
-                        if (i < isGrabbing.Length && isGrabbing[i])
-                        {
-                            _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET();
-                            Thread.Sleep(100);  // 增加到100ms
-                        }
-
-                        // 2. 关闭设备
-                        _cameraCtrl.Cameras[i].MV_CC_CloseDevice_NET();
-                        Thread.Sleep(50);  // 增加到50ms
-
-                        // 3. 销毁设备对象
-                        _cameraCtrl.Cameras[i].MV_CC_DestroyDevice_NET();
-
-                        // 4. 释放引用
-                        _cameraCtrl.Cameras[i] = null;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog(string.Format("相机{0}释放异常: {1}", i + 1, ex.Message));
-                }
-            }
+            // ★ S4：释放所有权收口到 CameraController —— 停止抓流(等100ms) → 关闭设备(等50ms) → 销毁句柄。
+            //    逐路逐操作容错；已为空的槽位自动跳过（可重复调用）。
+            _cameraCtrl.ReleaseAllCameras(100, 50);
 
             // ★ F24：所有相机释放后，等待足够长时间让 SDK 内部回调线程完全退出
             Thread.Sleep(300);
@@ -7302,9 +7467,9 @@ namespace WindowsFormsApplication1
                     chonglianzhong = false;
                 }
             });
-            if (day1 != System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(DateTime.Now.DayOfWeek))
+            if (day1 != DateTime.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture))
             {
-                day1 = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetDayName(DateTime.Now.DayOfWeek);
+                day1 = DateTime.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
                 _jobs.myjob1.fileng = new FileInfo(_jobs.myjob1.pathhead_ng + day1 + "\\");
                 _jobs.myjob2.fileng = new FileInfo(_jobs.myjob2.pathhead_ng + day1 + "\\");
                 _jobs.myjob1.fileok = new FileInfo(_jobs.myjob1.pathhead_ok + day1 + "\\");
@@ -7455,10 +7620,16 @@ namespace WindowsFormsApplication1
         }
         #endregion
         #region 通讯触发与切型
+        // 无协议（串口/TCP）触发协议号：与 FINS=1/ModbusTCP=2/ModbusRTU=3 配对，唯一定位“发出触发的那条无协议连接”
+        private const int NoProtoProto = 4;
+
         private void DataChange(object sender, Form3.SelectionChangedEventArgs e)
         {
 
             textBox1.Text = e.Selection;
+            // 阶段：无协议连接 2~4 触发经主窗宿主转发，事件内已通过 e.LinkId 携带“原始来源链路号”，
+            // 记录到相机使检测结果能回到发出触发的那条无协议连接（修复结果串到连接 1）。
+            int nopSrcLink = e.LinkId;
             try
             {
                 if (manager1.JobCount > 0)
@@ -7550,6 +7721,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob1.triggerZifu) || e.Selection == _jobs.myjob1.triggerZifu)
             {
                 _jobs.myjob1.jieshouZifu = _jobs.myjob1.triggerZifu;
+                _jobs.myjob1.triggerLinkId = nopSrcLink;
+                _jobs.myjob1.triggerProto = NoProtoProto;
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(0);
                 if (MyCamera.MV_OK != nRet)
@@ -7560,6 +7733,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob2.triggerZifu) || e.Selection == _jobs.myjob2.triggerZifu)
             {
                 _jobs.myjob2.jieshouZifu = _jobs.myjob2.triggerZifu;
+                _jobs.myjob2.triggerLinkId = nopSrcLink;
+                _jobs.myjob2.triggerProto = NoProtoProto;
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(1);
                 if (MyCamera.MV_OK != nRet)
@@ -7570,6 +7745,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob3.triggerZifu) || e.Selection == _jobs.myjob3.triggerZifu)
             {
                 _jobs.myjob3.jieshouZifu = _jobs.myjob3.triggerZifu;
+                _jobs.myjob3.triggerLinkId = nopSrcLink;
+                _jobs.myjob3.triggerProto = NoProtoProto;
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(2);
                 if (MyCamera.MV_OK != nRet)
@@ -7580,6 +7757,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob4.triggerZifu) || e.Selection == _jobs.myjob4.triggerZifu)
             {
                 _jobs.myjob4.jieshouZifu = _jobs.myjob4.triggerZifu;
+                _jobs.myjob4.triggerLinkId = nopSrcLink;
+                _jobs.myjob4.triggerProto = NoProtoProto;
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(3);
                 if (MyCamera.MV_OK != nRet)
@@ -7590,6 +7769,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob5.triggerZifu) || e.Selection == _jobs.myjob5.triggerZifu)
             {
                 _jobs.myjob5.jieshouZifu = _jobs.myjob5.triggerZifu;
+                _jobs.myjob5.triggerLinkId = nopSrcLink;
+                _jobs.myjob5.triggerProto = NoProtoProto;
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(4);
                 if (MyCamera.MV_OK != nRet)
@@ -7600,6 +7781,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob6.triggerZifu) || e.Selection == _jobs.myjob6.triggerZifu)
             {
                 _jobs.myjob6.jieshouZifu = _jobs.myjob6.triggerZifu;
+                _jobs.myjob6.triggerLinkId = nopSrcLink;
+                _jobs.myjob6.triggerProto = NoProtoProto;
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(5);
                 if (MyCamera.MV_OK != nRet)
@@ -7610,6 +7793,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob7.triggerZifu) || e.Selection == _jobs.myjob7.triggerZifu)
             {
                 _jobs.myjob7.jieshouZifu = _jobs.myjob7.triggerZifu;
+                _jobs.myjob7.triggerLinkId = nopSrcLink;
+                _jobs.myjob7.triggerProto = NoProtoProto;
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(6);
                 if (MyCamera.MV_OK != nRet)
@@ -7620,6 +7805,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob8.triggerZifu) || e.Selection == _jobs.myjob8.triggerZifu)
             {
                 _jobs.myjob8.jieshouZifu = _jobs.myjob8.triggerZifu;
+                _jobs.myjob8.triggerLinkId = nopSrcLink;
+                _jobs.myjob8.triggerProto = NoProtoProto;
                 int nRet = TriggerSoftwareCamera(7);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7629,6 +7816,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob9.triggerZifu) || e.Selection == _jobs.myjob9.triggerZifu)
             {
                 _jobs.myjob9.jieshouZifu = _jobs.myjob9.triggerZifu;
+                _jobs.myjob9.triggerLinkId = nopSrcLink;
+                _jobs.myjob9.triggerProto = NoProtoProto;
                 int nRet = TriggerSoftwareCamera(8);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7638,6 +7827,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob10.triggerZifu) || e.Selection == _jobs.myjob10.triggerZifu)
             {
                 _jobs.myjob10.jieshouZifu = _jobs.myjob10.triggerZifu;
+                _jobs.myjob10.triggerLinkId = nopSrcLink;
+                _jobs.myjob10.triggerProto = NoProtoProto;
                 int nRet = TriggerSoftwareCamera(9);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7647,6 +7838,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob11.triggerZifu) || e.Selection == _jobs.myjob11.triggerZifu)
             {
                 _jobs.myjob11.jieshouZifu = _jobs.myjob11.triggerZifu;
+                _jobs.myjob11.triggerLinkId = nopSrcLink;
+                _jobs.myjob11.triggerProto = NoProtoProto;
                 int nRet = TriggerSoftwareCamera(10);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7656,6 +7849,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob12.triggerZifu) || e.Selection == _jobs.myjob12.triggerZifu)
             {
                 _jobs.myjob12.jieshouZifu = _jobs.myjob12.triggerZifu;
+                _jobs.myjob12.triggerLinkId = nopSrcLink;
+                _jobs.myjob12.triggerProto = NoProtoProto;
                 int nRet = TriggerSoftwareCamera(11);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7839,17 +8034,54 @@ namespace WindowsFormsApplication1
                 for (int i = 0; i < 12; i++)
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
-                    if (!_comm.Modbustcp.camera_dic.ContainsKey(i + 1)) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
                     _jobs.Myjobs[i].triggerLinkId = e.LinkId;
                     _jobs.Myjobs[i].triggerProto = 2;
+                    // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
+                    string[] linkCam;
+                    if (e.LinkId > 1 && _comm.Modbustcp.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
+                    {
+                        GetCamTrigParams(linkCam, out string lmode, out string ltv1, out string ltv2);
+                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "modbustcp");
+                        continue;
+                    }
+                    if (!_comm.Modbustcp.camera_dic.ContainsKey(i + 1)) continue;
                     GetCamTrigParams(_comm.Modbustcp.camera_dic[i + 1], out string mode, out string tv1, out string tv2);
                     _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "modbustcp");
                 }
             }
             if (e.Camera.Contains("13"))
             {
-                if (path_1 != _comm.Modbustcp.lujing.Replace("\0", "") && qiehuanzhong == 0)
+                // 阶段 7 补强：连接 2~4 切方案走独立分支——用该连接自己的方案路径与切换锁，不占用连接 1 的 lujing/qiehuanzhong。
+                if (e.LinkId > 1)
+                {
+                    string linkPath = (_comm.Modbustcp.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
+                    // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
+                    // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
+                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
+                    {
+                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
+                        _schemeAckProto = 2;
+                        _schemeAckLinkId = e.LinkId;
+                        Task.Run(() =>
+                        {
+                            try
+                            {
+                                // 方案切换涉及大量 UI 操作，收口到 UI 线程执行
+                                if (InvokeRequired)
+                                    Invoke(new Action(() => xinghao_qiehuan(linkPath)));
+                                else
+                                    xinghao_qiehuan(linkPath);
+                            }
+                            finally
+                            {
+                                // 无论成功失败都复位，防止该通道切换被永久锁死
+                                _comm.Modbustcp.SetSwitchLock(e.LinkId, 0);
+                            }
+                        });
+                    }
+                }
+                else if (path_1 != _comm.Modbustcp.lujing.Replace("\0", "") && qiehuanzhong == 0)
                 {
                     if (_comm.Modbustcp.camera_dic[13][2] == "true")
                     {
@@ -7892,17 +8124,54 @@ namespace WindowsFormsApplication1
                 for (int i = 0; i < 12; i++)
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
-                    if (!_comm.ModbusRtu.camera_dic.ContainsKey(i + 1)) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
                     _jobs.Myjobs[i].triggerLinkId = e.LinkId;
                     _jobs.Myjobs[i].triggerProto = 3;
+                    // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
+                    string[] linkCam;
+                    if (e.LinkId > 1 && _comm.ModbusRtu.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
+                    {
+                        GetCamTrigParams(linkCam, out string lmode, out string ltv1, out string ltv2);
+                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "modbusrtu");
+                        continue;
+                    }
+                    if (!_comm.ModbusRtu.camera_dic.ContainsKey(i + 1)) continue;
                     GetCamTrigParams(_comm.ModbusRtu.camera_dic[i + 1], out string mode, out string tv1, out string tv2);
                     _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "modbusrtu");
                 }
             }
             if (e.Camera.Contains("13"))
             {
-                if (path_1 != _comm.ModbusRtu.lujing.Replace("\0", "") && qiehuanzhong == 0)
+                // 阶段 7 补强：连接 2~4 切方案走独立分支——用该连接自己的方案路径与切换锁，不占用连接 1 的 lujing/qiehuanzhong。
+                if (e.LinkId > 1)
+                {
+                    string linkPath = (_comm.ModbusRtu.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
+                    // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
+                    // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
+                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
+                    {
+                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
+                        _schemeAckProto = 3;
+                        _schemeAckLinkId = e.LinkId;
+                        Task.Run(() =>
+                        {
+                            try
+                            {
+                                // 方案切换涉及大量 UI 操作，收口到 UI 线程执行
+                                if (InvokeRequired)
+                                    Invoke(new Action(() => xinghao_qiehuan(linkPath)));
+                                else
+                                    xinghao_qiehuan(linkPath);
+                            }
+                            finally
+                            {
+                                // 无论成功失败都复位，防止该通道切换被永久锁死
+                                _comm.ModbusRtu.SetSwitchLock(e.LinkId, 0);
+                            }
+                        });
+                    }
+                }
+                else if (path_1 != _comm.ModbusRtu.lujing.Replace("\0", "") && qiehuanzhong == 0)
                 {
                     if (_comm.ModbusRtu.camera_dic[13][2] == "true")
                     {
@@ -8025,7 +8294,7 @@ namespace WindowsFormsApplication1
                 if (_jobs.yunxing == false)
                 {
                     _jobs.myjob1.trriger = 1;
-                    getrecord(_jobs.myjob1);
+                    getrecord(_jobs.myjob1, default(System.Collections.Generic.KeyValuePair<string, string>));
                 }
             }
             catch { }
@@ -8059,7 +8328,7 @@ namespace WindowsFormsApplication1
                     if (_jobs.myjob1.trriger == 0)
                     {
                         _jobs.myjob1.trriger = 1;
-                        getrecord(_jobs.myjob1);
+                        getrecord(_jobs.myjob1, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger1_temp = 1;
                     timer7.Interval = int.Parse(textBox6.Text);
@@ -8084,7 +8353,7 @@ namespace WindowsFormsApplication1
                     if (myjob.trriger == 0)
                     {
                         myjob.trriger = 1;
-                        getrecord(myjob);
+                        getrecord(myjob, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger_temp = 1;
                     tim.Interval = int.Parse(text.Text);
@@ -8307,13 +8576,18 @@ namespace WindowsFormsApplication1
             try
             {
                 保存ToolStripMenuItem.Enabled = false;
+                SanitizeSchemeImagesForSave();
                 CogSerializer.SaveObjectToFile(manager1, path_1);
-                保存ToolStripMenuItem.Enabled = true;
                 MessageBox.Show("保存方案成功!");
             }
-            catch
+            catch (Exception ex)
             {
-                MessageBox.Show("保存方案失败!");
+                _logger.WriteLog("保存方案失败: " + ex.Message);
+                MessageBox.Show("保存方案失败！若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
+            }
+            finally
+            {
+                保存ToolStripMenuItem.Enabled = true;
             }
         }
 
@@ -9488,8 +9762,17 @@ namespace WindowsFormsApplication1
             }
             else
                 return;
-            CogSerializer.SaveObjectToFile(manager1, path_1);
-            _config.WriteString("path", "path_1", path_1);
+            try
+            {
+                SanitizeSchemeImagesForSave();
+                CogSerializer.SaveObjectToFile(manager1, path_1);
+                _config.WriteString("path", "path_1", path_1);
+            }
+            catch (Exception ex)
+            {
+                _logger.WriteLog("另存为方案失败: " + ex.Message);
+                MessageBox.Show("保存方案失败！若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
+            }
         }
 
         private void 打开ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -10658,18 +10941,6 @@ namespace WindowsFormsApplication1
             catch { }
         }
 
-        private void button15_Click(object sender, EventArgs e)
-        {
-            trriger3_temp = 0;
-            timer10.Enabled = false;
-        }
-
-        private void button18_Click(object sender, EventArgs e)
-        {
-            trriger4_temp = 0;
-            timer11.Enabled = false;
-        }
-
         private void timer11_Tick(object sender, EventArgs e)
         {
             if (_jobs.myjob3.trriger == 0)
@@ -10691,33 +10962,6 @@ namespace WindowsFormsApplication1
 
             }
         }
-
-
-
-        private void listBox1_MouseDown(object sender, MouseEventArgs e)
-        {
-            Task.Run(() =>
-            {
-                try
-                {
-                    string[] time111 = listBox1.SelectedItem.ToString().Split(':');
-                    int ttt1 = int.Parse(time111[0] + time111[1] + time111[2]);
-                    string ttt2 = time111[3];
-                    int ttt3 = int.Parse(time111[4]);
-                    Process myProc = null;
-                    myProc = Process.Start(_jobs.myjob1.pathhead_ng + day1 + "\\" + ttt1 + ttt2 + "#" + ttt3 + ".bmp");//开启一个进程
-                    try
-                    {
-                        myProc.Kill();//关闭一个进程
-                    }
-                    catch { }
-                }
-                catch (Exception ex)
-                { _logger.WriteLog(ex.Message + "图片显示1"); };
-            });
-        }
-
-
         #endregion
         #region 相机控制（枚举/打开/取流/回调）
         /// <summary>
@@ -10729,6 +10973,9 @@ namespace WindowsFormsApplication1
         }
         int diyici = 0;
         bool dakaizhong = false;
+        // ★ 2026-09-06 授权过期门控（④）：替代局部 dayz，供 initialize_FormSet 自动开相机前判断。
+        // ★ 2026-09-07：后台监控线程（daoqi_jiankong）也会写它，故声明 volatile。
+        private volatile bool _authExpired = false;
         private void bnOpen_Click(object sender, EventArgs e)
         {
             if (manager1 == null || manager1.JobCount <= 0)
@@ -10855,7 +11102,9 @@ namespace WindowsFormsApplication1
             bnClose.Enabled = true;
             for (int i = 0; i < 12; i++)
             {
-                string name = (i == 0) ? "bnStartGrab" : ("bnStartGrab" + (i + 1));
+                // ★ 2026-09-11：修复相机1启停按钮名。Designer 中 12 个按钮均为 bnStartGrab1..12，
+                //   原 i==0 用无后缀 "bnStartGrab"（不存在）导致相机1按钮永不启用。
+                string name = "bnStartGrab" + (i + 1);
                 Control[] arr = Controls.Find(name, true);
                 if (arr.Length > 0)
                     arr[0].Enabled = (_cameraCtrl.Cameras[i] != null);
@@ -11031,8 +11280,10 @@ namespace WindowsFormsApplication1
 
         private void SetStartGrabButtonState(int index, bool startEnabled)
         {
-            string startName = (index == 0) ? "bnStartGrab" : ("bnStartGrab" + (index + 1));
-            string stopName = (index == 0) ? "bnStopGrab" : ("bnStopGrab" + (index + 1));
+            // Designer 中 12 个启停按钮均命名为 bnStartGrab1..12 / bnStopGrab1..12（无无后缀版本），
+            // 相机1(index==0) 同样要用带后缀名，否则 Controls.Find 找不到、按钮状态永不更新
+            string startName = "bnStartGrab" + (index + 1);
+            string stopName = "bnStopGrab" + (index + 1);
             Control[] arr = Controls.Find(startName, true);
             if (arr.Length > 0) arr[0].Enabled = startEnabled;
             arr = Controls.Find(stopName, true);
@@ -11188,10 +11439,13 @@ namespace WindowsFormsApplication1
         // ch:获取丢帧数 | en:Get Throw Frame Number
         private string GetLostFrame(int nIndex)
         {
+            if (_cameraCtrl.Cameras[nIndex] == null)
+                return "0";
 
-            if (_cameraCtrl.Cameras[nIndex] != null)
+            MyCamera.MV_ALL_MATCH_INFO pstInfo = new MyCamera.MV_ALL_MATCH_INFO();
+            IntPtr allocated = IntPtr.Zero;   // 记录实际分配，finally 中统一释放，避免中途异常泄漏
+            try
             {
-                MyCamera.MV_ALL_MATCH_INFO pstInfo = new MyCamera.MV_ALL_MATCH_INFO();
                 if (m_pDeviceInfo[nIndex].nTLayerType == MyCamera.MV_GIGE_DEVICE)
                 {
                     MyCamera.MV_MATCH_INFO_NET_DETECT MV_NetInfo = new MyCamera.MV_MATCH_INFO_NET_DETECT();
@@ -11199,14 +11453,13 @@ namespace WindowsFormsApplication1
                     pstInfo.nType = MyCamera.MV_MATCH_TYPE_NET_DETECT;
                     int size = Marshal.SizeOf(MV_NetInfo);
                     pstInfo.pInfo = Marshal.AllocHGlobal(size);
+                    allocated = pstInfo.pInfo;
                     Marshal.StructureToPtr(MV_NetInfo, pstInfo.pInfo, false);
 
                     _cameraCtrl.Cameras[nIndex].MV_CC_GetAllMatchInfo_NET(ref pstInfo);
                     MV_NetInfo = (MyCamera.MV_MATCH_INFO_NET_DETECT)Marshal.PtrToStructure(pstInfo.pInfo, typeof(MyCamera.MV_MATCH_INFO_NET_DETECT));
 
-                    string sTemp = MV_NetInfo.nLostFrameCount.ToString();
-                    Marshal.FreeHGlobal(pstInfo.pInfo);
-                    return sTemp;
+                    return MV_NetInfo.nLostFrameCount.ToString();
                 }
                 else if (m_pDeviceInfo[nIndex].nTLayerType == MyCamera.MV_USB_DEVICE)
                 {
@@ -11215,23 +11468,24 @@ namespace WindowsFormsApplication1
                     pstInfo.nType = MyCamera.MV_MATCH_TYPE_USB_DETECT;
                     int size = Marshal.SizeOf(MV_NetInfo);
                     pstInfo.pInfo = Marshal.AllocHGlobal(size);
+                    allocated = pstInfo.pInfo;
                     Marshal.StructureToPtr(MV_NetInfo, pstInfo.pInfo, false);
 
                     _cameraCtrl.Cameras[nIndex].MV_CC_GetAllMatchInfo_NET(ref pstInfo);
                     MV_NetInfo = (MyCamera.MV_MATCH_INFO_USB_DETECT)Marshal.PtrToStructure(pstInfo.pInfo, typeof(MyCamera.MV_MATCH_INFO_USB_DETECT));
 
-                    string sTemp = MV_NetInfo.nErrorFrameCount.ToString();
-                    Marshal.FreeHGlobal(pstInfo.pInfo);
-                    return sTemp;
+                    return MV_NetInfo.nErrorFrameCount.ToString();
                 }
                 else
                 {
                     return "0";
                 }
             }
-            else
-                return "0";
-
+            finally
+            {
+                if (allocated != IntPtr.Zero)
+                    Marshal.FreeHGlobal(allocated);
+            }
         }
         // ch:去除自定义的像素格式 | en:Remove custom pixel formats
         private bool RemoveCustomPixelFormats(MyCamera.MvGvspPixelType enPixelFormat)

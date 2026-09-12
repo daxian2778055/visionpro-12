@@ -61,11 +61,28 @@ namespace WindowsFormsApplication1
                 myjob1, myjob2, myjob3, myjob4, myjob5, myjob6,
                 myjob7, myjob8, myjob9, myjob10, myjob11, myjob12
             };
+            // ★ 2026-09-07 修复（②链路静默失效）：TriggerPayloads 12 个槽位此前从未初始化，全为 null，
+            //   导致入队/出队两处 "!= null" 守卫恒 false —— payload 既写不进也取不出，
+            //   通讯触发的参数快照实际上从未写入 block 输入（旧代码至少是即时写入，属功能倒退）。
+            //   在此统一构造，与 Myjobs 同步完成，避免引用处再做惰性判空。
+            for (int i = 0; i < TriggerPayloads.Length; i++)
+                TriggerPayloads[i] = new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>();
             _cameraCtrl = cameraCtrl;
             _logger = logger;
         }
 
         // ---- Stage2：触发门控与路由（纯逻辑，无 UI 依赖） ----
+
+        /// <summary>★ 2026-09-06（②参数错位修复）：通讯触发 payload 快照队列。ApplyCommTrigger 在触发时刻把
+        /// (inputKey, selection) 压入对应相机队列，帧回调 EnqueueInspectFrame 时按 FIFO 取出随帧携带，检测前写入
+        /// block 输入，避免直接写共享 block 输入导致“前帧用后一件参数跑检测”的件/结果错位。触发与软触发回帧严格
+        /// 按相机 FIFO 配对，故队列长度与未处理触发数一致，无需额外上限。</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[] TriggerPayloads =
+            new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[12];
+
+        /// <summary>★ 2026-09-07：单相机 payload 快照队列上限（与 Form1 的待检帧队列深度一致）。
+        /// 防止「触发成功但相机未回帧」时快照无限滞留导致后续帧取到过期参数。</summary>
+        public const int TriggerPayloadQueueDepth = 3;
 
         private static string NormalizeTriggerMode(string mode) => (mode ?? "").Replace("\0", "").Trim();
 
@@ -77,24 +94,36 @@ namespace WindowsFormsApplication1
         public void MarkCommTriggerPending(int slot)
         {
             if (slot >= 0 && slot < 12)
+            {
                 Myjobs[slot].commTriggerPending = true;
+                // ★ 2026-09-06 ⑤：待处理触发计数 +1（门控改用计数，回帧被接收时 -1）
+                System.Threading.Interlocked.Increment(ref Myjobs[slot].commTriggerPendingCount);
+            }
         }
 
         public void ClearCommTriggerPending(int slot)
         {
             if (slot >= 0 && slot < 12)
+            {
                 Myjobs[slot].commTriggerPending = false;
+                // ★ ⑤ 仅在开关机/切型等显式重置场景清零计数；检测完成不再调用本方法（见 InspectWorker.finally）
+                Myjobs[slot].commTriggerPendingCount = 0;
+            }
         }
 
         public void ClearAllCommTriggerPending()
         {
             for (int i = 0; i < 12; i++)
+            {
                 Myjobs[i].commTriggerPending = false;
+                Myjobs[i].commTriggerPendingCount = 0;
+            }
         }
 
         /// <summary>
-        /// 仅在触发条件成立时写入流程输入并软触发拍照（原 Form1.ApplyCommTrigger，逻辑等价）。
-        /// 实际相机软触发经 TriggerSoftwareCallback 回到 Form1（其实现含相机抓取态判断与 pending 标记）。
+        /// 仅在触发条件成立时把 payload 快照入队并软触发拍照（原 Form1.ApplyCommTrigger）。
+        /// ★ 2026-09-06（②）：不再直接写共享 block.Inputs（会与下一触发 payload 错位），改为入队 TriggerPayloads，
+        ///   由帧回调 EnqueueInspectFrame 取出随帧携带，getrecord 检测前写入 block 输入。
         /// </summary>
         public void ApplyCommTrigger(Myjob job, int cameraIndex, string selection, string mode, string val1, string val2, string inputKey)
         {
@@ -104,16 +133,46 @@ namespace WindowsFormsApplication1
             if (job == null || job.en != 1) return;
             if (_cameraCtrl.Cameras[cameraIndex] == null) return;
             if (!CommTriggerArmed) return;
-            try
+            // ★ ② payload 快照：触发时刻入队，绝不即时写共享 block 输入
+            var payloadQueue = (TriggerPayloads != null && cameraIndex >= 0 && cameraIndex < 12)
+                ? TriggerPayloads[cameraIndex] : null;
+            if (payloadQueue != null)
             {
-                if (job.block != null && job.block.Inputs.Contains(inputKey))
-                    job.block.Inputs[inputKey].Value = selection;
+                // ★ 2026-09-07：限制快照队列长度。否则「触发成功但相机未回帧」（掉线/停流）
+                //   时 payload 会无限滞留，下一触发的帧 FIFO 取到的是过期参数。
+                System.Collections.Generic.KeyValuePair<string, string> stale;
+                while (payloadQueue.Count >= TriggerPayloadQueueDepth && payloadQueue.TryDequeue(out stale)) { }
+                payloadQueue.Enqueue(new System.Collections.Generic.KeyValuePair<string, string>(inputKey, selection));
             }
-            catch { }
             job.jieshouZifu = selection;
             int nRet = TriggerSoftwareCallback != null ? TriggerSoftwareCallback(cameraIndex) : -1;
             if (MyCamera.MV_OK != nRet)
+            {
                 _logger.WriteLog("Trigger Software Fail!---" + nRet);
+                // ★ 2026-09-07：软触发失败 → 本次触发不会回帧，「随帧携带」机制不适用。
+                //   此时必须退化为改造前的「即时写入」，保证 PLC 下发的型号/参数不丢失：
+                //   连续运行模式下相机本就不接受软触发命令（失败是常态），
+                //   若只做回滚，参数就永远写不进 block —— 那比改造前是功能倒退。
+                try
+                {
+                    if (job.block != null && !string.IsNullOrEmpty(inputKey) && job.block.Inputs.Contains(inputKey))
+                        job.block.Inputs[inputKey].Value = selection;
+                }
+                catch (Exception exWrite)
+                {
+                    _logger.WriteLog("相机" + (cameraIndex + 1) + " 触发参数即时写入失败: " + exWrite.Message);
+                }
+                // 回滚本次入队的 payload，避免滞留后与后续帧错配
+                if (payloadQueue != null)
+                {
+                    System.Collections.Generic.KeyValuePair<string, string> junk;
+                    while (payloadQueue.TryDequeue(out junk)) { }
+                }
+                // 回滚待处理计数：软触发失败不会有回帧，若不减则该计数只增不减，
+                // 使 ShouldProcessImageCallback 的 count>0 恒真 → 通讯触发门控常开。
+                if (job.commTriggerPendingCount > 0)
+                    System.Threading.Interlocked.Decrement(ref job.commTriggerPendingCount);
+            }
         }
 
         /// <summary>设置第 camNo 路（1 基）OK 输出状态，线程安全（替代 ok1..ok12）。</summary>

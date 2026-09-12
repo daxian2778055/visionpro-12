@@ -148,6 +148,47 @@ namespace WindowsFormsApplication1
         internal void RegisterChildLink(int linkId, FormModbusRtu host) { _childLinks[linkId] = host; }
         internal void UnregisterChildLink(int linkId) { _childLinks.Remove(linkId); }
 
+        // ---- 阶段 7 补强：多连接触发/切方案的按连接访问器（对齐 FormModbus / FormOmron，供 Form1 处理器按 linkId 路由） ----
+
+        /// <summary>连接N普通触发参数：link&gt;1 取该连接自己 camera_dic 的相机绑定；取不到返回 false（调用方回退连接 1）。</summary>
+        public bool TryGetLinkCamera(int linkId, int camNo, out string[] cam)
+        {
+            cam = null;
+            var host = ResolveLinkHost(linkId);
+            if (host == null) return false;
+            return host.camera_dic.TryGetValue(camNo, out cam);
+        }
+
+        /// <summary>连接N切方案锁（每连接独立，各自 qiehuanzhong 互不干扰）。</summary>
+        public int GetSwitchLock(int linkId)
+        {
+            var host = ResolveLinkHost(linkId);
+            return host != null ? host.qiehuanzhong : 0;
+        }
+
+        public void SetSwitchLock(int linkId, int value)
+        {
+            var host = ResolveLinkHost(linkId);
+            if (host != null) host.qiehuanzhong = value;
+        }
+
+        /// <summary>连接N的方案路径（对齐 FINS 的 e.SchemePath）：link&gt;1 取该连接窗体的 lujing。</summary>
+        public string GetLinkSchemePath(int linkId)
+        {
+            var host = ResolveLinkHost(linkId);
+            return host != null ? host.lujing : "";
+        }
+
+        /// <summary>该 ModbusRTU 协议是否有任一连接使能且已初始化（决定是否读取 VP 的 modbusrtu 输出值；
+        /// 连接 1 未使能但连接 2~4 使能时仍须读取，否则连接 2~4 回写的是空值）。</summary>
+        public bool CanWriteResultOutput()
+        {
+            if (fins_en && chushihua) return true;
+            foreach (var kv in _childLinks)
+                if (kv.Value != null && kv.Value.fins_en && kv.Value.chushihua) return true;
+            return false;
+        }
+
         /// <summary>按 linkId 解析承载该连接的整窗实例；linkId==1 返回本窗体。</summary>
         private FormModbusRtu ResolveLinkHost(int linkId)
         {
@@ -170,7 +211,11 @@ namespace WindowsFormsApplication1
         public Dictionary<string, string[]> FinsBlocks { get { return fins_dic; } }
         public Dictionary<int, string[]> CameraBindings { get { return camera_dic; } }
         public string SchemePath { get { return lujing; } }
-        public void Log(string message) { MsgErroeLog.WriteLog(message); }
+        public void Log(string message)
+        {
+            // 每条日志都带上协议名 + 具体连接号，多实例时能一眼看出来自哪个实例的通讯
+            MsgErroeLog.WriteLog("[ModbusRTU-连接" + _linkId + "] " + message);
+        }
         public void UpdatePollCell(int row, string value) { CommGridHelper.SetPollCell(_gridUi, fins_data, row, value); }
         public void RaiseSelectionChanged(string dataVal, string camKey, string third, int linkId)
         {
@@ -190,12 +235,36 @@ namespace WindowsFormsApplication1
                     qiehuanzhong = 1;
                     return true;
                 }
-                MsgErroeLog.WriteLog("方案路径:" + lujing + ":不存在!");
+                Log("方案路径:" + lujing + ":不存在!");
             }
             return false;
         }
         public string MiddleValue(string str, string sta, string end) { return GetMiddleValue(str, sta, end); }
         public void OnReconnect() { TryAutoReconnect(); }
+
+        /// <summary>
+        /// 相机归属防呆（Modbus-RTU 版）：同一协议内，一台相机（触发/反馈任一有值）只能归属一条连接。
+        /// 占用时回滚下拉并提示；相机 13 反馈侧（心跳）每连接独立，由调用方不调用本方法实现。
+        /// </summary>
+        /// <param name="cameraNo">相机编号 1..13</param>
+        /// <param name="newVal">下拉新选值</param>
+        /// <param name="slot">camera_dic[cameraNo] 对应下标：0=触发(chufa)，3=反馈(fankui)</param>
+        /// <param name="cb">触发该改动的下拉控件，用于回滚 Text</param>
+        /// <returns>true=放行；false=被占用，已回滚并提示</returns>
+        private bool GuardCamera(int cameraNo, string newVal, int slot, System.Windows.Forms.ComboBox cb)
+        {
+            // 空值（清空）不占资源，其它连接即使占着本连接也可选择“无”
+            if (!CommCameraGuard.IsBoundValue(newVal)) return true;
+            int owner = CommCameraGuard.FindOwnerModbusRtu(wdini, _linkId, cameraNo);
+            if (owner == 0) return true;
+            string old = camera_dic[cameraNo][slot];
+            cb.Text = old;             // 回滚到原值
+            string ownerName = CommCameraGuard.OwnerDisplayNameModbusRtu(wdini, owner);
+            System.Windows.Forms.MessageBox.Show(
+                CommCameraGuard.OccupiedMsg("ModbusRTU", cameraNo, owner, ownerName),
+                "相机占用冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
 
 
         // 防止“管理器预建隐藏窗显式初始化”后，首次 Show 又触发 Load 重复建链。
@@ -238,8 +307,13 @@ namespace WindowsFormsApplication1
 
             // 多实例整窗化（阶段 7，仿 FormOmron/FormModbus）：每个窗体实例只承载 _linkId 这一个连接的运行时。
             // 连接 2~4 由 FormCommManager 各自 new FormModbusRtu(link) 整窗实例承载并嵌入，不再由主窗体 LoadAll 后台启动。
+            // 启动前相机关卡复查：本连接（连接 1~4 等价）若绑定了被同协议其它连接占用的相机，
+            // 则阻止本连接自动启动（不建链、不轮询、不标记就绪），但仍加载界面供查看并修正。
+            bool commBlocked = _linkId >= 1 && ModbusRtuIniStore.Load(wdini, _linkId) != null
+                && (CommCameraGuard.CheckStartupModbusRtu(wdini, _linkId) != null);
+
             var cfg = ModbusRtuIniStore.Load(wdini, _linkId);
-            if (cfg != null && !_runtimes.ContainsKey(_linkId))
+            if (cfg != null && !_runtimes.ContainsKey(_linkId) && !commBlocked)
             {
                 var rt = new ModbusRtuRuntime(_rtuLink, this) { LinkId = _linkId, Config = cfg, Context = null };
                 rt.Start();
@@ -282,10 +356,11 @@ namespace WindowsFormsApplication1
             {
                 c1.CheckState = CheckState.Checked;
             }
-            if (fins_en)
+            if (fins_en && !commBlocked)
             {
                 c2.CheckState = CheckState.Checked;
-                button1_Click(null, null);
+                // ★ 2026-09-12：移除此处同步 button1_Click，避免与下方 Task.Run 延迟建链重复建链（重复建链会造成闪断）。
+                //   ModbusRTU 连接1 启动建链统一由本方法末尾 Task.Run 异步执行一次（对齐 FINS 的修复）。
             }
             geshu = int.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "geshu", "0"));
             if (geshu > 0)
@@ -507,11 +582,11 @@ namespace WindowsFormsApplication1
             {
 
                 Thread.Sleep(1000);
-                if (fins_en)
+                if (fins_en && !commBlocked)
                 {
                     button1_Click(null, null);
                 }
-                chushihua = true;
+                if (!commBlocked) chushihua = true;
             });
         }
 
@@ -617,31 +692,33 @@ namespace WindowsFormsApplication1
 
 
 
+        private bool _connecting;   // ★ 2026-09-12：建链防重入。启动 Task.Run 与手动点击并发时只建一次链，避免重复建链闪断。
         private async void button1_Click( object sender, EventArgs e )
         {
+            if (_connecting) { Log( "正在连接中，请稍候..." ); return; }
             int baudRate;
             if(!int.TryParse(textBox2.Text,out baudRate ))
             {
-                MsgErroeLog.WriteLog( DemoUtils.BaudRateInputWrong );
+                Log( DemoUtils.BaudRateInputWrong );
                 return;
             }
             int dataBits;
             if (!int.TryParse( textBox16.Text, out dataBits ))
             {
-                MsgErroeLog.WriteLog( DemoUtils.DataBitsInputWrong );
+                Log( DemoUtils.DataBitsInputWrong );
                 return;
             }
             int stopBits;
             if (!int.TryParse( textBox17.Text, out stopBits ))
             {
-                MsgErroeLog.WriteLog( DemoUtils.StopBitInputWrong );
+                Log( DemoUtils.StopBitInputWrong );
                 return;
             }
 
             byte station;
             if (!byte.TryParse(textBox15.Text,out station))
             {
-                MsgErroeLog.WriteLog( "Station input wrong！" );
+                Log( "Station input wrong！" );
                 return;
             }
 
@@ -661,6 +738,7 @@ namespace WindowsFormsApplication1
             _rtuLink.IsStringReverse = checkBox3.Checked;
 
             button1.Enabled = false;   // 2026-09-06：防重复点击
+            _connecting = true;
             try
             {
                 OperateResult connect = await _rtuLink.ConnectAsync(fmt);
@@ -674,14 +752,18 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    MsgErroeLog.WriteLog(connect.Message);
+                    Log(connect.Message);
                     button1.Enabled = true;
                 }
             }
             catch (Exception ex)
             {
-                MsgErroeLog.WriteLog(ex.Message);
+                Log(ex.Message);
                 button1.Enabled = true;
+            }
+            finally
+            {
+                _connecting = false;
             }
         }
 
@@ -1322,8 +1404,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[4][0] = cb7.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 4), "chufa", cb7.Text);
+                string nv = cb7.Text;
+                if (GuardCamera(4, nv, 0, cb7))
+                {
+                    camera_dic[4][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 4), "chufa", nv);
+                }
             }
         }
 
@@ -1331,8 +1417,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[5][0] = cb8.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 5), "chufa", cb8.Text);
+                string nv = cb8.Text;
+                if (GuardCamera(5, nv, 0, cb8))
+                {
+                    camera_dic[5][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 5), "chufa", nv);
+                }
             }
         }
 
@@ -1739,8 +1829,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[1][0] = cb4.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 1), "chufa", cb4.Text);
+                string nv = cb4.Text;
+                if (GuardCamera(1, nv, 0, cb4))
+                {
+                    camera_dic[1][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 1), "chufa", nv);
+                }
             }
         }
 
@@ -1748,8 +1842,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[2][0] = cb5.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 2), "chufa", cb5.Text);
+                string nv = cb5.Text;
+                if (GuardCamera(2, nv, 0, cb5))
+                {
+                    camera_dic[2][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 2), "chufa", nv);
+                }
             }
         }
 
@@ -1757,8 +1855,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[3][0] = cb6.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 3), "chufa", cb6.Text);
+                string nv = cb6.Text;
+                if (GuardCamera(3, nv, 0, cb6))
+                {
+                    camera_dic[3][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 3), "chufa", nv);
+                }
             }
         }
 
@@ -1785,35 +1887,48 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[6][0] = cb9.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 6), "chufa", cb9.Text);
+                string nv = cb9.Text;
+                if (GuardCamera(6, nv, 0, cb9))
+                {
+                    camera_dic[6][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 6), "chufa", nv);
+                }
             }
         }
-
         private void cb10_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
-                camera_dic[7][0] = cb10.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 7), "chufa", cb10.Text);
+                string nv = cb10.Text;
+                if (GuardCamera(7, nv, 0, cb10))
+                {
+                    camera_dic[7][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 7), "chufa", nv);
+                }
             }
         }
-
         private void cb11_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
-                camera_dic[8][0] = cb11.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 8), "chufa", cb11.Text);
+                string nv = cb11.Text;
+                if (GuardCamera(8, nv, 0, cb11))
+                {
+                    camera_dic[8][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 8), "chufa", nv);
+                }
             }
         }
-
         private void cb12_SelectedIndexChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
-                camera_dic[9][0] = cb12.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 9), "chufa", cb12.Text);
+                string nv = cb12.Text;
+                if (GuardCamera(9, nv, 0, cb12))
+                {
+                    camera_dic[9][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 9), "chufa", nv);
+                }
             }
         }
 
@@ -1821,8 +1936,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[1][3] = cb13.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 1), "fankui", cb13.Text);
+                string nv = cb13.Text;
+                if (GuardCamera(1, nv, 3, cb13))
+                {
+                    camera_dic[1][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 1), "fankui", nv);
+                }
             }
         }
 
@@ -1830,8 +1949,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[2][3] = cb14.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 2), "fankui", cb14.Text);
+                string nv = cb14.Text;
+                if (GuardCamera(2, nv, 3, cb14))
+                {
+                    camera_dic[2][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 2), "fankui", nv);
+                }
             }
         }
 
@@ -1839,8 +1962,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[3][3] = cb15.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 3), "fankui", cb15.Text);
+                string nv = cb15.Text;
+                if (GuardCamera(3, nv, 3, cb15))
+                {
+                    camera_dic[3][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 3), "fankui", nv);
+                }
             }
         }
 
@@ -1848,8 +1975,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[4][3] = cb16.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 4), "fankui", cb16.Text);
+                string nv = cb16.Text;
+                if (GuardCamera(4, nv, 3, cb16))
+                {
+                    camera_dic[4][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 4), "fankui", nv);
+                }
             }
         }
 
@@ -1857,8 +1988,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[5][3] = cb17.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 5), "fankui", cb17.Text);
+                string nv = cb17.Text;
+                if (GuardCamera(5, nv, 3, cb17))
+                {
+                    camera_dic[5][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 5), "fankui", nv);
+                }
             }
         }
 
@@ -1866,8 +2001,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[6][3] = cb18.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 6), "fankui", cb18.Text);
+                string nv = cb18.Text;
+                if (GuardCamera(6, nv, 3, cb18))
+                {
+                    camera_dic[6][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 6), "fankui", nv);
+                }
             }
         }
 
@@ -1875,8 +2014,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[7][3] = cb19.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 7), "fankui", cb19.Text);
+                string nv = cb19.Text;
+                if (GuardCamera(7, nv, 3, cb19))
+                {
+                    camera_dic[7][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 7), "fankui", nv);
+                }
             }
         }
 
@@ -1884,8 +2027,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[8][3] = cb20.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 8), "fankui", cb20.Text);
+                string nv = cb20.Text;
+                if (GuardCamera(8, nv, 3, cb20))
+                {
+                    camera_dic[8][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 8), "fankui", nv);
+                }
             }
         }
 
@@ -1893,8 +2040,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[13][0] = cb21.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 13), "chufa", cb21.Text);
+                string nv = cb21.Text;
+                if (GuardCamera(13, nv, 0, cb21))
+                {
+                    camera_dic[13][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 13), "chufa", nv);
+                }
             }
         }
 
@@ -1902,8 +2053,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[10][0] = cb22.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 10), "chufa", cb22.Text);
+                string nv = cb22.Text;
+                if (GuardCamera(10, nv, 0, cb22))
+                {
+                    camera_dic[10][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 10), "chufa", nv);
+                }
             }
         }
 
@@ -1911,8 +2066,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[10][3] = cb23.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 10), "fankui", cb23.Text);
+                string nv = cb23.Text;
+                if (GuardCamera(10, nv, 3, cb23))
+                {
+                    camera_dic[10][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 10), "fankui", nv);
+                }
             }
         }
 
@@ -1920,8 +2079,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[11][0] = cb24.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 11), "chufa", cb24.Text);
+                string nv = cb24.Text;
+                if (GuardCamera(11, nv, 0, cb24))
+                {
+                    camera_dic[11][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 11), "chufa", nv);
+                }
             }
         }
 
@@ -1929,8 +2092,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[11][3] = cb25.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 11), "fankui", cb25.Text);
+                string nv = cb25.Text;
+                if (GuardCamera(11, nv, 3, cb25))
+                {
+                    camera_dic[11][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 11), "fankui", nv);
+                }
             }
         }
 
@@ -1938,8 +2105,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[12][0] = cb26.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 12), "chufa", cb26.Text);
+                string nv = cb26.Text;
+                if (GuardCamera(12, nv, 0, cb26))
+                {
+                    camera_dic[12][0] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 12), "chufa", nv);
+                }
             }
         }
 
@@ -1947,8 +2118,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[9][3] = cb27.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 9), "fankui", cb27.Text);
+                string nv = cb27.Text;
+                if (GuardCamera(9, nv, 3, cb27))
+                {
+                    camera_dic[9][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 9), "fankui", nv);
+                }
             }
         }
 
@@ -1956,8 +2131,12 @@ namespace WindowsFormsApplication1
         {
             if (chushihua)
             {
-                camera_dic[12][3] = cb28.Text;
-                wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 12), "fankui", cb28.Text);
+                string nv = cb28.Text;
+                if (GuardCamera(12, nv, 3, cb28))
+                {
+                    camera_dic[12][3] = nv;
+                    wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 12), "fankui", nv);
+                }
             }
         }
 
@@ -2647,15 +2826,15 @@ namespace WindowsFormsApplication1
                     c13[5] = c13[0];
                     WriteTriggerFanhuizhi(par.Value, c13[1], ref xuanzhong_temp, ref fins_temp);
                     c13[5] = "无"; // 写后清待写标记，避免后续 xie() 误写
-                    MsgErroeLog.WriteLog("方案切换成功，已回执切换通道 " + c13[0] + " = " + c13[1]);
+                    Log("方案切换成功，已回执切换通道 " + c13[0] + " = " + c13[1]);
                     return true;
                 }
-                MsgErroeLog.WriteLog("切换回执失败:未找到切换通道对应的数据块 " + c13[0]);
+                Log("切换回执失败:未找到切换通道对应的数据块 " + c13[0]);
                 return false;
             }
             catch (Exception ex)
             {
-                MsgErroeLog.WriteLog("切换回执异常:" + ex.Message);
+                Log("切换回执异常:" + ex.Message);
                 return false;
             }
         }
@@ -2755,7 +2934,7 @@ namespace WindowsFormsApplication1
             {
                 LinkId = cfg.LinkId,
                 Config = cfg,
-                Context = new ModbusRtuLinkContext(cfg, this)
+                Context = new ModbusRtuLinkContext(cfg, this, link)
             };
             rt.Start();
             _runtimes[cfg.LinkId] = rt;
@@ -2861,7 +3040,7 @@ namespace WindowsFormsApplication1
                                                             }
                                                             else
                                                             {
-                                                                MsgErroeLog.WriteLog("方案路径:" + lujing + ":不存在!");
+                                                                Log("方案路径:" + lujing + ":不存在!");
                                                             }
                                                         }
                                                     }
@@ -2913,7 +3092,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        MsgErroeLog.WriteLog(ex.Message + "modbusrtu");
+                        Log(ex.Message + "modbusrtu");
                     }
             }
         }
@@ -2922,7 +3101,7 @@ namespace WindowsFormsApplication1
         {
             if (!fins_en || IsDisposed) return;
             if (System.Threading.Interlocked.CompareExchange(ref _reconnecting, 1, 0) != 0) return;
-            MsgErroeLog.WriteLog("Modbus RTU 通讯异常，后台自动重连中...");
+            Log("Modbus RTU 通讯异常，后台自动重连中...");
             System.Threading.Tasks.Task.Run(() =>
             {
                 try
@@ -2930,13 +3109,13 @@ namespace WindowsFormsApplication1
                     bool ok = PerformReconnectCore();
                     if (ok)
                     {
-                        MsgErroeLog.WriteLog("Modbus RTU 自动重连成功");
+                        Log("Modbus RTU 自动重连成功");
                         SafeApplyConnectedUiState();
                     }
                 }
                 catch (Exception ex)
                 {
-                    MsgErroeLog.WriteLog("Modbus RTU 自动重连失败:" + ex.Message);
+                    Log("Modbus RTU 自动重连失败:" + ex.Message);
                 }
                 finally
                 {
@@ -3081,7 +3260,7 @@ namespace WindowsFormsApplication1
             }
             catch (Exception ex)
             {
-                MsgErroeLog.WriteLog(ex.Message + "modbusrtu");
+                Log(ex.Message + "modbusrtu");
             }
             }
         }
@@ -3162,7 +3341,7 @@ namespace WindowsFormsApplication1
             }
             catch (Exception ex)
             {
-                MsgErroeLog.WriteLog(ex.Message + "modbusrtu_xie_wu");
+                Log(ex.Message + "modbusrtu_xie_wu");
             }
             }
         }

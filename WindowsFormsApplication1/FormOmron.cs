@@ -71,7 +71,11 @@ namespace WindowsFormsApplication1
         public Dictionary<string, string[]> FinsBlocks { get { return fins_dic; } }
         public Dictionary<int, string[]> CameraBindings { get { return camera_dic; } }
         public string SchemePath { get { return lujing; } }
-        public void Log(string message) { MsgErroeLog.WriteLog(message); }
+        public void Log(string message)
+        {
+            // 每条日志都带上协议名 + 具体连接号，多实例时能一眼看出来自哪个实例的通讯
+            MsgErroeLog.WriteLog("[Omron-连接" + _linkId + "] " + message);
+        }
         public void UpdatePollCell(int row, string value) { CommGridHelper.SetPollCell(_gridUi, fins_data, row, value); }
         public void RaiseSelectionChanged(string dataVal, string camKey, string third, int linkId)
         {
@@ -174,15 +178,15 @@ namespace WindowsFormsApplication1
                     c13[5] = c13[0];
                     WriteTriggerFanhuizhi(par.Value, c13[1], ref xuanzhong_temp, ref fins_temp);
                     c13[5] = "无"; // 写后清待写标记，避免后续 xie() 误写
-                    MsgErroeLog.WriteLog("方案切换成功，已回执切换通道 " + c13[0] + " = " + c13[1]);
+                    Log("方案切换成功，已回执切换通道 " + c13[0] + " = " + c13[1]);
                     return true;
                 }
-                MsgErroeLog.WriteLog("切换回执失败:未找到切换通道对应的数据块 " + c13[0]);
+                Log("切换回执失败:未找到切换通道对应的数据块 " + c13[0]);
                 return false;
             }
             catch (Exception ex)
             {
-                MsgErroeLog.WriteLog("切换回执异常:" + ex.Message);
+                Log("切换回执异常:" + ex.Message);
                 return false;
             }
         }
@@ -203,6 +207,19 @@ namespace WindowsFormsApplication1
             var host = ResolveLinkHost(linkId);
             if (host != null) host.qiehuanzhong = value;
         }
+
+        /// <summary>该 FINS 协议是否有任一连接使能且已初始化（决定是否读取 VP 的 fins 输出值；
+        /// 连接 1 未使能但连接 2~4 使能时仍须读取，否则连接 2~4 回写的是空值）。</summary>
+        public bool CanWriteResultOutput()
+        {
+            if (fins_en && chushihua) return true;
+            lock (_childLinksSync)
+            {
+                foreach (var kv in _childLinks)
+                    if (kv.Value != null && kv.Value.fins_en && kv.Value.chushihua) return true;
+            }
+            return false;
+        }
         public void WriteTriggerFeedback(string[] block, string value, ref int xuanzhong, ref string fins)
         {
             WriteTriggerFanhuizhi(block, value, ref xuanzhong, ref fins);
@@ -217,7 +234,7 @@ namespace WindowsFormsApplication1
                     qiehuanzhong = 1;
                     return true;
                 }
-                MsgErroeLog.WriteLog("方案路径:" + lujing + ":不存在!");
+                Log("方案路径:" + lujing + ":不存在!");
             }
             return false;
         }
@@ -308,12 +325,19 @@ namespace WindowsFormsApplication1
             // 多实例改造（阶段 5）：每个 FormOmron 实例只负责“本连接”（_linkId）。
             // 所有 ini 读写已按 _linkId 落到 [fins]/[finsN] 段族；运行时统一用窗体既有 _finsLink + Context=null 走原 Fins_duxie，
             // 每实例一个 FinsRuntime，彼此完全独立（启用=创建并启动该实例，禁用=释放该实例）。
+            // 启动前相机关卡复查：本连接（连接 1~4 等价）若绑定了被同协议其它连接占用的相机，
+            // 则阻止本连接自动启动（不建链、不轮询、不标记就绪），但仍加载界面供查看并修正。
+            bool commBlocked = FinsIniStore.Load(wdini, _linkId) != null
+                && (CommCameraGuard.CheckStartupFins(wdini, _linkId) != null);
             var cfg = FinsIniStore.Load(wdini, _linkId);
-            var rt = new FinsRuntime(_finsLink, this) { LinkId = _linkId, Config = cfg, Context = null };
-            rt.Start();
-            _runtimes[_linkId] = rt;
-            _runtime = rt;
-            AppHost.Services.Resolve<CommLinkManager>().Register(rt);
+            if (!commBlocked)
+            {
+                var rt = new FinsRuntime(_finsLink, this) { LinkId = _linkId, Config = cfg, Context = null };
+                rt.Start();
+                _runtimes[_linkId] = rt;
+                _runtime = rt;
+                AppHost.Services.Resolve<CommLinkManager>().Register(rt);
+            }
             for (int i = 0; i < 10; i++)
             {
                 dataGridView1.Rows.Add();
@@ -345,10 +369,11 @@ namespace WindowsFormsApplication1
             {
                 checkBox1.CheckState = CheckState.Checked;
             }
-            if (fins_en)
+            if (fins_en && !commBlocked)
             {
                 checkBox2.CheckState = CheckState.Checked;
-                button1_Click(null, null);
+                // ★ 2026-09-11：移除此处同步 button1_Click，避免与下方 Task.Run 延迟建链重复连接（重复连接会造成闪断）。
+                //   FINS 启动建链统一由 InitializeForm 末尾的 Task.Run 异步执行一次。
             }
             geshu = int.Parse(wdini.ReadString(FinsIniStore.ConnSection(_linkId), "geshu", "0"));
             if (geshu > 0)
@@ -537,11 +562,11 @@ namespace WindowsFormsApplication1
             {
 
                 Thread.Sleep(1000);
-                if (fins_en)
+                if (fins_en && !commBlocked)
                 {
                     button1_Click(null, null);
                 }
-                chushihua = true;
+                if (!commBlocked) chushihua = true;
             });
         }
 
@@ -614,54 +639,73 @@ namespace WindowsFormsApplication1
 
         ErrorLog MsgErroeLog = new ErrorLog();
 
-        private void button1_Click( object sender, EventArgs e )
+        // ★ 2026-09-11：异步化 FINS 建链。原为同步 Connect()，网关卡顿时阻塞 UI；加 _connecting 重入守卫防止启动/重试重复建链。
+        private bool _connecting;
+        private async void button1_Click( object sender, EventArgs e )
         {
+            if (_connecting) { Log("正在连接中，请稍候..."); return; }
             // 连接
             System.Net.IPAddress address;
             if (!System.Net.IPAddress.TryParse( textBox1.Text, out address ))
             {
-                MsgErroeLog.WriteLog(DemoUtils.IpAddressInputWrong );
+                Log(DemoUtils.IpAddressInputWrong );
                 return;
             }
 
             int port;
             if (!int.TryParse( textBox2.Text, out port ))
             {
-                MsgErroeLog.WriteLog( DemoUtils.PortInputWrong );
+                Log( DemoUtils.PortInputWrong );
                 return;
             }
 
             byte SA1;
             if (!byte.TryParse( textBox15.Text, out SA1 ))
             {
-                MsgErroeLog.WriteLog( "SA1 Input Wrong！" );
+                Log( "SA1 Input Wrong！" );
                 return;
             }
 
             byte DA2;
             if (!byte.TryParse( textBox16.Text, out DA2 ))
             {
-                MsgErroeLog.WriteLog( "PLC DA2 input wrong！" );
+                Log( "PLC DA2 input wrong！" );
                 return;
             }
-            
+
             _finsLink.Ip = textBox1.Text;
             _finsLink.Port = port;
             _finsLink.SA1 = SA1;
             _finsLink.DA2 = DA2;
-            OperateResult connect = _finsLink.Connect((HslCommunication.Core.DataFormat)comboBox1.SelectedItem);
-            if (connect.IsSuccess)
+            _connecting = true;
+            try
             {
-                MsgErroeLog.WriteLog( HslCommunication.StringResources.Language.ConnectedSuccess );
-                button2.Enabled = true;
-                button1.Enabled = false;
-                panel2.Enabled = true;
-
-                userControlCurve1.ReadWriteNet = _finsLink.Client;
+                var connect = await _finsLink.ConnectAsync( (HslCommunication.Core.DataFormat)comboBox1.SelectedItem );
+                // 建链在后台线程完成，结果回写 UI 需切回界面线程
+                if (IsDisposed || Disposing) { _connecting = false; return; }
+                BeginInvoke(new Action(() =>
+                {
+                    _connecting = false;
+                    if (connect.IsSuccess)
+                    {
+                        Log( HslCommunication.StringResources.Language.ConnectedSuccess );
+                        button2.Enabled = true;
+                        button1.Enabled = false;
+                        panel2.Enabled = true;
+                        userControlCurve1.ReadWriteNet = _finsLink.Client;
+                    }
+                    else
+                    {
+                        Log( HslCommunication.StringResources.Language.ConnectedFailed + "(" + connect.Message + ")" );
+                        button1.Enabled = true;
+                    }
+                }));
             }
-            else
+            catch (Exception ex)
             {
-                MsgErroeLog.WriteLog( HslCommunication.StringResources.Language.ConnectedFailed );
+                _connecting = false;
+                Log( "连接异常: " + ex.Message );
+                try { button1.Enabled = true; } catch { }
             }
         }
 
@@ -1409,7 +1453,7 @@ namespace WindowsFormsApplication1
                                                                 {
                                                                     camera_dic[13][4] = camera_dic[13][1];
                                                                 }
-                                                                MsgErroeLog.WriteLog("方案路径:" + lujing + ":不存在!");
+                                                                Log("方案路径:" + lujing + ":不存在!");
                                                             }
                                                         }
                                                     }
@@ -1461,7 +1505,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        MsgErroeLog.WriteLog(ex.Message);
+                        Log(ex.Message);
                     }
             }
         }
@@ -1470,7 +1514,7 @@ namespace WindowsFormsApplication1
         {
             if (!fins_en || IsDisposed) return;
             if (System.Threading.Interlocked.CompareExchange(ref _reconnecting, 1, 0) != 0) return;
-            MsgErroeLog.WriteLog("欧姆龙Fins 通讯异常，后台自动重连中...");
+            Log("欧姆龙Fins 通讯异常，后台自动重连中...");
             System.Threading.Tasks.Task.Run(() =>
             {
                 try
@@ -1478,13 +1522,13 @@ namespace WindowsFormsApplication1
                     bool ok = PerformReconnectCore();
                     if (ok)
                     {
-                        MsgErroeLog.WriteLog("欧姆龙Fins 自动重连成功");
+                        Log("欧姆龙Fins 自动重连成功");
                         SafeApplyConnectedUiState();
                     }
                 }
                 catch (Exception ex)
                 {
-                    MsgErroeLog.WriteLog("欧姆龙Fins 自动重连失败:" + ex.Message);
+                    Log("欧姆龙Fins 自动重连失败:" + ex.Message);
                 }
                 finally
                 {
@@ -1622,7 +1666,7 @@ namespace WindowsFormsApplication1
             }
             catch (Exception ex)
             {
-                MsgErroeLog.WriteLog(ex.Message);
+                Log(ex.Message);
             }
             }
         }

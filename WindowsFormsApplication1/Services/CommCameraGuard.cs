@@ -27,12 +27,16 @@ namespace WindowsFormsApplication1
         /// <summary>相机 13 是功能槽（触发侧=方案切换 / 反馈侧=心跳），不是物理相机。</summary>
         public const int SchemeSwitchCamera = 13;
 
-        /// <summary>某相机绑定值是否视为“占用”该相机（空白/“无”/“（无绑定）”不算）。</summary>
+        /// <summary>
+        /// 某相机绑定值是否视为“占用”该相机。
+        /// 未绑定哨兵不算占用：空白、`"无"`、`"（无绑定）"`、`"0"`。
+        /// 注意：触发(chufa)未绑定写的是空格 `" "`，反馈(fankui)/返回值(fanhuizhi)未绑定写的是 `"0"`。
+        /// </summary>
         public static bool IsBoundValue(string v)
         {
             if (v == null) return false;
             v = v.Trim();
-            return v.Length > 0 && v != "无" && v != "（无绑定）";
+            return v.Length > 0 && v != "0" && v != "无" && v != "（无绑定）";
         }
 
         /// <summary>
@@ -124,6 +128,127 @@ namespace WindowsFormsApplication1
                 }
             }
             return null;
+        }
+
+        /// <summary>
+        /// Modbus-TCP：查询同协议内某相机当前被哪条连接占用（0 = 空闲）。与 FINS 同规则：
+        ///   相机 1..12：其它连接触发或反馈任一有值即占用；相机 13 仅触发侧（切换方案）占用。
+        /// 供 FormModbus 各相机触发/反馈下拉在保存前调用。
+        /// </summary>
+        public static int FindOwnerModbusTcp(ClassIni ini, int selfLinkId, int cameraNo)
+        {
+            if (ini == null) return 0;
+            for (int link = 1; link <= ModbusTcpIniStore.MaxLinks; link++)
+            {
+                if (link == selfLinkId) continue;
+                var cfg = ModbusTcpIniStore.Load(ini, link);
+                var cam = cfg.CameraBindings.Find(c => c.CameraNo == cameraNo);
+                if (cam == null) continue;
+                bool occupied = cameraNo == SchemeSwitchCamera
+                    ? IsBoundValue(cam.Chufa)
+                    : IsBoundValue(cam.Chufa) || IsBoundValue(cam.Fankui);
+                if (occupied) return link;
+            }
+            return 0;
+        }
+
+        /// <summary>取 Modbus-TCP 占用连接的显示名。</summary>
+        public static string OwnerDisplayNameModbusTcp(ClassIni ini, int ownerLink)
+        {
+            if (ini == null || ownerLink < 1) return "ModbusTCP-" + ownerLink;
+            var cfg = ModbusTcpIniStore.Load(ini, ownerLink);
+            return string.IsNullOrEmpty(cfg.Name) ? "ModbusTCP-" + ownerLink : cfg.Name;
+        }
+
+        /// <summary>取 Modbus-RTU 占用连接的显示名。</summary>
+        public static string OwnerDisplayNameModbusRtu(ClassIni ini, int ownerLink)
+        {
+            if (ini == null || ownerLink < 1) return "ModbusRTU-" + ownerLink;
+            var cfg = ModbusRtuIniStore.Load(ini, ownerLink);
+            return string.IsNullOrEmpty(cfg.Name) ? "ModbusRTU-" + ownerLink : cfg.Name;
+        }
+
+        /// <summary>
+        /// FINS 连接"启动前"的相机归属复查。直接复用整段保存检查：
+        /// 用本连接当前 ini 中的相机绑定与同协议其它连接比对，冲突返回提示，null = 可安全启动。
+        /// </summary>
+        public static string CheckStartupFins(ClassIni ini, int selfLinkId)
+        {
+            if (ini == null) return null;
+            var self = FinsIniStore.Load(ini, selfLinkId);
+            return (self == null) ? null : CheckFins(ini, selfLinkId, self.CameraBindings);
+        }
+
+        /// <summary>
+        /// Modbus-TCP 连接"启动前"的相机归属复查：本连接 ini 中绑定的相机若与同协议其它连接冲突，
+        /// 返回提示（null = 可安全启动）。规则与 FindOwnerModbusTcp 一致（物理相机任一有值即占用；相机13仅触发侧）。
+        /// </summary>
+        public static string CheckStartupModbusTcp(ClassIni ini, int selfLinkId)
+        {
+            if (ini == null) return null;
+            var self = ModbusTcpIniStore.Load(ini, selfLinkId);
+            if (self == null || self.CameraBindings == null) return null;
+            foreach (var cam in self.CameraBindings)
+            {
+                if (cam == null) continue;
+                bool occupied = cam.CameraNo == SchemeSwitchCamera
+                    ? IsBoundValue(cam.Chufa)
+                    : IsBoundValue(cam.Chufa) || IsBoundValue(cam.Fankui);
+                if (!occupied) continue;
+                int owner = FindOwnerModbusTcp(ini, selfLinkId, cam.CameraNo);
+                if (owner != 0)
+                    return OccupiedMsg("ModbusTCP", cam.CameraNo, owner, OwnerDisplayNameModbusTcp(ini, owner));
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Modbus-RTU 连接"启动前"的相机归属复查，规则同 Modbus-TCP，互斥归属走 ModbusRtuIniStore。
+        /// </summary>
+        public static string CheckStartupModbusRtu(ClassIni ini, int selfLinkId)
+        {
+            if (ini == null) return null;
+            var self = ModbusRtuIniStore.Load(ini, selfLinkId);
+            if (self == null || self.CameraBindings == null) return null;
+            foreach (var cam in self.CameraBindings)
+            {
+                if (cam == null) continue;
+                bool occupied = cam.CameraNo == SchemeSwitchCamera
+                    ? IsBoundValue(cam.Chufa)
+                    : IsBoundValue(cam.Chufa) || IsBoundValue(cam.Fankui);
+                if (!occupied) continue;
+                int owner = FindOwnerModbusRtu(ini, selfLinkId, cam.CameraNo);
+                if (owner != 0)
+                    return OccupiedMsg("ModbusRTU", cam.CameraNo, owner, OwnerDisplayNameModbusRtu(ini, owner));
+            }
+            return null;
+        }
+
+        /// <summary>Modbus-RTU：同 FindOwnerModbusTcp，走 ModbusRtuIniStore。</summary>
+        public static int FindOwnerModbusRtu(ClassIni ini, int selfLinkId, int cameraNo)
+        {
+            if (ini == null) return 0;
+            for (int link = 1; link <= ModbusRtuIniStore.MaxLinks; link++)
+            {
+                if (link == selfLinkId) continue;
+                var cfg = ModbusRtuIniStore.Load(ini, link);
+                var cam = cfg.CameraBindings.Find(c => c.CameraNo == cameraNo);
+                if (cam == null) continue;
+                bool occupied = cameraNo == SchemeSwitchCamera
+                    ? IsBoundValue(cam.Chufa)
+                    : IsBoundValue(cam.Chufa) || IsBoundValue(cam.Fankui);
+                if (occupied) return link;
+            }
+            return 0;
+        }
+
+        /// <summary>拼接“已被占用”的提示文案（Modbus 专用，ownerLink 由 FindOwner* 返回）。</summary>
+        public static string OccupiedMsg(string protoName, int cameraNo, int ownerLink, string ownerName)
+        {
+            string who = string.IsNullOrEmpty(ownerName) ? protoName + " 连接 " + ownerLink : ownerName;
+            return "相机 " + cameraNo + " 已经由 " + who + " 配置了触发/反馈。\r\n\r\n"
+                 + "同一协议内，一台相机只能归属一条连接（不同协议之间互不影响）。\r\n"
+                 + "如要改为本连接，请先到占用它的连接，把相机 " + cameraNo + " 对应的触发/反馈清空并保存。";
         }
     }
 }

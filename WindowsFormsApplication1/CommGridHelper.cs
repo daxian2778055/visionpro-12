@@ -170,8 +170,11 @@ namespace WindowsFormsApplication1
         /// <summary>轮询线程安全写单元格（合并刷新，不阻塞读循环）。</summary>
         public static void SetPollCell(CommGridUiSink sink, Dictionary<int, int[]> finsData, int idx, object value)
         {
-            if (sink == null || !finsData.ContainsKey(idx)) return;
-            int[] cell = finsData[idx];
+            if (sink == null) return;
+            // ★ 2026-09-07：合并 ContainsKey + 索引取值两步为一次 TryGetValue，
+            //   消除 TOCTOU 窗口（两步之间他线程若移除该键，索引取值会抛 KeyNotFoundException）。
+            int[] cell;
+            if (!finsData.TryGetValue(idx, out cell) || cell == null || cell.Length < 2) return;
             sink.Queue(cell[0], cell[1], value);
         }
 

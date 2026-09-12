@@ -43,6 +43,8 @@ namespace WindowsFormsApplication1
 
         private CommunicationService _comm;
         private ClassIni _ini;
+        // 启动前相机关卡复查中被阻止的连接（连接 2~4 的"相机归属冲突"项），Attach 末尾统一提示一次。
+        private readonly List<string> _startupBlocked = new List<string>();
         private Form _currentHost;
         // 当前嵌入的是否为“仅配置”编辑器（是则切换时只 Hide+Remove，不恢复顶级）。
         private bool _currentIsEditor = false;
@@ -129,16 +131,39 @@ namespace WindowsFormsApplication1
             {
                 foreach (var cfg in FinsIniStore.LoadAll(_ini))
                     if (cfg.LinkId >= 2)
+                    {
+                        string hit = CommCameraGuard.CheckStartupFins(_ini, cfg.LinkId);
+                        if (hit != null) { BlockStartup("FINS 连接 " + cfg.LinkId, hit); continue; }
                         EnsureFinsLinkRunning(cfg.LinkId);
+                    }
                 foreach (var cfg in ModbusTcpIniStore.LoadAll(_ini))
                     if (cfg.LinkId >= 2)
+                    {
+                        string hit = CommCameraGuard.CheckStartupModbusTcp(_ini, cfg.LinkId);
+                        if (hit != null) { BlockStartup("Modbus-TCP 连接 " + cfg.LinkId, hit); continue; }
                         EnsureModbusTcpLinkRunning(cfg.LinkId);
+                    }
                 foreach (var cfg in ModbusRtuIniStore.LoadAll(_ini))
                     if (cfg.LinkId >= 2)
+                    {
+                        string hit = CommCameraGuard.CheckStartupModbusRtu(_ini, cfg.LinkId);
+                        if (hit != null) { BlockStartup("Modbus-RTU 连接 " + cfg.LinkId, hit); continue; }
                         EnsureModbusRtuLinkRunning(cfg.LinkId);
+                    }
                 foreach (var cfg in NoProtoIniStore.LoadAll(_ini))
                     if (cfg.LinkId >= 2)
                         EnsureNoProtoLinkRunning(cfg.LinkId, cfg);   // 传入旧配置做首次迁移：升级前已启用的无协议连接自动落入新整窗独立配置
+            }
+
+            // 启动前相机关卡复查结果：有被阻止的连接则统一提示一次（也便于操作员知道为何没启动）
+            if (_startupBlocked.Count > 0)
+            {
+                System.Windows.Forms.MessageBox.Show(
+                    "以下连接因「相机归属冲突」被阻止启动（请在占用该相机的连接里清空并保存，再重新打开本窗口）：\r\n\r\n"
+                    + string.Join("\r\n\r\n", _startupBlocked),
+                    "相机归属冲突 - 连接已阻止",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                _startupBlocked.Clear();
             }
 
             ShowHint("请在左侧选择要查看/编辑的连接设备。\r\n\r\n" +
@@ -467,6 +492,12 @@ namespace WindowsFormsApplication1
             return host;
         }
 
+        /// <summary>记录一条"启动时被阻止的连接"（相机归属冲突），Attach 末尾统一提示。</summary>
+        private void BlockStartup(string connLabel, string msg)
+        {
+            _startupBlocked.Add(connLabel + "：\r\n" + msg);
+        }
+
         /// <summary>保证指定 Modbus-TCP 连接处于运行状态（程序启动/添加时用于恢复已启用连接）。</summary>
         private void EnsureModbusTcpLinkRunning(int link)
         {
@@ -578,6 +609,17 @@ namespace WindowsFormsApplication1
             try { host.ReleaseInstance(); } catch { }
             try { host.Dispose(); } catch { }
             _noProtoEditors.Remove(link);
+        }
+
+        /// <summary>按链路号取无协议连接整窗实例：link==1 返回主窗宿主，link&gt;=2 返回独立整窗。
+        /// 供 Form1 结果回写路由使用（让结果回到发出触发的那条无协议连接的端口）。不存在或已释放返回 null。</summary>
+        public Form3 GetNoProtoLink(int link)
+        {
+            if (link <= 1) return _noProtoHost;
+            Form3 host;
+            if (_noProtoEditors != null && _noProtoEditors.TryGetValue(link, out host) && host != null && !host.IsDisposed)
+                return host;
+            return null;
         }
 
         /// <summary>在左侧设备树中查找 groupKey 组下连接 link 的节点。</summary>

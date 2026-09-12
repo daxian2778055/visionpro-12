@@ -57,6 +57,9 @@ namespace WindowsFormsApplication1
         public string jieshouZifu;
         /// <summary>通讯触发：仅在为 true 时处理下一帧回调，避免开流/残留帧自动检测。</summary>
         public volatile bool commTriggerPending;
+        /// <summary>★ 2026-09-06 ⑤：待处理触发计数（门控改用此字段替代 bool）。触发时 +1，回帧被接收时 -1，
+        /// 检测完成不再清零，避免冲掉在途新触发的置位。&gt;0 表示仍有触发在等回帧。</summary>
+        public volatile int commTriggerPendingCount;
         /// <summary>
         /// 阶段 5：本次检测由哪条通讯连接触发（0=非通讯触发/未知，1=该协议主连接，2..4=扩展连接）。
         /// 检测结果只回写给这条连接。

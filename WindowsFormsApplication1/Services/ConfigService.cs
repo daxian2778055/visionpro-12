@@ -10,9 +10,15 @@ namespace WindowsFormsApplication1
     /// Form1 只通过本服务读写配置，不再直接持有 <see cref="ClassIni"/> 实例，便于后续统一配置来源与单测。
     /// </para>
     /// </summary>
-    public sealed class ConfigService
+    public sealed class ConfigService : IDisposable
     {
         private readonly ClassIni _ini = new ClassIni();
+
+        /// <summary>★ N4：显式刷新 INI 缓存并释放（由组合根在退出时调用）。</summary>
+        public void Dispose()
+        {
+            _ini.Dispose();
+        }
 
         /// <summary>加载指定 INI 文件（AFileName 为完整路径）。</summary>
         public void ReadINIFile(string AFileName)

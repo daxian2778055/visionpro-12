@@ -1,6 +1,0 @@
-30:        // 数据块/相机段族的段名后缀（连接 1 = "_modbustcp"，连接 N = "_modbustcpN"），供 CommGridHelper 段级操作使用。
-31:        private string DataSuffix { get { return "_modbustcp" + (_linkId == 1 ? "" : _linkId.ToString()); } }
-212:            // 多实例改造 阶段 2-C（激活）：用 LoadAll 遍历全部 [modbustcpN] 配置，逐条实例化运行时并登记。
-1384:        /// 阶段 6（连接设备管理器增删多连接）：按 ini [modbustcpN] 当前配置重建并启动连接 N 的运行时。
-1565:                        MsgErroeLog.WriteLog(ex.Message + "modbustcp");
-1723:                MsgErroeLog.WriteLog(ex.Message + "modbustcp");

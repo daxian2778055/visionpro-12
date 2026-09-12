@@ -155,6 +155,8 @@ namespace WindowsFormsApplication1
             this.label67 = new System.Windows.Forms.Label();
             this.label64 = new System.Windows.Forms.Label();
             this.comboBox21 = new System.Windows.Forms.ComboBox();
+            this.label_saveDays = new System.Windows.Forms.Label();
+            this.numericUpDown_saveDays = new System.Windows.Forms.NumericUpDown();
             this.button3 = new System.Windows.Forms.Button();
             this.label61 = new System.Windows.Forms.Label();
             this.label60 = new System.Windows.Forms.Label();
@@ -990,6 +992,7 @@ namespace WindowsFormsApplication1
             this.tabControl1.SuspendLayout();
             this.tabPage5.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown4)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.numericUpDown_saveDays)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown1)).BeginInit();
             this.tabPage6.SuspendLayout();
@@ -2190,6 +2193,8 @@ namespace WindowsFormsApplication1
             this.tabPage5.Controls.Add(this.label67);
             this.tabPage5.Controls.Add(this.label64);
             this.tabPage5.Controls.Add(this.comboBox21);
+            this.tabPage5.Controls.Add(this.label_saveDays);
+            this.tabPage5.Controls.Add(this.numericUpDown_saveDays);
             this.tabPage5.Controls.Add(this.textBox1);
             this.tabPage5.Controls.Add(this.button3);
             this.tabPage5.Controls.Add(this.label61);
@@ -2558,6 +2563,38 @@ namespace WindowsFormsApplication1
             this.comboBox21.Size = new System.Drawing.Size(121, 20);
             this.comboBox21.TabIndex = 109;
             this.comboBox21.SelectedIndexChanged += new System.EventHandler(this.comboBox21_SelectedIndexChanged);
+            // 
+            // label_saveDays
+            // 
+            this.label_saveDays.AutoSize = true;
+            this.label_saveDays.Location = new System.Drawing.Point(493, 38);
+            this.label_saveDays.Name = "label_saveDays";
+            this.label_saveDays.Size = new System.Drawing.Size(65, 12);
+            this.label_saveDays.TabIndex = 142;
+            this.label_saveDays.Text = "可保存(天)";
+            // 
+            // numericUpDown_saveDays
+            // 
+            this.numericUpDown_saveDays.Location = new System.Drawing.Point(430, 34);
+            this.numericUpDown_saveDays.Maximum = new decimal(new int[] {
+            365,
+            0,
+            0,
+            0});
+            this.numericUpDown_saveDays.Minimum = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
+            this.numericUpDown_saveDays.Name = "numericUpDown_saveDays";
+            this.numericUpDown_saveDays.Size = new System.Drawing.Size(60, 21);
+            this.numericUpDown_saveDays.TabIndex = 141;
+            this.numericUpDown_saveDays.Value = new decimal(new int[] {
+            7,
+            0,
+            0,
+            0});
+            this.numericUpDown_saveDays.ValueChanged += new System.EventHandler(this.numericUpDown_saveDays_ValueChanged);
             // 
             // button3
             // 
@@ -13500,7 +13537,7 @@ namespace WindowsFormsApplication1
             this.label148.Name = "label148";
             this.label148.Size = new System.Drawing.Size(82, 21);
             this.label148.TabIndex = 125;
-            this.label148.Text = "YA0905";
+            this.label148.Text = "YA0911";
             // 
             // timer17
             // 
@@ -13652,6 +13689,7 @@ namespace WindowsFormsApplication1
             this.tabPage5.ResumeLayout(false);
             this.tabPage5.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown4)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.numericUpDown_saveDays)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown1)).EndInit();
             this.tabPage6.ResumeLayout(false);
@@ -14025,6 +14063,9 @@ namespace WindowsFormsApplication1
         private System.Windows.Forms.Label label59;
         private System.Windows.Forms.Label label58;
         private System.Windows.Forms.NumericUpDown numericUpDown2;
+        // ★ 2026-09-11：存图保留天数可编辑控件（配置窗 存图限制 旁）
+        private System.Windows.Forms.NumericUpDown numericUpDown_saveDays;
+        private System.Windows.Forms.Label label_saveDays;
         private System.Windows.Forms.Label label61;
         private System.Windows.Forms.Label label60;
         private System.Windows.Forms.Button button3;

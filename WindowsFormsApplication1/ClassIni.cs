@@ -5,9 +5,11 @@ using System.Text;
 
 namespace demo
 {
-    public class ClassIni
+    public class ClassIni : IDisposable
     {
         public string FileName; //INI文件名
+
+        private bool _disposed;
 
         //声明读写INI文件的API函数
         [System.Runtime.InteropServices.DllImport("kernel32")]
@@ -68,8 +70,9 @@ namespace demo
                 Byte[] Buffer = new Byte[65535];
                 int bufLen = GetPrivateProfileString(Section, Ident, Default, Buffer, Buffer.GetUpperBound(0), FileName);
                 //必须设定0（系统默认的代码页）的编码方式，否则无法支持中文
-                string s = Encoding.GetEncoding(0).GetString(Buffer);
-                s = s.Substring(0, bufLen);
+                //bufLen 是 ANSI 字节数；GetString 必须只解码前 bufLen 字节，
+                //否则中文(GBK 2字节/字)会按"字节数=字符数"去截，尾部引入 '\0' 脏字符
+                string s = Encoding.GetEncoding(0).GetString(Buffer, 0, bufLen);
                 return s.Trim();
             }
             catch
@@ -207,10 +210,17 @@ namespace demo
             return Idents.IndexOf(Ident) > -1;
         }
 
-        //确保资源的释放
-        ~ClassIni()
+        /// <summary>
+        /// ★ N4：显式刷新并释放。
+        /// 原实现在终结器里调用 <see cref="UpdateFile"/>，等于在 GC 线程做磁盘 IO（P/Invoke 写文件），
+        /// 时机不确定、进程退出时也不保证执行；这里移除终结器，改为由持有方显式调用。
+        /// </summary>
+        public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             try { UpdateFile(); } catch { }
+            GC.SuppressFinalize(this);
         }
     }
 }

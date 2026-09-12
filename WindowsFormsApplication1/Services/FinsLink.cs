@@ -45,6 +45,9 @@ namespace WindowsFormsApplication1
         /// </summary>
         public OmronFinsNet Client { get; set; }
 
+        /// <summary>建链超时（毫秒）。默认 3000，防止不可达/半开网关时同步阻塞卡死调用线程。</summary>
+        public int ConnectTimeOutMs { get; set; } = 3000;
+
         public bool IsConnected { get { return Client != null; } }
 
         /// <summary>
@@ -61,6 +64,7 @@ namespace WindowsFormsApplication1
                 Client.Port = Port;
                 Client.SA1 = SA1;
                 Client.DA2 = DA2;
+                Client.ConnectTimeOut = ConnectTimeOutMs;   // ★ 2026-09-11：设置建链超时，避免网关卡顿时长时间挂起
                 if (dataFormat.HasValue)
                     Client.ByteTransform.DataFormat = dataFormat.Value;
                 return Client.ConnectServer();
@@ -69,6 +73,12 @@ namespace WindowsFormsApplication1
             {
                 return new OperateResult(ex.Message);
             }
+        }
+
+        /// <summary>异步建链（后台线程执行，不阻塞调用线程）。返回 Task 结果，成功与否见 IsSuccess。</summary>
+        public System.Threading.Tasks.Task<OperateResult> ConnectAsync(DataFormat? dataFormat = null)
+        {
+            return System.Threading.Tasks.Task.Run(() => Connect(dataFormat));
         }
 
         /// <summary>断开连接。</summary>

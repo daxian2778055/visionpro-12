@@ -1,11 +1,11 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 15
-VisualStudioVersion = 15.0.28307.1401
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36930.0 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WindowsFormsApplication1", "WindowsFormsApplication1\WindowsFormsApplication1.csproj", "{284A4797-86E7-4036-93ED-F940BFEA58BD}"
 EndProject
-Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "Setup2", "Setup2\Setup2.vdproj", "{90DE62B6-1AE0-4852-852C-27EBFCE9711E}"
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "Setup1", "Setup1\Setup1.vdproj", "{F5D91FD6-F519-3AC5-2EF1-6ADD62B256F6}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -23,10 +23,10 @@ Global
 		{284A4797-86E7-4036-93ED-F940BFEA58BD}.Release|Any CPU.Build.0 = Release|Any CPU
 		{284A4797-86E7-4036-93ED-F940BFEA58BD}.Release|x64.ActiveCfg = Release|x64
 		{284A4797-86E7-4036-93ED-F940BFEA58BD}.Release|x64.Build.0 = Release|x64
-		{90DE62B6-1AE0-4852-852C-27EBFCE9711E}.Debug|Any CPU.ActiveCfg = Debug
-		{90DE62B6-1AE0-4852-852C-27EBFCE9711E}.Debug|x64.ActiveCfg = Debug
-		{90DE62B6-1AE0-4852-852C-27EBFCE9711E}.Release|Any CPU.ActiveCfg = Release
-		{90DE62B6-1AE0-4852-852C-27EBFCE9711E}.Release|x64.ActiveCfg = Release
+		{F5D91FD6-F519-3AC5-2EF1-6ADD62B256F6}.Debug|Any CPU.ActiveCfg = Debug
+		{F5D91FD6-F519-3AC5-2EF1-6ADD62B256F6}.Debug|x64.ActiveCfg = Debug
+		{F5D91FD6-F519-3AC5-2EF1-6ADD62B256F6}.Release|Any CPU.ActiveCfg = Release
+		{F5D91FD6-F519-3AC5-2EF1-6ADD62B256F6}.Release|x64.ActiveCfg = Release
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

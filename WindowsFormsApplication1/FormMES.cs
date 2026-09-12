@@ -142,7 +142,8 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            using (var reader = new StreamReader(wex.Response.GetResponseStream(), Encoding.UTF8))
+                            using (var resp = wex.Response)
+                            using (var reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                                 errBody = reader.ReadToEnd();
                         }
                         catch { }

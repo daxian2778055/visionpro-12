@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -297,7 +297,7 @@ namespace WindowsFormsApplication1
                         else
                         {
                             monitor = serr;
-                            MsgErroeLog.WriteLog(serr);
+                            MsgErroeLog.WriteLog("[Form3-串口] " + serr);
                         }
                     }
                     catch (Exception ex)
@@ -424,7 +424,7 @@ namespace WindowsFormsApplication1
                                 {
                                     // COM 占用 / 打开失败：只记一次（占用解除后由本循环自动重开），避免每 500ms 刷日志
                                     _lastMainSerialLog = serr;
-                                    MsgErroeLog.WriteLog("串口自动重开失败: " + serr);
+                                    MsgErroeLog.WriteLog("[Form3-串口] 自动重开失败: " + serr);
                                 }
                             }
                         }
@@ -523,22 +523,10 @@ namespace WindowsFormsApplication1
                 buffer = null;
                 if (jinzhi==1)
                 {
-                    //string sHex = textBox8.Text.Replace(" ", "");
-                    //if (sHex.Length > 0 && (sHex.Length % 2 == 0))
-                    //{
-                    //    byte[] vbyte = new byte[sHex.Length / 2];
-                    //    for (int i = 0; i < sHex.Length; i = i + 2)
-                    //    {
-                    //        if (!byte.TryParse(sHex.Substring(i, 2), NumberStyles.HexNumber, null, out vbyte[i / 2]))
-                    //            vbyte[i / 2] = 0;
-                    //    }
-                    //    buffer = vbyte;
-                    //}
-                    int indata;
-                    byte[] tempdata;
-                    int.TryParse(textBox8.Text, out indata);
-                    Getint(indata, out tempdata);
-                    buffer = tempdata;
+                    // ★ 2026-09-11：修复 hex 手动发送发 00 00 00 00。
+                    //   旧代码 int.TryParse("A5 01")必失败→0，再 Getint→发出四个零字节。
+                    //   统一复用 BuildSendBuffer，与 changeok/changeng/监听线程路径保持一致。
+                    buffer = BuildSendBuffer(str, true);
                 }
                 else
                     buffer = System.Text.Encoding.Default.GetBytes(str);
@@ -574,8 +562,14 @@ namespace WindowsFormsApplication1
                 td.Start(socketWatch);
                 //等待客户端连接
             }
-            catch
-            { }
+            catch (Exception ex)
+            {
+                // TCP 服务器启动失败，最常见是端口被占。把真实原因打出来，避免“点了没反应”
+                string msg = "TCP服务器(端口" + textBox3.Text + ")启动失败：" + ex.GetType().Name + "，" + ex.Message;
+                ShowMsg(msg);
+                MsgErroeLog.WriteLog(msg + "，来自Form3.TCP服务器 button1");
+                try { if (socketWatch != null) socketWatch.Close(); } catch { }
+            }
         }
         private void ShowMsg(string str)
         {
@@ -623,12 +617,27 @@ namespace WindowsFormsApplication1
                     th1.IsBackground = true;
                     th1.Start(accepted);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // 监听异常（端口被占/被关闭等）：退出监听线程，避免死循环空转 CPU 100%
+                    // accept 异常退出监听线程，避免死循环空转 CPU 100%
                     _listenStarted = false;   // 允许重新启动监听
-                    MsgErroeLog.WriteLog("TCP服务器监听异常，监听线程退出");
                     try { if (socketWatch != null) socketWatch.Close(); } catch { }
+                    // 区分“主动关闭服务器”(正常停止，不算故障) 与 “端口冲突/被关闭等真故障”
+                    bool isShutdown = ex is SocketException
+                        && (((SocketException)ex).SocketErrorCode == SocketError.Interrupted
+                            || ((SocketException)ex).SocketErrorCode == SocketError.OperationAborted
+                            || ((SocketException)ex).SocketErrorCode == SocketError.ConnectionReset);
+                    if (isShutdown)
+                    {
+                        ShowMsg("TCP服务器(端口" + textBox3.Text + ")已停止监听");
+                        MsgErroeLog.WriteLog("TCP服务器(端口" + textBox3.Text + ")监听线程正常退出，服务器已停止");
+                    }
+                    else
+                    {
+                        ShowMsg("TCP服务器(端口" + textBox3.Text + ")监听异常：" + ex.Message);
+                        MsgErroeLog.WriteLog("TCP服务器(端口" + textBox3.Text + ",本机监听)监听线程异常退出，原因：" + ex.GetType().Name
+                            + "，" + ex.Message + "，来自Form3.TCP服务器");
+                    }
                     break;
                 }
             }
@@ -757,34 +766,21 @@ namespace WindowsFormsApplication1
                 buffer = null;
                 if (jinzhi==1)
                 {
-                    //string sHex = textBox2.Text.Replace(" ", "");
-                    //if (sHex.Length > 0 && (sHex.Length % 2 == 0))
-                    //{
-                    //    byte[] vbyte = new byte[sHex.Length / 2];
-                    //    for (int i = 0; i < sHex.Length; i = i + 2)
-                    //    {
-                    //        if (!byte.TryParse(sHex.Substring(i, 2), NumberStyles.HexNumber, null, out vbyte[i / 2]))
-                    //            vbyte[i / 2] = 0;
-                    //    }
-                    //    buffer = vbyte;
-                    //}
-                    int indata;
-                    byte[] tempdata;
-                    int.TryParse(textBox2.Text, out indata);
-                    Getint(indata, out tempdata);
-                    buffer = tempdata;
+                    // hex 模式直接按 16 进制串解析；旧的 int.TryParse+Getint 会发 00 00 00 00
+                    buffer = BuildSendBuffer(str, true);
                 }
                 else
                 {
                     // byte[] buffer=Convert.ToByte(StringToHexOrDec(str));
                     buffer = System.Text.Encoding.Default.GetBytes(str);
                 }
+                if (comboBox1.SelectedItem == null) { MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送失败: 未选择客户端"); return; }
                 string ip = comboBox1.SelectedItem.ToString();
                 Socket s;
                 if (serverSocket.TryGetValue(ip, out s) && s != null)
                     s.Send(buffer);
                 else
-                    MsgErroeLog.WriteLog("TCP服务器发送失败: 客户端已断开 " + ip);
+                    MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送失败: 客户端已断开 " + ip);
                 //  soketSend.Send(buffer);
             }
             catch { }
@@ -943,10 +939,8 @@ namespace WindowsFormsApplication1
                         //   mdcan.port.Write(vbyte, 0, 8);
 
                         //}
-                        int indata;
-                        byte[] tempdata;
-                        int.TryParse(texSend.Text, out indata);
-                        Getint(indata, out tempdata);
+                        // hex 模式直接按 16 进制串解析；旧的 int.TryParse+Getint 会发 00 00 00 00
+                        byte[] tempdata = BuildSendBuffer(texSend.Text, true);
                         mdcan.port.Write(tempdata, 0, tempdata.Length);
                     }
                     else
@@ -1112,6 +1106,7 @@ namespace WindowsFormsApplication1
             if (getData != null)
             {
                 SelectionChangedEventArgs E = new SelectionChangedEventArgs(textBox9.Text);
+                E.LinkId = _linkId;
                 getData(this, E);
             }
         }
@@ -1130,6 +1125,10 @@ namespace WindowsFormsApplication1
                 get { return m_selection; }
 
             }
+
+            // 来源链路号：连接 2~4 触发经主窗宿主转发时保留“是谁发的”这一身份，
+            // 供 Form1.DataChange 记录到相机，使检测结果能回到发出触发的那条无协议连接的端口。
+            public int LinkId;
             public SelectionChangedEventArgs(string selection)
             {
 
@@ -1514,6 +1513,7 @@ namespace WindowsFormsApplication1
                 if (qiehuan(frame) == 0)
                 {
                     SelectionChangedEventArgs E = new SelectionChangedEventArgs(frame);
+                    E.LinkId = _linkId;
                     if (getData != null) getData(this, E);
                 }
             }
@@ -1536,11 +1536,12 @@ namespace WindowsFormsApplication1
                     if (IsMainWindow || HostMain == null)
                     {
                         SelectionChangedEventArgs E = new SelectionChangedEventArgs(frame);
+                        E.LinkId = _linkId;
                         if (getData != null) getData(this, E);
                     }
                     else
                     {
-                        HostMain.RaiseCameraTrigger(frame);
+                        HostMain.RaiseCameraTrigger(frame, _linkId);
                     }
                 }
                 else if (!IsMainWindow && HostMain != null && !string.IsNullOrEmpty(lujing))
@@ -1553,12 +1554,13 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>把“未命中切型”的外部链路帧并入本窗 getData（相机触发）入口；额外整窗经此把帧并入主窗宿主。</summary>
-        public void RaiseCameraTrigger(string frame)
+        public void RaiseCameraTrigger(string frame, int sourceLink)
         {
             try
             {
                 if (string.IsNullOrEmpty(frame)) return;
                 SelectionChangedEventArgs E = new SelectionChangedEventArgs(frame);
+                E.LinkId = sourceLink;
                 if (getData != null) getData(this, E);
             }
             catch { }
@@ -1796,7 +1798,7 @@ namespace WindowsFormsApplication1
                         // ★ F21: 发送前校验连接，避免 socketClient 为 null 或断线时 NullRef/异常被吞
                         if (socketClient == null || !socketClient.Connected)
                         {
-                            MsgErroeLog.WriteLog("TCP客户机发送合格失败: 未连接 " + aa);
+                            MsgErroeLog.WriteLog("[Form3-TCP客户机] 发送合格失败: 未连接 " + aa);
                         }
                         else
                         {
@@ -1807,7 +1809,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        MsgErroeLog.WriteLog("TCP客户机发送合格失败: " + aa + " " + ex.Message);
+                        MsgErroeLog.WriteLog("[Form3-TCP客户机] 发送合格失败: " + aa + " " + ex.Message);
                     }
                 }
                 try { textBox9.Text = "1"; } catch { }
@@ -1823,11 +1825,11 @@ namespace WindowsFormsApplication1
                         if (ip.Length > 0 && serverSocket.TryGetValue(ip, out s) && s != null)
                             s.Send(buffer);
                         else
-                            MsgErroeLog.WriteLog("TCP服务器发送合格失败: 无客户端连接 " + aa);
+                            MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送合格失败: 无客户端连接 " + aa);
                     }
                     catch (Exception ex)
                     {
-                        MsgErroeLog.WriteLog("TCP服务器发送合格失败: " + aa + " " + ex.Message);
+                        MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送合格失败: " + aa + " " + ex.Message);
                     }
                 }
                 if (checkBox4.CheckState == CheckState.Checked)
@@ -1842,7 +1844,7 @@ namespace WindowsFormsApplication1
                         }
                         catch (Exception ex)
                         {
-                            MsgErroeLog.WriteLog("串口发送合格失败: " + aa + " " + ex.Message);
+                            MsgErroeLog.WriteLog("[Form3-串口] 发送合格失败: " + aa + " " + ex.Message);
                         }
                     }
                     else
@@ -1869,7 +1871,7 @@ namespace WindowsFormsApplication1
                         // ★ F21: 发送前校验连接，避免 socketClient 为 null 或断线时 NullRef/异常被吞
                         if (socketClient == null || !socketClient.Connected)
                         {
-                            MsgErroeLog.WriteLog("TCP客户机发送NG失败: 未连接 " + aa);
+                            MsgErroeLog.WriteLog("[Form3-TCP客户机] 发送NG失败: 未连接 " + aa);
                         }
                         else
                         {
@@ -1880,7 +1882,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        MsgErroeLog.WriteLog("TCP客户机发送NG失败: " + aa + " " + ex.Message);
+                        MsgErroeLog.WriteLog("[Form3-TCP客户机] 发送NG失败: " + aa + " " + ex.Message);
                     }
                 }
                 try { textBox9.Text = "0"; } catch { }
@@ -1896,11 +1898,11 @@ namespace WindowsFormsApplication1
                         if (ip.Length > 0 && serverSocket.TryGetValue(ip, out s) && s != null)
                             s.Send(buffer);
                         else
-                            MsgErroeLog.WriteLog("TCP服务器发送NG失败: 无客户端连接 " + aa);
+                            MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送NG失败: 无客户端连接 " + aa);
                     }
                     catch (Exception ex)
                     {
-                        MsgErroeLog.WriteLog("TCP服务器发送NG失败: " + aa + " " + ex.Message);
+                        MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送NG失败: " + aa + " " + ex.Message);
                     }
                 }
                 if (checkBox4.CheckState == CheckState.Checked)
@@ -1915,7 +1917,7 @@ namespace WindowsFormsApplication1
                         }
                         catch (Exception ex)
                         {
-                            MsgErroeLog.WriteLog("串口发送NG失败: " + aa + " " + ex.Message);
+                            MsgErroeLog.WriteLog("[Form3-串口] 发送NG失败: " + aa + " " + ex.Message);
                         }
                     }
                     else

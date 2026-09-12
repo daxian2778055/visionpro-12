@@ -6,17 +6,11 @@ namespace WindowsFormsApplication1
 {
     class RunLog
     {
-        private int processCount;
-        private int iTemp;
-        private string sOrg;
-        private int IOK;
-        private int ING;
-        private int sumend;
-        private int sumline;
-        private int sumline1;
-        int iTemp1;
-        int Sumss;
         ErrorLog Errorwrite = new ErrorLog();
+
+        // 多路相机检测线程都会调用 WriteDate/WriteDate1 写同一批 CSV，必须串行化，
+        // 否则并发读写同一文件会抛出 IOException 且计数互相覆盖。
+        private readonly object _lock = new object();
 
         /*按照年份创建文件夹*/
         public void CreateDirectoryCsvPath(string path22)
@@ -77,112 +71,73 @@ namespace WindowsFormsApplication1
             }
         }
 
+        /// <summary>
+        /// 在「生产统计」月度汇总 CSV 中记录一次 OK/NG 结果。
+        /// <para>
+        /// ★ S5 修复：改为"读取全部行 → 定位最后一行 → 整体重写"，彻底废弃原先按字节偏移
+        /// <c>Seek(iTemp - 20)</c> 覆盖写的做法。旧做法依赖"按字符数估算字节偏移"，
+        /// 当计数从 9→10 变长时会把后续内容写坏/截断。
+        /// </para>
+        /// <para>该文件按设计最多约 35 行，整体重写代价可忽略。</para>
+        /// </summary>
         public void WriteDate(int okss, int ng1, string path22)
         {
-            try
+            lock (_lock)
             {
-                string strYear = DateTime.Now.Year.ToString();
-                string strMoth = DateTime.Now.ToString("Y");
-                string str = DateTime.Now.ToString("m");
-                string strCsvPath = @"E:\生产统计\" + path22 + "\\" + strYear + "\\" + strMoth + ".csv";
-                string str1;
-                string[] strs;
-                sOrg = "mode";
-
-                int temp;
-                int iflag;
-                using (FileStream fs = new FileStream(strCsvPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (StreamReader reader = new StreamReader(fs, Encoding.Default))
-                {
-                    strs = new string[5];
-                    temp = 0;
-                    iflag = 0;
-                    processCount = 0;
-                    sumend = 0;
-                    sumline = 0;
-                    sumline1 = 0;
-                    while ((str1 = reader.ReadLine()) != null)
-                    {
-                        sumline = 0;
-                        if (str1 != "")
-                            sumline1++;
-                        strs = str1.Split(',');
-                        byte[] strbyte = Encoding.Default.GetBytes(str1);
-                        temp = 0;
-                        iflag++;
-                        for (int i = 0; i < strbyte.Length; i++)
-                        {
-                            if ((int)strbyte[i] == 63)
-                            {
-                                processCount += 2;
-                                temp += 2;
-                                sumline++;
-                            }
-                            else if ((int)strbyte[i] != 63 && (int)strbyte[i] != 0)
-                            {
-                                processCount++;
-                                temp++;
-                            }
-                        }
-                        if (sumline > 20)
-                            sumend = 1;
-                    }
-                    iTemp = processCount - temp + (iflag - 1) * 2;
-                    processCount = 0;
-                }
-
                 try
                 {
-                    if (strs[0] == str)
+                    string strYear = DateTime.Now.Year.ToString();
+                    string strMoth = DateTime.Now.ToString("Y");
+                    string str = DateTime.Now.ToString("m");
+                    string strCsvPath = @"E:\生产统计\" + path22 + "\\" + strYear + "\\" + strMoth + ".csv";
+
+                    if (!File.Exists(strCsvPath))
                     {
-                        if (strs[4].Contains(sOrg))
-                        {
-                            if (okss == 1)
-                            {
-                                IOK = int.Parse(strs[2]) + 1;
-                                ING = int.Parse(strs[3]);
-                            }
-                            else
-                            {
-                                IOK = int.Parse(strs[2]);
-                                ING = int.Parse(strs[3]) + 1;
-                            }
-                        }
-                        else
-                        {
-                            if (okss == 1)
-                            {
-                                IOK = int.Parse(strs[2]) + 1;
-                                ING = int.Parse(strs[3]);
-                            }
-                            else
-                            {
-                                IOK = int.Parse(strs[2]);
-                                ING = int.Parse(strs[3]) + 1;
-                            }
-                            sOrg = strs[4] + sOrg;
-                        }
-                        string s;
-                        if (sumend == 0)
-                        {
-                            s = str + "," + (IOK + ING) + "," + IOK + "," + ING + "," + sOrg + "," + IOK * 1.0f / (IOK + ING);
-                        }
-                        else
-                        {
-                            s = "";
-                        }
-                        using (StreamWriter sw = new StreamWriter(File.OpenWrite(strCsvPath), Encoding.Default))
-                        {
-                            if (sumend == 0)
-                                sw.BaseStream.Seek(iTemp, SeekOrigin.Begin);
-                            else
-                                sw.BaseStream.Seek(iTemp - 20, SeekOrigin.Begin);
-                            sw.Write(s);
-                        }
+                        Errorwrite.WriteLog("生产统计文件不存在，跳过本次记录: " + strCsvPath);
+                        return;
                     }
-                    else
+
+                    string[] lines = File.ReadAllLines(strCsvPath, Encoding.Default);
+                    if (lines.Length == 0) return;
+
+                    // 定位最后一条非空行（等价于旧实现"取最后一次 ReadLine 的结果"）
+                    int lastIdx = lines.Length - 1;
+                    while (lastIdx >= 0 && string.IsNullOrEmpty(lines[lastIdx])) lastIdx--;
+                    if (lastIdx < 0) return;
+
+                    string[] strs = lines[lastIdx].Split(',');
+                    if (strs.Length < 5) return;   // 结构异常，避免越界
+
+                    // 保留旧实现的"编码不匹配"保护：整份文件出现大量无法按默认代码页表示的字符时
+                    // （Encoding.Default 会替换成 '?'），本次不改写该行。
+                    bool encodingMismatch = HasTooManyUnmappableChars(lines);
+
+                    string sOrg = "mode";
+                    try
                     {
-                        if (sumline1 < 35)
+                        if (strs[0] == str)
+                        {
+                            int iok;
+                            int ing;
+                            if (strs[4].Contains(sOrg))
+                            {
+                                iok = int.Parse(strs[2]) + (okss == 1 ? 1 : 0);
+                                ing = int.Parse(strs[3]) + (okss == 1 ? 0 : 1);
+                            }
+                            else
+                            {
+                                iok = int.Parse(strs[2]) + (okss == 1 ? 1 : 0);
+                                ing = int.Parse(strs[3]) + (okss == 1 ? 0 : 1);
+                                sOrg = strs[4] + sOrg;
+                            }
+
+                            lines[lastIdx] = encodingMismatch
+                                ? string.Empty
+                                : str + "," + (iok + ing) + "," + iok + "," + ing + "," + sOrg + "," + iok * 1.0f / (iok + ing);
+
+                            File.WriteAllLines(strCsvPath, lines, Encoding.Default);
+                        }
+                        else if (CountNonEmptyLines(lines) < 35)
                         {
                             using (StreamWriter sw1 = new StreamWriter(strCsvPath, true, Encoding.Default))
                             {
@@ -190,89 +145,112 @@ namespace WindowsFormsApplication1
                                 sw1.WriteLine(s);
                             }
                         }
-                        else
+                        else if (!encodingMismatch)
                         {
-                            using (StreamWriter sw = new StreamWriter(File.OpenWrite(strCsvPath), Encoding.Default))
-                            {
-                                sw.BaseStream.Seek(iTemp - 20, SeekOrigin.Begin);
-                                sw.Write("");
-                            }
+                            // 超过 35 行且最后一行不是今天：保持旧实现"清空最后一行"的语义（该文件按行数滚动）
+                            lines[lastIdx] = string.Empty;
+                            File.WriteAllLines(strCsvPath, lines, Encoding.Default);
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        Errorwrite.WriteLog(ex.Message + "记录1");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Errorwrite.WriteLog(ex.Message + "记录1");
+                    Errorwrite.WriteLog(ex.Message + "记录2");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 在「每日统计」明细 CSV 中追加一条记录（jilu 为结果明细，okss=1 表示 OK）。
+        /// <para>
+        /// ★ S5 修复：删除旧实现为计算一个"从未被使用的字节偏移 iTemp1"而做的整文件逐字节扫描；
+        /// 文件不存在时明确记日志，而不是抛出 FileNotFoundException 被内层空 catch 静默吞掉。
+        /// </para>
+        /// </summary>
+        public void WriteDate1(string jilu, string path22, int okss)
+        {
+            try
+            {
+                lock (_lock)
+                {
+                    string strYear = DateTime.Now.Year.ToString();
+                    string strMoth = DateTime.Now.ToString("Y");
+                    string str = DateTime.Now.ToString("m");
+                    string strCsvPath = @"E:\每日统计\" + path22 + "\\" + strYear + "\\" + strMoth + "\\" + str + ".csv";
+
+                    if (!File.Exists(strCsvPath))
+                    {
+                        Errorwrite.WriteLog("每日统计文件不存在，跳过本次记录: " + strCsvPath);
+                        return;
+                    }
+
+                    string[] lines = File.ReadAllLines(strCsvPath, Encoding.Default);
+                    int lastIdx = lines.Length - 1;
+                    while (lastIdx >= 0 && string.IsNullOrEmpty(lines[lastIdx])) lastIdx--;
+
+                    // 序号 = 最后一行首个字段 + 1；表头（"序号"/"次序"）视为 0。
+                    // 无法解析时不写入（与旧实现抛异常被吞的结果一致）。
+                    int seqValue = -1;
+                    if (lastIdx >= 0)
+                    {
+                        string[] strs = lines[lastIdx].Split(',');
+                        string first = (strs.Length > 0) ? strs[0] : null;
+                        if (first == "次序" || first == "序号") first = "0";
+                        int parsed;
+                        if (!string.IsNullOrEmpty(first) && int.TryParse(first, out parsed))
+                            seqValue = parsed + 1;
+                    }
+                    if (seqValue < 0) return;
+
+                    string jieguo = (okss == 1) ? "OK" : "NG";
+                    string s = seqValue + "," + DateTime.Now.ToString("s") + "," + jilu + "," + jieguo;
+
+                    using (StreamWriter sw4 = new StreamWriter(strCsvPath, true, Encoding.Default))
+                    {
+                        sw4.WriteLine(s);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Errorwrite.WriteLog(ex.Message + "记录2");
+                try { Errorwrite.WriteLog("每日记录失败:" + ex.Message); } catch { }
             }
         }
 
-        public void WriteDate1(string jilu, string path22, int okss)
+        /// <summary>
+        /// 旧实现用"某行按默认代码页转换后 '?' 字节数 > 20"判定文件编码与预期不符
+        /// （'?' 是 Encoding.Default 对无法映射字符的替换结果）。这里保留同一判据。
+        /// </summary>
+        private static bool HasTooManyUnmappableChars(string[] lines)
         {
-            string jieguo;
-            string strYear = DateTime.Now.Year.ToString();
-            string strMoth = DateTime.Now.ToString("Y");
-            string str = DateTime.Now.ToString("m");
-            string strCsvPath = @"E:\每日统计\" + path22 + "\\" + strYear + "\\" + strMoth + "\\" + str + ".csv";
-            string str1;
-            string[] strs;
-            using (FileStream fs = new FileStream(strCsvPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            using (StreamReader reader = new StreamReader(fs, Encoding.Default))
+            for (int i = 0; i < lines.Length; i++)
             {
-                strs = new string[5];
-                processCount = 0;
-                int temp = 0;
-                int iflag = 0;
+                string line = lines[i];
+                if (string.IsNullOrEmpty(line)) continue;
 
-                while ((str1 = reader.ReadLine()) != null)
+                byte[] bytes = Encoding.Default.GetBytes(line);
+                int marks = 0;
+                for (int j = 0; j < bytes.Length; j++)
                 {
-                    strs = str1.Split(',');
-                    byte[] strbyte = Encoding.Default.GetBytes(str1);
-                    iflag++;
-
-                    for (int i = 0; i < strbyte.Length; i++)
-                    {
-                        if ((int)strbyte[i] == 63)
-                        {
-                            processCount += 2;
-                            temp += 2;
-                        }
-                        else
-                        {
-                            processCount++;
-                            temp++;
-                        }
-                    }
+                    if (bytes[j] == (byte)'?') marks++;
                 }
-                iTemp1 = processCount - temp + (iflag - 1) * 2;
-                processCount = 0;
+                if (marks > 20) return true;
             }
+            return false;
+        }
 
-            try
+        private static int CountNonEmptyLines(string[] lines)
+        {
+            int n = 0;
+            for (int i = 0; i < lines.Length; i++)
             {
-                if (strs[0] == "次序" || strs[0] == "序号")
-                    strs[0] = "0";
-
-                Sumss = int.Parse(strs[0]) + 1;
-                string strsecond = DateTime.Now.ToString("s");
-                if (okss == 1)
-                    jieguo = "OK";
-                else
-                    jieguo = "NG";
-                string s = Sumss + "," + strsecond + "," + jilu + "," + jieguo;
-
-                using (StreamWriter sw4 = new StreamWriter(strCsvPath, true, Encoding.Default))
-                {
-                    sw4.WriteLine(s);
-                }
+                if (!string.IsNullOrEmpty(lines[i])) n++;
             }
-            catch
-            {
-            }
+            return n;
         }
     }
 }

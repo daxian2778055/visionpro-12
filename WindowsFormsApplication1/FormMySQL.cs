@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -41,6 +42,9 @@ namespace WindowsFormsApplication1
                 Hide();
                 return;
             }
+            // 程序整体关闭时释放常开连接，避免句柄残留
+            try { if (_conn != null) { _conn.Close(); _conn.Dispose(); } } catch { }
+            _conn = null;
             base.OnFormClosing(e);
         }
 
@@ -74,8 +78,8 @@ namespace WindowsFormsApplication1
                     "database=" + txtDatabase.Text.Trim(),
                     "rememberpwd=" + (chkRemember.Checked ? "1" : "0")
                 };
-                if (chkRemember.Checked)
-                    lines.Add("pwd=" + txtPwd.Text);
+                if (chkRemember.Checked && !string.IsNullOrEmpty(txtPwd.Text))
+                    lines.Add("pwd_enc=" + Protect(txtPwd.Text));   // ★ 2026-09-11：改 DPAPI 加密写盘，不再明文保存口令
                 File.WriteAllLines(CfgIni, lines, Encoding.UTF8);
             }
             catch { }
@@ -98,14 +102,39 @@ namespace WindowsFormsApplication1
                         case "port": txtPort.Text = v; break;
                         case "user": txtUser.Text = v; break;
                         case "database": txtDatabase.Text = v; break;
+                        case "pwd_enc":
+                            try { txtPwd.Text = Unprotect(v); } catch { txtPwd.Text = ""; }
+                            break;
                         case "pwd": txtPwd.Text = v; break;
                         case "rememberpwd": chkRemember.Checked = (v == "1"); break;
                     }
                 }
                 // 未勾选记住密码时不回填密码
-                if (!chkRemember.Checked) txtPwd.Text = "";
+            if (!chkRemember.Checked) txtPwd.Text = "";
             }
             catch { }
+        }
+
+        // ===== 口令加密（DPAPI，当前用户作用域，依赖本机 Windows 凭据，异地不可解）=====
+        // 写盘用 Protect() 加密；读盘优先解 pwd_enc=，旧版本明文 pwd= 仍可读，兼容升级。
+        private static string Protect(string plain)
+        {
+            byte[] data = ProtectedData.Protect(Encoding.UTF8.GetBytes(plain), null, DataProtectionScope.CurrentUser);
+            return Convert.ToBase64String(data);
+        }
+        private static string Unprotect(string enc)
+        {
+            byte[] data = ProtectedData.Unprotect(Convert.FromBase64String(enc), null, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(data);
+        }
+
+        // 判断是否为只读查询语句；其余（UPDATE/DELETE/INSERT/DROP 等）视为写操作
+        private static bool IsReadOnlySql(string sql)
+        {
+            string head = sql.TrimStart().ToUpperInvariant();
+            return head.StartsWith("SELECT") || head.StartsWith("SHOW")
+                || head.StartsWith("DESC") || head.StartsWith("DESCRIBE")
+                || head.StartsWith("EXPLAIN") || head.StartsWith("WITH");
         }
 
         // 查询结果导出 CSV
@@ -209,6 +238,17 @@ namespace WindowsFormsApplication1
                 SetStatus("请输入 SQL 语句");
                 return;
             }
+            // 写语句（UPDATE/DELETE/INSERT/DROP 等）无法撤销，先强制二次确认，避免误触造成数据不可恢复
+            bool isQuery = IsReadOnlySql(sql);
+            if (!isQuery)
+            {
+                if (MessageBox.Show("该语句将对数据库执行写入/删除操作（可能不可恢复），是否继续？\n\n" + sql,
+                    "确认执行写操作", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                {
+                    SetStatus("已取消执行");
+                    return;
+                }
+            }
             _busy = true;
             btnExec.Enabled = false;
             SetStatus("执行中...");
@@ -219,10 +259,6 @@ namespace WindowsFormsApplication1
                 {
                     using (var cmd = new MySqlCommand(sql, conn))
                     {
-                        string head = sql.TrimStart().ToUpperInvariant();
-                        bool isQuery = head.StartsWith("SELECT") || head.StartsWith("SHOW")
-                                    || head.StartsWith("DESC") || head.StartsWith("DESCRIBE")
-                                    || head.StartsWith("EXPLAIN") || head.StartsWith("WITH");
                         if (isQuery)
                         {
                             var dt = new DataTable();

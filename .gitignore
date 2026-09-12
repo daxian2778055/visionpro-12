@@ -19,10 +19,15 @@ packages/
 # ===== 备份 / 临时 / 升级日志 =====
 _refactor_backup/
 _deleted_mes_db_backup/
+backup/
 *.bak
 *.log
 *.tmp
 UpgradeLog*.htm
+
+# ===== 崩溃诊断产物（含数百 MB 的转储，不入库） =====
+error/
+*.dmp
 
 # ===== 编辑器/IDE 元数据 =====
 .reasonix/
