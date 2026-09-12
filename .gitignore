@@ -29,6 +29,14 @@ UpgradeLog*.htm
 error/
 *.dmp
 
+# ===== 工具元数据 / 分析产物（不入库） =====
+.agnes/
+_linecount.txt
+代码审查报告*.html
+
+# ===== 调试符号归档（随每次构建增长，不入库） =====
+WindowsFormsApplication1/SymbolsArchive/
+
 # ===== 编辑器/IDE 元数据 =====
 .reasonix/
 
