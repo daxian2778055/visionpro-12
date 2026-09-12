@@ -1,4 +1,4 @@
-using Cognex.VisionPro;
+﻿using Cognex.VisionPro;
 using Cognex.VisionPro.ImageFile;
 using Cognex.VisionPro.QuickBuild;
 using Cognex.VisionPro.ToolBlock;
@@ -27,6 +27,7 @@ using Cognex.VisionPro.CalibFix;
 using System.Globalization;
 using WindowsFormsApplication1.Core.Camera;
 using WindowsFormsApplication1.Core.Infrastructure;
+using WindowsFormsApplication1.Core.Threading;
 
 namespace WindowsFormsApplication1
 {
@@ -126,6 +127,30 @@ namespace WindowsFormsApplication1
         bool[] m_bSaveImg = new bool[12];    // ch:保存图片标志位 | en:Save Image Flag Bit
         IntPtr[] m_hDisplayHandle = new IntPtr[12];
         private readonly LoggingService _logger = AppHost.Services.Resolve<LoggingService>();
+        // ★P2-1：每路相机输出/统计的有界任务队列（每路容量 4，满则丢最旧）。
+        // 替代 getrecord 里每帧 4 处无条件 Task.Run，避免 12 路 × 高帧率时线程池任务堆积；
+        // 慢 PLC/慢操作只拖自己那一路，不影响其它路。队列线程为后台线程，进程退出自然回收；
+        // SafeCleanupBeforeDispose 里主动 Dispose 保证退出路径无残留。
+        private CameraWorkQueue[] _cameraOutWork;
+        private static readonly object _camWorkLock = new object();
+        // ★P2-2：丢帧数缓存 + 后台采样。GetLostFrame 的 P/Invoke（MV_CC_GetAllMatchInfo_NET + AllocHGlobal）
+        // 原先在 UI 线程（SafeBeginInvoke 回调）每圈 12 次执行 → 界面卡顿。改为 UI_monitor 后台线程每 3 圈
+        // （~105ms）采一次写 _lostFrameCache；UI 线程只读缓存字符串赋 label，不再每圈 12 次 P/Invoke。
+        private readonly string[] _lostFrameCache = new[] { "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0", "0" };
+        private int _lostFrameSampleCounter;
+        /// <summary>★P2-1：惰性初始化 12 路相机输出队列（lock 双重检查，多线程首调安全）。</summary>
+        private void EnsureCameraOutWork()
+        {
+            if (_cameraOutWork != null) return;
+            lock (_camWorkLock)
+            {
+                if (_cameraOutWork != null) return;
+                _cameraOutWork = new CameraWorkQueue[12];
+                for (int i = 0; i < 12; i++)
+                    // ★fix③：注入日志落点（写 LoggingService），任务失败经 CameraWorkQueue.WorkerLoop 用 RateLimitedLog 限流记录，不再空 catch 吞
+                    _cameraOutWork[i] = new CameraWorkQueue("cam" + (i + 1), 4, m => _logger.WriteLog(m));
+            }
+        }
         public double jiankongshijian;
         public string zhen = "";
         public bool Cun = false;
@@ -4223,6 +4248,7 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload)
         {
+            EnsureCameraOutWork(); // ★P2-1：本帧用输出队列，惰性初始化一次
             try
             {
                 if (myjob?.block == null) return;
@@ -4430,7 +4456,7 @@ namespace WindowsFormsApplication1
                                 if (camIdx >= 0 && tempout1 == shuchuqufan && myjob.outputok < 3)
                                 {
                                     int io = camIdx + 1;
-                                    Task.Run(() =>
+                                    _cameraOutWork[io - 1].Enqueue(() =>
                                     {
                                         try
                                         {
@@ -4444,7 +4470,7 @@ namespace WindowsFormsApplication1
                                 if (camIdx >= 0 && tempout2 == shuchuqufan && myjob.outputng < 3)
                                 {
                                     int io = camIdx + 1;
-                                    Task.Run(() =>
+                                    _cameraOutWork[io - 1].Enqueue(() =>
                                     {
                                         try
                                         {
@@ -4555,7 +4581,7 @@ namespace WindowsFormsApplication1
                             else
                             {
                                 // ★ 三协议输出合并为单个后台任务顺序写（行为等价），减少线程池任务数
-                                Task.Run(() =>
+                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                                 {
                                     try { _comm.Omron.WriteCameraOutput(camIdx, fins); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " OMRON输出失败: " + ex.Message); }
                                     try { _comm.Modbustcp.WriteCameraOutput(camIdx, modbustcps); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusTCP输出失败: " + ex.Message); }
@@ -4566,7 +4592,13 @@ namespace WindowsFormsApplication1
                             {
                                 // ★ 按需创建（性能优先）：未启用自动曝光的相机不再每帧生成空转任务
                                 // 在调用线程快照 UI 曝光基准与补偿输出值，避免后台任务跨线程读控件/VisionPro COM
-                                string exposureText = tbExposure1.Text;
+                                // ★fix①②：① 基准曝光按本路相机取值（tbExposure[camIdx]），原恒取 tbExposure1 导致 2~12 路开自动曝光时
+                                //   共用相机1的输入值（12 路各有独立 cameraN.exposure 配置，属长期漏写）；
+                                //   ② 检测线程跨线程读控件包 try/catch（P3.1 Debug 开校验时避免 InvalidOperationException 冒泡到 getrecord
+                                //   外层 catch 跳过整帧的统计/数据记录/存图），失败给配置默认值 1000。
+                                string exposureText;
+                                try { exposureText = tbExposure[camIdx].Text; }
+                                catch { exposureText = "1000"; }
                                 string buchangOut;
                                 try { buchangOut = myjob.block.Outputs["buchang"].Value.ToString(); }
                                 catch { buchangOut = "无"; }
@@ -4613,88 +4645,81 @@ namespace WindowsFormsApplication1
                             myjob.trriger = 0;
                             Interlocked.Increment(ref myjob.sum);
                             #endregion
-                            Task.Run(() =>
+                            // P2-1 fix: oksum/NG count are critical stats, not queueable (queue drop = miscount).
+                            // Back to detection-thread sync; live COM myjob.block.Outputs snapshotted to string first.
+                            string _outputSnap;
+                            try { _outputSnap = myjob.block.Outputs["Output"].Value.ToString(); }
+                            catch { _outputSnap = "无"; }
+                            try
                             {
-                                try
+                                if (_outputSnap == "Accept")
                                 {
-
-
-                                    if (myjob.block.Outputs["Output"].Value.ToString() == "Accept")
+                                    Interlocked.Increment(ref myjob.oksum);
+                                }
+                                else
+                                {
+                                    if (_jobs.yunxing)
                                     {
-                                        #region 合格数计算
-                                        Interlocked.Increment(ref myjob.oksum);
-                                        // label_10++;
-                                        #endregion
-
-                                    }
-                                    else
-                                    {
-                                        if (_jobs.yunxing)
+                                        if (myjob.trrigerEn == true || myjob.triggerMode == "通讯触发")
                                         {
-                                            if (myjob.trrigerEn == true || myjob.triggerMode == "通讯触发")
+                                            int _n = int.Parse(myjob.path_number);
+                                            // ★A fix：检测线程不再直读 WinForms 控件（P3.1 Debug 开跨线程校验时，读 CheckState/Items 会抛
+                                            //  InvalidOperationException 被外层 catch 吞掉，连带跳过 out_end=8 与 rate 计算）。
+                                            // 检测线程只快照所需字符串，把"读 CheckBox/ListBox + 写 ListBox/表格"整段收口到 UI 线程执行。
+                                            string _recentMsg = String.Join(":", temptime, cuowu1, jobnumber);
+                                            string _statErr = cuowu1 == null ? "" : cuowu1.ToString();
+                                            void RecordRecentFailure(ListBox lb, CheckBox cb, Action<string, int> setbox)
                                             {
-                                                #region 最近5次记录
-                                                int _n = int.Parse(myjob.path_number);
-                                                RecordRecentFailure(_recentListBox[_n - 1], _recentCheckBox[_n - 1], _recentSetbox[_n - 1]);
-                                                if (_n >= 9)
+                                                if (cb.CheckState == CheckState.Checked)
                                                 {
-                                                    // 相机9-12 在原代码中额外写入第二组最近记录列表
-                                                    RecordRecentFailure(_recentListBox2[_n - 9], _recentCheckBox2[_n - 9], _recentSetbox2[_n - 9]);
-                                                }
-
-                                                void RecordRecentFailure(ListBox lb, CheckBox cb, Action<string, int> setbox)
-                                                {
-                                                    if (cb.CheckState == CheckState.Checked)
-                                                    {
-                                                        setbox(lb.Items[3].ToString(), 4);
-                                                        setbox(lb.Items[2].ToString(), 3);
-                                                        setbox(lb.Items[1].ToString(), 2);
-                                                        setbox(lb.Items[0].ToString(), 1);
-                                                        setbox(temptime + ":" + cuowu1 + ":" + jobnumber, 0);
-                                                    }
-                                                }
-
-                                                #endregion
-                                                #region 界面表格统计
-
-                                                // _n 已在上方"最近5次记录"块声明（同一作用域，值相同）
-                                                var _dgv = _statDgv[_n - 1];
-                                                var _d = _statD[_n - 1];
-                                                var _tbl = _jobs.Myjobs[_n - 1].myTable;
-                                                if (_statCheckBox[_n - 1].CheckState == CheckState.Checked)
-                                                {
-                                                    // ★ 2026-09-05：同步 Invoke 改异步（SafeBeginInvoke）。
-                                                    //   原写法在 NG 高频时用 UI 消息往返阻塞统计后台任务，UI 忙时拖慢整条检测链。
-                                                    //   表格更新仍串行排队在 UI 线程执行，仅不再等待，语义等价。
-                                                    string statErr = cuowu1;
-                                                    SafeBeginInvoke(() =>
-                                                    {
-                                                        _dgv.Visible = false;
-                                                        UpdateJobErrorTable(_tbl, _d, statErr);
-                                                        _dgv.Visible = true;
-                                                    });
+                                                    setbox(lb.Items[3].ToString(), 4);
+                                                    setbox(lb.Items[2].ToString(), 3);
+                                                    setbox(lb.Items[1].ToString(), 2);
+                                                    setbox(lb.Items[0].ToString(), 1);
+                                                    setbox(_recentMsg, 0);
                                                 }
                                             }
-                                            #endregion
+                                            SafeBeginInvoke(() =>
+                                            {
+                                                try
+                                                {
+                                                    RecordRecentFailure(_recentListBox[_n - 1], _recentCheckBox[_n - 1], _recentSetbox[_n - 1]);
+                                                    if (_n >= 9)
+                                                    {
+                                                        // 相机9-12 在原代码中额外写入第二组最近记录列表
+                                                        RecordRecentFailure(_recentListBox2[_n - 9], _recentCheckBox2[_n - 9], _recentSetbox2[_n - 9]);
+                                                    }
+                                                    var _dgv = _statDgv[_n - 1];
+                                                    var _d = _statD[_n - 1];
+                                                    var _tbl = _jobs.Myjobs[_n - 1].myTable;
+                                                    if (_statCheckBox[_n - 1].CheckState == CheckState.Checked)
+                                                    {
+                                                        _dgv.Visible = false;
+                                                        UpdateJobErrorTable(_tbl, _d, _statErr);
+                                                        _dgv.Visible = true;
+                                                    }
+                                                }
+                                                catch { }
+                                            });
                                             myjob.out_end = 8;
                                         }
                                     }
-                                    #region 合格率计算
-                                    myjob.rate = myjob.oksum * 1.000f / myjob.sum;
-                                    #endregion
-
-
                                 }
-                                catch (Exception ex)
-                                {
-
-                                    _logger.WriteLog("统计" + ex.Message + "相机" + myjob.path_number);
-                                };
-                            });
+                                myjob.rate = myjob.oksum * 1.000f / myjob.sum;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.WriteLog("统计" + ex.Message + "相机" + myjob.path_number);
+                            }
                             if (_jobs.yunxing || !_jobs.yunxing)
                             {
                                 if (datajilu == 1)   // ★ 前置开关（性能优先）：默认 datajilu=0 时不再每帧创建空转记录任务
                                 {
+                                // ★B fix：检测线程先快照 tianbiao 字符串（活读 block.Outputs），Task.Run 里不再活 COM，
+                                // 切型释放 block 后残留任务不会访问已释放 COM 对象。
+                                string _tianbiaoSnap;
+                                try { _tianbiaoSnap = ""; for (int _ti = 0; _ti < myjob.block.Outputs.Count; _ti++) { if (myjob.block.Outputs[_ti].Name.Contains("ji")) _tianbiaoSnap += myjob.block.Outputs[_ti].Value + ","; } }
+                                catch { _tianbiaoSnap = ""; }
                                 Task.Run(() =>
                                 {
                                     #region 统计
@@ -4707,14 +4732,7 @@ namespace WindowsFormsApplication1
                                                 if (tempout1 == "Accept")
                                                 {
                                                     runlog1(1, 0, myjob.path_number);
-                                                    myjob.tianbiao = "";
-                                                    for (int i = 0; i < myjob.block.Outputs.Count; i++)
-                                                    {
-                                                        if (myjob.block.Outputs[i].Name.Contains("ji"))
-                                                        {
-                                                            myjob.tianbiao += myjob.block.Outputs[i].Value + ",";
-                                                        }
-                                                    }
+                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
                                                     if (myjob.tianbiao.Contains(","))
                                                     {
                                                         myjob.tianbiao = myjob.tianbiao.Remove(myjob.tianbiao.Length - 1, 1);
@@ -4724,14 +4742,7 @@ namespace WindowsFormsApplication1
                                                 else
                                                 {
                                                     runlog1(0, 1, myjob.path_number);
-                                                    myjob.tianbiao = "";
-                                                    for (int i = 0; i < myjob.block.Outputs.Count; i++)
-                                                    {
-                                                        if (myjob.block.Outputs[i].Name.Contains("ji"))
-                                                        {
-                                                            myjob.tianbiao += myjob.block.Outputs[i].Value + ",";
-                                                        }
-                                                    }
+                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
                                                     if (myjob.tianbiao.Contains(","))
                                                     {
                                                         myjob.tianbiao = myjob.tianbiao.Remove(myjob.tianbiao.Length - 1, 1);
@@ -4753,28 +4764,14 @@ namespace WindowsFormsApplication1
                                                 if (tempout1 == "Accept")
                                                 {
                                                     runlog1(1, 0, myjob.path_number);
-                                                    myjob.tianbiao = "";
-                                                    for (int i = 0; i < myjob.block.Outputs.Count; i++)
-                                                    {
-                                                        if (myjob.block.Outputs[i].Name.Contains("ji"))
-                                                        {
-                                                            myjob.tianbiao += myjob.block.Outputs[i].Value + ",";
-                                                        }
-                                                    }
+                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
                                                     if (myjob.tianbiao.Contains(","))
                                                         runlog2(myjob.tianbiao, myjob.tianbiao, myjob.path_number, 1);
                                                 }
                                                 else
                                                 {
                                                     runlog1(0, 1, myjob.path_number);
-                                                    myjob.tianbiao = "";
-                                                    for (int i = 0; i < myjob.block.Outputs.Count; i++)
-                                                    {
-                                                        if (myjob.block.Outputs[i].Name.Contains("ji"))
-                                                        {
-                                                            myjob.tianbiao += myjob.block.Outputs[i].Value + ",";
-                                                        }
-                                                    }
+                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
                                                     if (myjob.tianbiao.Contains(","))
                                                         runlog2(myjob.tianbiao, myjob.tianbiao, myjob.path_number, 0);
                                                 }
@@ -4961,6 +4958,7 @@ namespace WindowsFormsApplication1
             while (!_disposingFlag)
             {
                 Thread.Sleep(35);
+                SampleLostFrames(); // ★P2-2：后台线程采样丢帧数（UI 线程不再 P/Invoke）
                 if (_disposingFlag) break;
                 if (zhuanhuan == 0)
                 {
@@ -4998,73 +4996,73 @@ namespace WindowsFormsApplication1
                                 label153.Text = _jobs.myjob1.outputok2.ToString();
                                 // label71.Text = _jobs.myjob1.outputok.ToString();
                                 label85.Text = zhen;
-                                label86.Text = GetLostFrame(0);
+                                label86.Text = _lostFrameCache[0];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label134.Text = (m_nFrames[0] - _jobs.myjob1.sum).ToString();
                             }
                             if (_jobs.myjob2.shijianEn && m_nCanOpenDeviceNum > 1)
                             {
                                 label62.Text = _jobs.myjob2.address;
-                                label52.Text = GetLostFrame(1);
+                                label52.Text = _lostFrameCache[1];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label49.Text = (m_nFrames[1] - _jobs.myjob2.sum).ToString();
                             }
                             if (_jobs.myjob3.shijianEn && m_nCanOpenDeviceNum > 2)
                             {
                                 label23.Text = _jobs.myjob3.address;
-                                label53.Text = GetLostFrame(2);
+                                label53.Text = _lostFrameCache[2];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label50.Text = (m_nFrames[2] - _jobs.myjob3.sum).ToString();
                             }
                             if (_jobs.myjob4.shijianEn && m_nCanOpenDeviceNum > 3)
                             {
                                 label16.Text = _jobs.myjob4.address;
-                                label54.Text = GetLostFrame(3);
+                                label54.Text = _lostFrameCache[3];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label51.Text = (m_nFrames[3] - _jobs.myjob4.sum).ToString();
                             }
                             if (_jobs.myjob5.shijianEn && m_nCanOpenDeviceNum > 4)
                             {
                                 label93.Text = _jobs.myjob5.address;
-                                label90.Text = GetLostFrame(4);
+                                label90.Text = _lostFrameCache[4];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label135.Text = (m_nFrames[4] - _jobs.myjob5.sum).ToString();
                             }
                             if (_jobs.myjob6.shijianEn && m_nCanOpenDeviceNum > 5)
                             {
                                 label103.Text = _jobs.myjob6.address;
-                                label100.Text = GetLostFrame(5);
+                                label100.Text = _lostFrameCache[5];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label136.Text = (m_nFrames[5] - _jobs.myjob6.sum).ToString();
                             }
                             if (_jobs.myjob7.shijianEn && m_nCanOpenDeviceNum > 6)
                             {
                                 label114.Text = _jobs.myjob7.address;
-                                label110.Text = GetLostFrame(6);
+                                label110.Text = _lostFrameCache[6];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label137.Text = (m_nFrames[6] - _jobs.myjob7.sum).ToString();
                             }
                             if (_jobs.myjob8.shijianEn && m_nCanOpenDeviceNum > 7)
                             {
                                 label124.Text = _jobs.myjob8.address;
-                                label121.Text = GetLostFrame(7);
+                                label121.Text = _lostFrameCache[7];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label138.Text = (m_nFrames[7] - _jobs.myjob8.sum).ToString();
                             }
                             if (_jobs.myjob9.shijianEn && m_nCanOpenDeviceNum > 8)
                             {
                                 label235.Text = _jobs.myjob9.address;
-                                label236.Text = GetLostFrame(8);
+                                label236.Text = _lostFrameCache[8];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label237.Text = (m_nFrames[8] - _jobs.myjob9.sum).ToString();
                             }
                             if (_jobs.myjob10.shijianEn && m_nCanOpenDeviceNum > 9)
                             {
                                 label241.Text = _jobs.myjob10.address;
-                                label242.Text = GetLostFrame(9);
+                                label242.Text = _lostFrameCache[9];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label243.Text = (m_nFrames[9] - _jobs.myjob10.sum).ToString();
                             }
                             if (_jobs.myjob11.shijianEn && m_nCanOpenDeviceNum > 10)
                             {
                                 label247.Text = _jobs.myjob11.address;
-                                label248.Text = GetLostFrame(10);
+                                label248.Text = _lostFrameCache[10];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label249.Text = (m_nFrames[10] - _jobs.myjob11.sum).ToString();
                             }
                             if (_jobs.myjob12.shijianEn && m_nCanOpenDeviceNum > 11)
                             {
                                 label253.Text = _jobs.myjob12.address;
-                                label254.Text = GetLostFrame(11);
+                                label254.Text = _lostFrameCache[11];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label255.Text = (m_nFrames[11] - _jobs.myjob12.sum).ToString();
                             }
                             label74.Text = cameraState;
@@ -6518,6 +6516,20 @@ namespace WindowsFormsApplication1
         #region 资源清理与程序退出
         private void SafeCleanupBeforeDispose()
         {
+            // ★P2-1：退出路径主动释放 12 路相机输出队列，避免残留后台线程
+            try
+            {
+                if (_cameraOutWork != null)
+                {
+                    for (int i = 0; i < 12; i++)
+                    {
+                        if (_cameraOutWork[i] != null) _cameraOutWork[i].Dispose();
+                    }
+                        // ★fix②：不置 null。Dispose 后每个 Enqueue 因 _disposed=true 自动 no-op，
+                        // 保留数组引用，检测线程若有残留 _cameraOutWork[i].Enqueue 调用也不会 NRE。
+                }
+            }
+            catch { }
             _disposingFlag = true;
             try
             {
@@ -11444,6 +11456,21 @@ namespace WindowsFormsApplication1
         /// <returns></returns>
 
         // ch:获取丢帧数 | en:Get Throw Frame Number
+        /// <summary>★P2-2：后台采样 12 路丢帧数写 _lostFrameCache（每 3 圈一次降频）。UI_monitor（后台线程）调用。</summary>
+        private void SampleLostFrames()
+        {
+
+
+
+
+            _lostFrameSampleCounter++;
+            if (_lostFrameSampleCounter % 3 != 0) return;   // 降频：每 3 圈（~105ms）采一次
+            for (int i = 0; i < 12; i++)
+            {
+                try { _lostFrameCache[i] = GetLostFrame(i); } catch { }
+            }
+        }
+        
         private string GetLostFrame(int nIndex)
         {
             if (_cameraCtrl.Cameras[nIndex] == null)

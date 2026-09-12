@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -16,6 +17,7 @@ using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using System.IO;
 using WindowsFormsApplication1.Core.Infrastructure;
+using WindowsFormsApplication1.Core.Logging;
 
 namespace WindowsFormsApplication1
 {
@@ -75,8 +77,9 @@ namespace WindowsFormsApplication1
         bool fins_lunxunen = false;
         public bool fins_en = false;
         decimal lunxun_time = 0;
-        public bool chushihua = false;
-        private readonly Dictionary<int, bool> _triggerLatch = new Dictionary<int, bool>();
+        // ★P2：线程池线程（InitializeForm 末尾 Task.Run）写 true，轮询线程（Fins_duxie）读；加 volatile 保证跨线程可见性
+        public volatile bool chushihua = false;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _triggerLatch = new System.Collections.Concurrent.ConcurrentDictionary<int, bool>();
         private int _commFailCount = 0;
         private int _reconnecting = 0;
         private long _lastReconnectAttemptTicks = 0;
@@ -3138,7 +3141,9 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        Log(ex.Message + "modbusrtu");
+                        // ★P3-2：Fins_duxie 轮询外层 catch。PLC 断线时每圈（~20ms）抛一次，原样 Log 会数秒刷上百条相同日志。
+                        //   改限流：5s 窗口内只报首条 + 窗口到期补报累计次数，辨识 tag 含协议/连接号/方法。
+                        RateLimitedLog.Throttled("[ModbusRTU-连接" + _linkId + "-Fins_duxie] 轮询读异常", m => MsgErroeLog.WriteLog(m), ex, 5000);
                     }
             }
         }
@@ -3550,3 +3555,4 @@ namespace WindowsFormsApplication1
         }
     }
 }
+

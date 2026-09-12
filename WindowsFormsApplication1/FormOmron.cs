@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
@@ -15,6 +16,7 @@ using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using System.IO;
 using WindowsFormsApplication1.Core.Infrastructure;
+using WindowsFormsApplication1.Core.Logging;
 
 namespace WindowsFormsApplication1
 {
@@ -568,7 +570,16 @@ namespace WindowsFormsApplication1
                 Thread.Sleep(1000);
                 if (fins_en && !commBlocked)
                 {
-                    button1_Click(null, null);
+                    // ★P3.1：button1_Click 是 async void，其同步前缀（textBox1/2/15/16、comboBox1 读取）
+                    // 若在线程池线程执行会裸访问控件（Debug 开跨线程校验直接抛、Release 下 ComboBox 并发读竞态）。
+                    // 收口到 UI 线程执行同步前缀；await 之后的 UI 回显该方法内部已自带 BeginInvoke，行为不变。
+                    try
+                    {
+                        if (IsDisposed || Disposing) return;
+                        if (this.InvokeRequired) this.Invoke(new Action(() => button1_Click(null, null)));
+                        else button1_Click(null, null);
+                    }
+                    catch { }
                 }
                 if (!commBlocked) chushihua = true;
             });
@@ -974,8 +985,9 @@ namespace WindowsFormsApplication1
         bool fins_lunxunen = false;
        public   bool fins_en = false;
         decimal lunxun_time = 0;
-        public bool chushihua = false;
-        private readonly Dictionary<int, bool> _triggerLatch = new Dictionary<int, bool>();
+        // ★P2：线程池线程（InitializeForm 末尾 Task.Run）写 true，轮询线程（Fins_duxie）读；加 volatile 保证跨线程可见性
+        public volatile bool chushihua = false;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _triggerLatch = new System.Collections.Concurrent.ConcurrentDictionary<int, bool>();
         private int _commFailCount = 0;
         private int _reconnecting = 0;
         private long _lastReconnectAttemptTicks = 0;
@@ -1537,7 +1549,9 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        Log(ex.Message);
+                        // ★P3-2：Fins_duxie 轮询外层 catch。PLC 断线时每圈（~20ms）抛一次，原样 Log 会数秒刷上百条相同日志。
+                        //   改限流：5s 窗口内只报首条 + 窗口到期补报累计次数，辨识 tag 含协议/连接号/方法。
+                        RateLimitedLog.Throttled("[FINS-连接" + _linkId + "-Fins_duxie] 轮询读异常", m => MsgErroeLog.WriteLog(m), ex, 5000);
                     }
             }
         }
@@ -3150,3 +3164,4 @@ namespace WindowsFormsApplication1
 
     }
 }
+

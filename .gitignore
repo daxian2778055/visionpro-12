@@ -41,4 +41,14 @@ WindowsFormsApplication1/SymbolsArchive/
 .reasonix/
 
 # ===== 安装包 / 发布产物（体积大，不应入库） =====
+Setup1/Debug/
+Setup1/Release/
 Setup2/Debug/
+Setup2/Release/
+*.vdproj.release_version
+
+# ===== 仓库根目录游离的旧 Form1.cs =====
+# 历史重构快照，未纳入 csproj 编译（csproj 里 <Compile Include="Form1.cs"> 指的是
+# WindowsFormsApplication1 子目录下真正参与编译的那份）。
+# 前导 / 仅匹配仓库根目录这一个文件，避免误伤 WindowsFormsApplication1/Form1.cs。
+/Form1.cs

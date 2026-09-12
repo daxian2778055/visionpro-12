@@ -473,8 +473,10 @@
     <Compile Include="Core\Logging\ILogger.cs" />
     <Compile Include="Core\Logging\AsyncFileLogger.cs" />
     <Compile Include="Core\Logging\LogManager.cs" />
+    <Compile Include="Core\Logging\RateLimitedLog.cs" />
     <Compile Include="Core\Threading\IUiDispatcher.cs" />
     <Compile Include="Core\Threading\ControlUiDispatcher.cs" />
+    <Compile Include="Core\Threading\CameraWorkQueue.cs" />
     <Compile Include="Core\Camera\CameraPixelFormat.cs" />
     <Compile Include="Core\Camera\CameraDeviceInfo.cs" />
     <Compile Include="Core\Camera\HikCameraEnumerator.cs" />

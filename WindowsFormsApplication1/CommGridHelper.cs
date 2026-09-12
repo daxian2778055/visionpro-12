@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -158,7 +159,7 @@ namespace WindowsFormsApplication1
             string sectionSuffix,
             ref int geshu,
             Dictionary<string, string[]> finsDic,
-            Dictionary<int, bool> triggerLatch)
+            System.Collections.Concurrent.ConcurrentDictionary<int, bool> triggerLatch)
         {
             EraseDataSections(wdini, sectionSuffix);
             wdini.WriteString(iniMainSection, "geshu", "0");
@@ -315,3 +316,5 @@ namespace WindowsFormsApplication1
         }
     }
 }
+
+

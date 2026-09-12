@@ -60,6 +60,20 @@ namespace WindowsFormsApplication1
         private readonly byte[] _tcpRecvBuffer = new byte[64 * 1024];   // TCP 接收缓冲（复用，避免每帧分配 3MB）
         private volatile bool _tcpClientNeedReconnect = false;           // TCP 客户机断线重连标志（独立，不依赖 monitor 字符串）
         private string _serialBuf = "";                                  // 串口无协议组帧缓冲
+        // ★ P3.1：切型匹配串缓存。qiehuan() 由 TCP 客户机/服务器接收线程（后台）高频调用，
+        // 直接读 textBox18~25.Text 在后台线程访问控件（Debug 开跨线程校验会抛异常）。
+        // 改为后台读这份缓存；UI 线程在 InitializeForm 载入与 8 个框 TextChanged 时同步它（线程安全）。
+        private volatile string[] _trigPath = new string[8];
+        private readonly object _trigSync = new object();
+        private void SyncTrigCache(TextBox b1, TextBox b2, TextBox b3, TextBox b4, TextBox b5, TextBox b6, TextBox b7, TextBox b8)
+        {
+            lock (_trigSync)
+                _trigPath = new[]
+                {
+                    b1?.Text ?? "", b2?.Text ?? "", b3?.Text ?? "", b4?.Text ?? "",
+                    b5?.Text ?? "", b6?.Text ?? "", b7?.Text ?? "", b8?.Text ?? ""
+                };
+        }
         private StreamReader sRead;
         public string gongnengma="06";
         public string qiehuan_fangshi = "";
@@ -134,6 +148,15 @@ namespace WindowsFormsApplication1
                 textBox22.Text = wdini.ReadString("change", "6", "");
                 textBox25.Text = wdini.ReadString("change", "7", "");
                 textBox24.Text = wdini.ReadString("change", "8", "");
+                // ★ P3.1：切型匹配串缓存——载入后同步一次，并挂 8 个框的 TextChanged 实时同步，
+                // 供 qiehuan() 在后台接收线程安全读取（替代直接读 .Text，避免跨线程访问控件）。
+                SyncTrigCache(textBox18, textBox19, textBox21, textBox20, textBox23, textBox22, textBox25, textBox24);
+                foreach (TextBox tb in new[] { textBox18, textBox19, textBox21, textBox20, textBox23, textBox22, textBox25, textBox24 })
+                {
+                    if (tb == null) continue;
+                    tb.TextChanged += (s, ev) =>
+                        SyncTrigCache(textBox18, textBox19, textBox21, textBox20, textBox23, textBox22, textBox25, textBox24);
+                }
                 // 拍照触发字符：从 ini 读取，并实时同步到各相机 triggerZifu（不依赖 VP 方案）
                 textBox26.Text = wdini.ReadString("change", "triggerzifu", "");
                 textBox26.TextChanged += textBox26_TextChanged;
@@ -269,7 +292,7 @@ namespace WindowsFormsApplication1
             // 释放竞态守卫：管理器可能在 chushihua 建链前就删除/释放本窗（ReleaseInstance 已置 stop 并关串口），
             // 必须按 stop 退出，否则会把刚释放的连接重新打开——串口会被 COM 占用表永久登记、接收线程泄漏。
             if (stop) return;
-            if (checkBox4.CheckState == CheckState.Checked)
+            if (SafeRead(() => checkBox4.CheckState) == CheckState.Checked)
             {
                 if (HasSerialCfg)
                 {
@@ -283,16 +306,20 @@ namespace WindowsFormsApplication1
                             Thread.Sleep(300);
                             if (!mdcan.port.IsOpen)
                                 TryOpenSerialMain(mdcan.port.PortName, out serr);
-                            button6.Text = "关闭串口";
-                            groupBox1.Enabled = true;
-                            groupBox2.Enabled = true;
-                            this.label5.Text = "端口号：" +mdcan.port.PortName + "|";
-                            this.label6.Text = "波特率：" +mdcan.port.BaudRate + "|";
-                            this.label7.Text = "数据位：" +mdcan.port.DataBits + "|";
-                            this.label8.Text = "停止位：" +mdcan.port.StopBits + "|";
-                            this.label9.Text = "校验:" + mdcan.port.Parity;
-                            // Form3 串口仅处理无协议通讯（modbus-RTU 由 FormModbusRtu 负责），直接自动开始接收
-                            btnReceive_Click(null,null);
+                            // ★P3.1：chushihua 在 Task.Run 后台线程执行，回显控件与"自动开始接收"统一走 UI 线程
+                            SafeUi(() =>
+                            {
+                                button6.Text = "关闭串口";
+                                groupBox1.Enabled = true;
+                                groupBox2.Enabled = true;
+                                this.label5.Text = "端口号：" + mdcan.port.PortName + "|";
+                                this.label6.Text = "波特率：" + mdcan.port.BaudRate + "|";
+                                this.label7.Text = "数据位：" + mdcan.port.DataBits + "|";
+                                this.label8.Text = "停止位：" + mdcan.port.StopBits + "|";
+                                this.label9.Text = "校验:" + mdcan.port.Parity;
+                                // Form3 串口仅处理无协议通讯（modbus-RTU 由 FormModbusRtu 负责），直接自动开始接收
+                                btnReceive_Click(null, null);
+                            });
                         }
                         else
                         {
@@ -310,7 +337,7 @@ namespace WindowsFormsApplication1
                     monitor = "请先设置串口!" + "通讯";
             }
             if (stop) return;
-            if (checkBox2.CheckState == CheckState.Checked)
+            if (SafeRead(() => checkBox2.CheckState) == CheckState.Checked)
             {
                 try
                 {
@@ -319,7 +346,7 @@ namespace WindowsFormsApplication1
                     socketWatch = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                     IPAddress ip = IPAddress.Any;
                     //IPAddress ip = IPAddress.Parse("192.168.88.1");
-                    IPEndPoint point = new IPEndPoint(ip, Convert.ToInt32(textBox3.Text));
+                    IPEndPoint point = new IPEndPoint(ip, Convert.ToInt32(SafeRead(() => textBox3.Text)));
                     socketWatch.Bind(point);
                     //监听
                     ShowMsg("监听成功");
@@ -335,13 +362,13 @@ namespace WindowsFormsApplication1
                 { }
             }
             if (stop) return;
-            if (checkBox3.CheckState == CheckState.Checked)
+            if (SafeRead(() => checkBox3.CheckState) == CheckState.Checked)
             {
                 try
                 {
                     socketClient = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                    IPAddress ip = IPAddress.Parse(textBox6.Text.Trim());
-                    IPEndPoint point = new IPEndPoint(ip, Convert.ToInt32(textBox5.Text));
+                    IPAddress ip = IPAddress.Parse(SafeRead(() => textBox6.Text).Trim());
+                    IPEndPoint point = new IPEndPoint(ip, Convert.ToInt32(SafeRead(() => textBox5.Text)));
                     //获得要连接的远程IP和端口号（带超时）
                     if (!ConnectWithTimeout(socketClient, point, 3000))
                         throw new Exception("连接超时");
@@ -369,7 +396,9 @@ namespace WindowsFormsApplication1
             while (!stop)
             {
                 Thread.Sleep(500);
-                if (checkBox3.CheckState == CheckState.Checked)
+                // ★P3.1：后台监控线程读控件一律 SafeRead（Invoke），写回显控件一律 SafeUi（BeginInvoke），
+                // 避免 Debug 开跨线程校验时后台直接访问控件抛异常被 catch 吞掉、导致自动重连/重开失效。
+                if (SafeRead(() => checkBox3.CheckState) == CheckState.Checked)
                 {
                     try
                     {
@@ -378,8 +407,8 @@ namespace WindowsFormsApplication1
                             // 重连前先关闭旧 socket，防止 FD 泄漏
                             try { if (socketClient != null) { socketClient.Close(); socketClient = null; } } catch { }
                             socketClient = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                            IPAddress ip = IPAddress.Parse(textBox6.Text.Trim());
-                            IPEndPoint point = new IPEndPoint(ip, Convert.ToInt32(textBox5.Text));
+                            IPAddress ip = IPAddress.Parse(SafeRead(() => textBox6.Text).Trim());
+                            IPEndPoint point = new IPEndPoint(ip, Convert.ToInt32(SafeRead(() => textBox5.Text)));
                             //获得要连接的远程IP和端口号（带超时，目标不可达时 3 秒内放弃本次重试）
                             if (ConnectWithTimeout(socketClient, point, 3000))
                             {
@@ -399,26 +428,29 @@ namespace WindowsFormsApplication1
                     }
                     catch { }
                 }
-                if (checkBox4.CheckState == CheckState.Checked)
+                if (SafeRead(() => checkBox4.CheckState) == CheckState.Checked)
                 {
                     try
                     {
                         if (HasSerialCfg)
                         {
                             // 仅当用户已启用串口（按钮显示"关闭串口"）且串口意外关闭时才自动重开，避免与手动关闭冲突
-                            if (!mdcan.port.IsOpen && button6.Text == "关闭串口")
+                            if (!mdcan.port.IsOpen && SafeRead(() => button6.Text) == "关闭串口")
                             {
                                 string serr;
                                 if (TryOpenSerialMain(mdcan.port.PortName, out serr))
                                 {
-                                    button6.Text = "关闭串口";
-                                    groupBox1.Enabled = true;
-                                    groupBox2.Enabled = true;
-                                    this.label5.Text = "端口号：" + mdcan.port.PortName + "|";
-                                    this.label6.Text = "波特率：" + mdcan.port.BaudRate + "|";
-                                    this.label7.Text = "数据位：" + mdcan.port.DataBits + "|";
-                                    this.label8.Text = "停止位：" + mdcan.port.StopBits + "|";
-                                    this.label9.Text = "校验:" + mdcan.port.Parity;
+                                    SafeUi(() =>
+                                    {
+                                        button6.Text = "关闭串口";
+                                        groupBox1.Enabled = true;
+                                        groupBox2.Enabled = true;
+                                        this.label5.Text = "端口号：" + mdcan.port.PortName + "|";
+                                        this.label6.Text = "波特率：" + mdcan.port.BaudRate + "|";
+                                        this.label7.Text = "数据位：" + mdcan.port.DataBits + "|";
+                                        this.label8.Text = "停止位：" + mdcan.port.StopBits + "|";
+                                        this.label9.Text = "校验:" + mdcan.port.Parity;
+                                    });
                                 }
                                 else if (!string.IsNullOrEmpty(serr) && serr != _lastMainSerialLog)
                                 {
@@ -490,6 +522,41 @@ namespace WindowsFormsApplication1
             }
         }
         /// <summary>线程安全地追加文本，并限制最大长度，防止无协议主窗长期运行后接收框过大导致切换/渲染卡顿。</summary>
+        /// <summary>★ P3.1：后台线程安全写 UI（BeginInvoke + 已释放/未建句柄守卫）。UI 线程直接执行。
+        /// 用于 Listen/clientmonitor/chushihua 等后台线程刷新 button/label/groupBox/comboBox 等回显控件。</summary>
+        private void SafeUi(Action a)
+        {
+            if (a == null) return;
+            try
+            {
+                if (IsDisposed) return;
+                if (InvokeRequired)
+                {
+                    if (IsHandleCreated) BeginInvoke(a);   // 未建句柄则丢弃（本窗尚在预建期）
+                    return;
+                }
+                a();
+            }
+            catch { }
+        }
+
+        /// <summary>★ P3.1：后台线程安全读 UI 控件值（Invoke 同步）。UI 线程直接读；句柄未建/已释放返回默认值。
+        /// 用于 clientmonitor/chushihua 读 checkBox/button/TextBox 等状态，避免后台直接访问控件在 Debug 校验下抛异常。</summary>
+        private T SafeRead<T>(Func<T> f)
+        {
+            try
+            {
+                if (IsDisposed) return default(T);
+                if (InvokeRequired)
+                {
+                    if (!IsHandleCreated) return default(T);
+                    return (T)this.Invoke(f);
+                }
+                return f();
+            }
+            catch { return default(T); }
+        }
+
         private void AppendLimited(TextBox tb, string text, bool scrollToCaret = true, int maxChars = 200000)
         {
             if (tb == null || tb.IsDisposed) return;
@@ -609,10 +676,14 @@ namespace WindowsFormsApplication1
                     serverSocket.TryRemove(accepted.RemoteEndPoint.ToString(), out old);
                     if (old != null) { try { old.Close(); } catch { } }
                     serverSocket.TryAdd(accepted.RemoteEndPoint.ToString(), accepted);
-                    //将远程连接的IP地址和端口号填入下拉菜单
-                    comboBox1.Items.Add(accepted.RemoteEndPoint.ToString());
+                    //将远程连接的IP地址和端口号填入下拉菜单（★P3.1：Listen 线程后台改 comboBox1，包 SafeUi 走 BeginInvoke，
+                    // 避免 Debug 开跨线程校验时后台直接改控件抛异常被 catch 吞掉导致监听线程退出）
+                    SafeUi(() =>
+                    {
+                        comboBox1.Items.Add(accepted.RemoteEndPoint.ToString());
+                        comboBox1.Text = accepted.RemoteEndPoint.ToString();
+                    });
                     ShowMsg(accepted.RemoteEndPoint.ToString() + "连接成功，我是服务器");
-                    comboBox1.Text = accepted.RemoteEndPoint.ToString();
                     Thread th1 = new Thread(Receive);
                     th1.IsBackground = true;
                     th1.Start(accepted);
@@ -703,59 +774,20 @@ namespace WindowsFormsApplication1
         /// </summary>
         private int qiehuan(string aa)
         {
-            if (textBox18.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox10.Text;
-                return 1;
-            }
-          else  if (textBox19.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox11.Text;
-                return 1;
-            }
-            else if (textBox21.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox12.Text;
-                return 1;
-            }
-            else if (textBox20.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox13.Text;
-                return 1;
-            }
-            else if (textBox23.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox14.Text;
-                return 1;
-            }
-            else if (textBox22.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox15.Text;
-                return 1;
-            }
-            else if (textBox25.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox16.Text;
-                return 1;
-            }
-            else if (textBox24.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox17.Text;
-                return 1;
-            }
-  
-            else
-            {
-                return 0;
-            }
+            // ★ P3.1：后台接收线程高频调用本方法，改读同步缓存（UI 线程 Initialize/TextChanged 写入），
+            // 避免后台线程直接访问 8 个 TextBox 控件（Debug 开跨线程校验会抛异常）。行为与逐框比较一致。
+            string[] p;
+            lock (_trigSync) p = _trigPath;
+            // 命中才读对应方案路径框（低频）；后台线程读控件经 SafeRead 走 Invoke，未命中则不产生任何 Invoke。
+            if (p[0] == aa) { zifu = aa; lujing = SafeRead(() => textBox10.Text); return 1; }
+            if (p[1] == aa) { zifu = aa; lujing = SafeRead(() => textBox11.Text); return 1; }
+            if (p[2] == aa) { zifu = aa; lujing = SafeRead(() => textBox12.Text); return 1; }
+            if (p[3] == aa) { zifu = aa; lujing = SafeRead(() => textBox13.Text); return 1; }
+            if (p[4] == aa) { zifu = aa; lujing = SafeRead(() => textBox14.Text); return 1; }
+            if (p[5] == aa) { zifu = aa; lujing = SafeRead(() => textBox15.Text); return 1; }
+            if (p[6] == aa) { zifu = aa; lujing = SafeRead(() => textBox16.Text); return 1; }
+            if (p[7] == aa) { zifu = aa; lujing = SafeRead(() => textBox17.Text); return 1; }
+            return 0;
         }
         private void button3_Click(object sender, EventArgs e)
         {
@@ -821,6 +853,9 @@ namespace WindowsFormsApplication1
 
         private void timer1_Tick(object sender, EventArgs e)
         {
+            // ★ P3.1：原"按文件逐行发送"功能已废弃（sRead 赋值点被注释、timer1 无启动点）。
+            // 加空保护：即使将来误启用 timer1，也不对 null 的 sRead.ReadLine() 抛 NRE。
+            if (sRead == null) return;
             string str1;
             str1 = sRead.ReadLine();
             if (str1 != null)
@@ -1994,6 +2029,9 @@ namespace WindowsFormsApplication1
 
         private void timer3_Tick(object sender, EventArgs e)
         {
+            // ★ P3.1 备注：timer3 在 Designer 中未 Enabled、全工程无启动点，本为休眠的 TCP 客户机定时重连兜底，
+            // 当前不会触发。若将来启用：它跑在 UI 线程，原先裸 Connect 同步阻塞可达 ~20s 会卡死界面，
+            // 故改为 ConnectWithTimeout(3s)，且仅当 monitor 非空（上次连接失败）时重试。
             try
             {
                 if (monitor != "" && checkBox3.CheckState == CheckState.Checked)
@@ -2001,8 +2039,12 @@ namespace WindowsFormsApplication1
                     socketClient = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                     IPAddress ip = IPAddress.Parse(textBox6.Text.Trim());
                     IPEndPoint point = new IPEndPoint(ip, Convert.ToInt32(textBox5.Text));
-                    //获得要连接的远程IP和端口号
-                    socketClient.Connect(point);
+                    if (!ConnectWithTimeout(socketClient, point, 3000))
+                    {
+                        try { socketClient.Close(); } catch { }
+                        monitor = "Tcpclient连接失败";
+                        return;
+                    }
                     ShowMsgClient(socketClient.RemoteEndPoint + "连接成功,我是客户机");
                     //开启一个线程，不断的接收服务端发来的消息
                     Thread th = new Thread(receiveClient);
