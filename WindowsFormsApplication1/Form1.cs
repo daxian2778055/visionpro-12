@@ -7119,13 +7119,15 @@ namespace WindowsFormsApplication1
             {
                 int stopRet = -1;
                 try { stopRet = _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET(); } catch { stopRet = -1; }
-                SetCameraGrabbing(i, false);
                 if (stopRet != MyCamera.MV_OK)
                 {
-                    // 停采未成功：不清记录（否则会留下「帧在路上、记录已删」的错配），保留状态下轮重试
-                    _logger.WriteLog("相机" + (i + 1) + " 触发回帧恢复(" + phase + ")：停止采集失败 " + stopRet + "，保留待回帧记录，下轮重试");
+                    // ★ 2026-09-13：停采失败时绝不能改软件采集标志（IsCameraGrabbing 读的是软件布尔值）。
+                    //   否则下一轮会误判"已停止"而跳过停采、直接清记录并重建 —— 而此时设备可能仍在采集，
+                    //   会留下「帧在路上、记录已删」的错配。保留原状态，下轮继续确认停采。
+                    _logger.WriteLog("相机" + (i + 1) + " 触发回帧恢复(" + phase + ")：停止采集失败 " + stopRet + "，保留待回帧记录与采集状态，下轮重试");
                     return;
                 }
+                SetCameraGrabbing(i, false);
                 // 排空在途回调：StopGrabbing 返回后，仍在途的回调可能稍后才结束，短暂等待避免旧帧迟到污染新记录
                 try { System.Threading.Thread.Sleep(100); } catch { }
             }
