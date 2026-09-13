@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Runtime.InteropServices;
@@ -300,7 +300,7 @@ namespace WindowsFormsApplication1
             var g = new TreeNode(name) { Tag = groupKey };
             var existing = new HashSet<int>();
             if (_ini != null)
-                foreach (var c in NoProtoIniStore.LoadAll(_ini)) existing.Add(c.LinkId);
+                for (int _lp = 1; _lp <= NoProtoIniStore.MaxLinks; _lp++) if (NoProtoIniStore.Load(_ini, _lp) != null) existing.Add(_lp);   // ★与"启用"解耦：段存在即显示节点，en=false 的新连接不再从树里消失
 
             for (int link = 1; link <= NoProtoIniStore.MaxLinks; link++)
             {
@@ -905,7 +905,7 @@ namespace WindowsFormsApplication1
                 Cell = "0",
                 Local = "192",
                 Abcd = "CDAB",
-                FinsEn = true,
+                FinsEn = false,   // ★默认关闭：新建 FINS 连接不自动启用，用户手动勾选使能后才建连/轮询
                 Zongchang = 1,
                 LunxunTime = 20
             };
@@ -937,7 +937,7 @@ namespace WindowsFormsApplication1
                 Port = "9600",
                 Cell = "0",
                 Abcd = "CDAB",
-                ModbusEn = true,
+                ModbusEn = false,   // ★默认关闭：新建 Modbus 连接不自动启用，用户手动勾选使能后才建连/轮询
                 Zongchang = 1,
                 LunxunTime = 20
             };
@@ -974,7 +974,7 @@ namespace WindowsFormsApplication1
                 Parity = "None",
                 Station = "1",
                 Abcd = "CDAB",
-                ModbusEn = true,
+                ModbusEn = false,   // ★默认关闭：新建 Modbus 连接不自动启用，用户手动勾选使能后才建连/轮询
                 Zongchang = 1,
                 LunxunTime = 20
             };
@@ -1035,7 +1035,7 @@ namespace WindowsFormsApplication1
                 else if (mode == "Tcp_server") kind = NoProtoKind.TcpServer;
             }
 
-            var cfg = new NoProtoLinkConfig { LinkId = newLink, Kind = kind, Enabled = true };
+            var cfg = new NoProtoLinkConfig { LinkId = newLink, Kind = kind, Enabled = false };
             if (kind == NoProtoKind.Serial)
             {
                 cfg.PortName = PickFreeCom(_ini);   // COM 互斥配置期防呆：自动避开已被启用连接占用的串口

@@ -1170,7 +1170,7 @@ namespace WindowsFormsApplication1
             this.c2.Name = "c2";
             this.c2.Size = new System.Drawing.Size(78, 21);
             this.c2.TabIndex = 22;
-            this.c2.Text = "FINS使能";
+            this.c2.Text = "ModbusRTU使能";
             this.c2.UseVisualStyleBackColor = true;
             this.c2.CheckedChanged += new System.EventHandler(this.c2_CheckedChanged);
             // 
