@@ -158,17 +158,6 @@ namespace WindowsFormsApplication1
             if (job == null || job.en != 1) return;
             if (_cameraCtrl.Cameras[cameraIndex] == null) return;
             if (!CommTriggerArmed) return;
-            // ★ ② payload 快照：触发时刻入队，绝不即时写共享 block 输入
-            var payloadQueue = (TriggerPayloads != null && cameraIndex >= 0 && cameraIndex < 12)
-                ? TriggerPayloads[cameraIndex] : null;
-            if (payloadQueue != null)
-            {
-                // ★ 2026-09-07：限制快照队列长度。否则「触发成功但相机未回帧」（掉线/停流）
-                //   时 payload 会无限滞留，下一触发的帧 FIFO 取到的是过期参数。
-                System.Collections.Generic.KeyValuePair<string, string> stale;
-                while (payloadQueue.Count >= TriggerPayloadQueueDepth && payloadQueue.TryDequeue(out stale)) { }
-                payloadQueue.Enqueue(new System.Collections.Generic.KeyValuePair<string, string>(inputKey, selection));
-            }
             job.jieshouZifu = selection;
             int nRet = TriggerSoftwareCallback != null ? TriggerSoftwareCallback(cameraIndex) : -1;
             if (MyCamera.MV_OK != nRet)
@@ -187,16 +176,33 @@ namespace WindowsFormsApplication1
                 {
                     _logger.WriteLog("相机" + (cameraIndex + 1) + " 触发参数即时写入失败: " + exWrite.Message);
                 }
-                // 回滚本次入队的 payload，避免滞留后与后续帧错配
-                if (payloadQueue != null)
+                // ★ 2026-09-13 修复：原实现在此用 while(TryDequeue) 清空「整个」payload 队列来回滚，
+                //   会连带清掉其他仍在等待回帧的触发参数 —— 那些帧此后取不到参数、或取到别人的参数。
+                //   现在 payload 改为「软触发成功后才入队」，失败时本就没有本次 payload 需要回滚，
+                //   因此这里不再清空队列；仅对触发来源做一次 best-effort 回滚。
+                var srcQueue = (TriggerSources != null && cameraIndex >= 0 && cameraIndex < 12)
+                    ? TriggerSources[cameraIndex] : null;
+                if (srcQueue != null)
                 {
-                    System.Collections.Generic.KeyValuePair<string, string> junk;
-                    while (payloadQueue.TryDequeue(out junk)) { }
+                    CommTriggerSource junkSrc;
+                    srcQueue.TryDequeue(out junkSrc);
                 }
                 // 回滚待处理计数：软触发失败不会有回帧，若不减则该计数只增不减，
                 // 使 ShouldProcessImageCallback 的 count>0 恒真 → 通讯触发门控常开。
                 if (job.commTriggerPendingCount > 0)
                     System.Threading.Interlocked.Decrement(ref job.commTriggerPendingCount);
+                return;
+            }
+            // ★ 软触发成功，才入队 payload 快照（触发时刻的参数，随帧携带到检测阶段）
+            var payloadQueue = (TriggerPayloads != null && cameraIndex >= 0 && cameraIndex < 12)
+                ? TriggerPayloads[cameraIndex] : null;
+            if (payloadQueue != null)
+            {
+                // ★ 2026-09-07：限制快照队列长度。否则「触发成功但相机未回帧」（掉线/停流）
+                //   时 payload 会无限滞留，下一触发的帧 FIFO 取到的是过期参数。
+                System.Collections.Generic.KeyValuePair<string, string> stale;
+                while (payloadQueue.Count >= TriggerPayloadQueueDepth && payloadQueue.TryDequeue(out stale)) { }
+                payloadQueue.Enqueue(new System.Collections.Generic.KeyValuePair<string, string>(inputKey, selection));
             }
         }
 

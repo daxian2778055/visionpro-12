@@ -439,9 +439,12 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>bin\Debug\MySql.Data.dll</HintPath>
     </Reference>
-    <Reference Include="Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\..\..\..\AI检测\VMtest\VMtest\bin\Debug\Newtonsoft.Json.dll</HintPath>
+      <!-- ★ 2026-09-13：原 HintPath 指向外部项目 ..\..\..\..\..\AI检测\VMtest\...（已失效），
+           导致 MSBuild 回退到 C:\Program Files\IIS\Microsoft Web Deploy V3\ 解析依赖，
+           部署到未装 IIS 的机器会加载失败。改为引用项目自身的 bin\Debug（与其他 DLL 一致）。 -->
+      <HintPath>bin\Debug\Newtonsoft.Json.dll</HintPath>
     </Reference>
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
