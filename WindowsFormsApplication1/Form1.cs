@@ -4003,16 +4003,10 @@ namespace WindowsFormsApplication1
         {
             while (!_inspectStop && !_disposingFlag)
             {
-                try
-                {
-                    if (_inspectSignal[slot] != null)
-                        _inspectSignal[slot].WaitOne(200);
-                }
-                catch
-                {
-                    break;
-                }
-                if (_inspectStop || _disposingFlag) break;
+                // ★ 修复「待检队列已有帧却仍要多等 200ms」：
+                //   原实现每轮先 WaitOne(200) 再只取一帧，而 AutoResetEvent 的多次 Set 会合并成一次信号，
+                //   导致第 2、3... 帧要等下一次超时才被取到（实测约 212ms / 414ms）。
+                //   改为：先尝试取帧，取不到才等待；处理完一帧后立刻回到循环再取，持续消费已排队的帧。
                 Bitmap frame = null;
                 System.Collections.Generic.KeyValuePair<string, string> payload = default(System.Collections.Generic.KeyValuePair<string, string>);
                 CommTriggerSource frameSrc = null;
@@ -4024,7 +4018,21 @@ namespace WindowsFormsApplication1
                         if (_frameTriggerSrc[slot] != null) _frameTriggerSrc[slot].TryDequeue(out frameSrc);
                     }
                 }
-                if (frame == null) continue;
+                if (frame == null)
+                {
+                    // 队列已空才等待新帧信号；保留 200ms 超时兜底，即使 Set 被合并也不会漏帧
+                    try
+                    {
+                        if (_inspectSignal[slot] != null)
+                            _inspectSignal[slot].WaitOne(200);
+                    }
+                    catch
+                    {
+                        break;
+                    }
+                    if (_inspectStop || _disposingFlag) break;
+                    continue;
+                }
                 if (_switchingScheme || _disposingFlag)
                 {
                     try { frame.Dispose(); } catch { }
@@ -4834,9 +4842,20 @@ namespace WindowsFormsApplication1
                                 if (slotRender >= 0 && slotRender < 12
                                     && Interlocked.CompareExchange(ref _renderBusy[slotRender], 1, 0) == 0)
                                 {
-                                    // ★ 仅在真正需要渲染本帧时才生成运行记录（原代码无论渲染开关、无论本帧是否被节流丢弃，每帧都执行 CreateLastRunRecord）
-                                    ICogRecord rec = myjob.block.CreateLastRunRecord().SubRecords[0];
-                                    SafeBeginInvoke(() => RenderCameraFrame(slotRender, rec, myjob, camIdx));
+                                    try
+                                    {
+                                        // ★ 仅在真正需要渲染本帧时才生成运行记录（原代码无论渲染开关、无论本帧是否被节流丢弃，每帧都执行 CreateLastRunRecord）
+                                        ICogRecord rec = myjob.block.CreateLastRunRecord().SubRecords[0];
+                                        SafeBeginInvoke(() => RenderCameraFrame(slotRender, rec, myjob, camIdx));
+                                    }
+                                    catch (Exception exRender)
+                                    {
+                                        // ★ 修复：创建记录或投递失败时必须释放单飞标志。
+                                        //   标志只在 RenderCameraFrame 内部复位，若此处抛异常则渲染函数根本不会被调用，
+                                        //   该相机后续所有帧都会被 CompareExchange 挡住 —— 表现为这一路永久停止刷新。
+                                        Volatile.Write(ref _renderBusy[slotRender], 0);
+                                        _logger.WriteLog("相机" + (slotRender + 1) + " 渲染记录创建/投递失败: " + exRender.Message);
+                                    }
                                 }
                             }
                             if ((myjob.cuntu || cuntu == 1) && _jobs.yunxing)
