@@ -11028,9 +11028,8 @@ namespace WindowsFormsApplication1
                 // 2026-09-06：更新帧信息，供相机设置页手动保存按钮使用
                 m_stFrameInfo[nIndex] = pFrameInfo;
 
-                if (pFrameInfo.enPixelType != MyCamera.MvGvspPixelType.PixelType_Gvsp_Mono8
-                    && pFrameInfo.enPixelType != MyCamera.MvGvspPixelType.PixelType_Gvsp_BGR8_Packed
-                    && pFrameInfo.enPixelType != MyCamera.MvGvspPixelType.PixelType_Gvsp_RGB8_Packed)
+                CameraPixelFormat srcFmt = CameraPixelFormatHelper.FromHik(pFrameInfo.enPixelType);
+                if (srcFmt == CameraPixelFormat.Unknown)
                 {
                     if (pFrameInfo.nFrameLen == 0)
                         return;
@@ -11039,15 +11038,27 @@ namespace WindowsFormsApplication1
                     {
                         uint need = (uint)pFrameInfo.nWidth * pFrameInfo.nHeight;
                         EnsureConvertBuffer(nIndex, need);
-                        CameraPixelFormatHelper.ConvertToMono8(_cameraCtrl.Cameras[nIndex], pData, m_pSaveImageBuf[nIndex], pFrameInfo.nHeight, pFrameInfo.nWidth, pFrameInfo.enPixelType);
+                        int convRet = CameraPixelFormatHelper.ConvertToMono8(_cameraCtrl.Cameras[nIndex], pData, m_pSaveImageBuf[nIndex], pFrameInfo.nHeight, pFrameInfo.nWidth, pFrameInfo.enPixelType);
+                        if (convRet != MyCamera.MV_OK)
+                        {
+                            _logger.WriteLog("相机" + (nIndex + 1) + " 转 Mono8 失败: " + convRet);
+                            return;
+                        }
                         pData = m_pSaveImageBuf[nIndex];
+                        srcFmt = CameraPixelFormat.Mono8;
                     }
                     else if (CameraPixelFormatHelper.IsHikColorData(pFrameInfo.enPixelType))
                     {
                         uint need = (uint)pFrameInfo.nWidth * pFrameInfo.nHeight * 3;
                         EnsureConvertBuffer(nIndex, need);
-                        CameraPixelFormatHelper.ConvertToRGB(_cameraCtrl.Cameras[nIndex], pData, pFrameInfo.nHeight, pFrameInfo.nWidth, pFrameInfo.enPixelType, m_pSaveImageBuf[nIndex]);
+                        int convRet = CameraPixelFormatHelper.ConvertToRGB(_cameraCtrl.Cameras[nIndex], pData, pFrameInfo.nHeight, pFrameInfo.nWidth, pFrameInfo.enPixelType, m_pSaveImageBuf[nIndex]);
+                        if (convRet != MyCamera.MV_OK)
+                        {
+                            _logger.WriteLog("相机" + (nIndex + 1) + " 转 RGB 失败: " + convRet);
+                            return;
+                        }
                         pData = m_pSaveImageBuf[nIndex];
+                        srcFmt = CameraPixelFormat.Rgb8;   // ConvertToRGB 目标为 RGB8_Packed（内存 R,G,B），需转成 B,G,R
                     }
                     else
                     {
@@ -11056,32 +11067,15 @@ namespace WindowsFormsApplication1
                     }
                 }
 
-                Bitmap wrapped = null;
-                if (CameraPixelFormatHelper.IsHikMonoData(pFrameInfo.enPixelType))
-                {
-                    wrapped = new Bitmap(pFrameInfo.nWidth, pFrameInfo.nHeight, pFrameInfo.nWidth * 1, PixelFormat.Format8bppIndexed, pData);
-                    wrapped.Palette = _grayPalette;   // 复用静态灰度调色板，省每帧 256 次 Color.FromArgb 构造
-                }
-                else
-                {
-                    wrapped = new Bitmap(pFrameInfo.nWidth, pFrameInfo.nHeight, pFrameInfo.nWidth * 3, PixelFormat.Format24bppRgb, pData);
-                }
-
-                Bitmap owned = null;
-                try
-                {
-                    owned = CameraPixelFormatHelper.CloneOwnedBitmap(wrapped);
-                }
-                finally
-                {
-                    if (wrapped != null)
-                    {
-                        try { wrapped.Dispose(); } catch { }
-                    }
-                }
+                // 直接从原始缓冲构造独立位图：内部逐行复制，一次性解决
+                // ① stride 未做 4 字节对齐（原实现宽度非 4 倍数时会取图失败）
+                // ② 彩色把 RGB 序数据按 Format24bppRgb（内存实为 B,G,R）解释导致红蓝颠倒
+                // ③ 不再用 pData 零拷贝包装中间 Bitmap，省掉每帧一次 Bitmap 分配
+                Bitmap owned = CameraPixelFormatHelper.BuildOwnedBitmap(
+                    pData, pFrameInfo.nWidth, pFrameInfo.nHeight, srcFmt, _grayPalette);
                 if (owned == null)
                 {
-                    _logger.WriteLog("相机" + (nIndex + 1) + " 拷贝像素失败");
+                    _logger.WriteLog("相机" + (nIndex + 1) + " 构造图像失败");
                     return;
                 }
 

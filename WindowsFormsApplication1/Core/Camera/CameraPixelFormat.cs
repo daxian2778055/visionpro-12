@@ -140,6 +140,66 @@ namespace WindowsFormsApplication1.Core.Camera
             return src.Clone(new Rectangle(0, 0, src.Width, src.Height), src.PixelFormat);
         }
 
+        /// <summary>
+        /// 从原始像素缓冲直接构造“独立拥有”的 Bitmap（逐行复制）。
+        /// 一次性解决原实现的三个问题：
+        /// ① stride 未做 4 字节对齐（GDI+ 强制要求），宽度非 4 倍数时会取图失败/花屏；
+        /// ② 彩色把 SDK 的 RGB 序数据直接按 Format24bppRgb（内存实为 B,G,R）解释，导致红蓝颠倒；
+        /// ③ 不再用 pData 零拷贝包装出中间 Bitmap，省掉每帧一次 Bitmap 分配。
+        /// 返回 null 表示失败（调用方应丢弃该帧）。
+        /// </summary>
+        public static Bitmap BuildOwnedBitmap(IntPtr pData, int width, int height, CameraPixelFormat srcFormat, ColorPalette grayPalette)
+        {
+            if (pData == IntPtr.Zero || width <= 0 || height <= 0) return null;
+
+            bool isMono = (srcFormat == CameraPixelFormat.Mono8);
+            int bpp = isMono ? 1 : 3;
+            PixelFormat pf = isMono ? PixelFormat.Format8bppIndexed : PixelFormat.Format24bppRgb;
+
+            Bitmap bmp = null;
+            try
+            {
+                bmp = new Bitmap(width, height, pf);
+                if (isMono && grayPalette != null)
+                    bmp.Palette = grayPalette;
+
+                BitmapData data = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, pf);
+                try
+                {
+                    int srcStride = width * bpp;            // 源行字节（SDK 缓冲，紧密排列）
+                    int dstStride = Math.Abs(data.Stride);  // 目标行字节（GDI+ 已按 4 字节对齐）
+                    bool swapRb = !isMono && (srcFormat == CameraPixelFormat.Rgb8); // 源 R,G,B -> 目标 B,G,R
+
+                    byte[] row = new byte[Math.Max(srcStride, dstStride)];
+                    for (int y = 0; y < height; y++)
+                    {
+                        Marshal.Copy(new IntPtr(pData.ToInt64() + (long)y * srcStride), row, 0, srcStride);
+                        if (swapRb)
+                        {
+                            for (int x = 0; x < width; x++)
+                            {
+                                byte t = row[x * 3];
+                                row[x * 3] = row[x * 3 + 2];
+                                row[x * 3 + 2] = t;
+                            }
+                        }
+                        // 目标行尾部 padding（dstStride-srcStride）保持 0
+                        Marshal.Copy(row, 0, new IntPtr(data.Scan0.ToInt64() + (long)y * dstStride), srcStride);
+                    }
+                }
+                finally
+                {
+                    bmp.UnlockBits(data);
+                }
+                return bmp;
+            }
+            catch
+            {
+                if (bmp != null) { try { bmp.Dispose(); } catch { } }
+                return null;
+            }
+        }
+
         /// <summary>其他黑白格式转为 Mono8。与 Form1.ConvertToMono8 等价。</summary>
         public static Int32 ConvertToMono8(MyCamera device, IntPtr pInData, IntPtr pOutData, ushort nHeight, ushort nWidth, MyCamera.MvGvspPixelType nPixelType)
         {
