@@ -889,6 +889,13 @@ namespace WindowsFormsApplication1
         // ★BUG1/BUG3 修复：手动"读"按钮运行在 UI 线程，若此刻正在重连或客户端未连接，
         //   裸调 Hsl 读会因对关闭中的 socket 发请求而抛异常 → UI 线程未处理 → 整个程序崩。
         //   复用与轮询读相同的 _reconnecting 门控（重连进行中直接返回），并统一 try/catch 兜底。
+        // ★全 I/O 单锁串行：所有 Hsl socket 读都经此走 _ioSync，与回写/重连互斥，
+        //   杜绝轮询读/手动读与自动重连的 ConnectClose 抢同一串口（BUG1 根因）。
+        private HslCommunication.OperateResult<T> ReadLocked<T>(Func<HslCommunication.OperateResult<T>> readOp)
+        {
+            lock (_ioSync) { return readOp(); }
+        }
+
         private void ManualRead(Action readAction)
         {
             if (_reconnecting != 0)
@@ -898,7 +905,11 @@ namespace WindowsFormsApplication1
             }
             try
             {
-                readAction();
+                // ★全 I/O 单锁串行：手动读与轮询读/回写/重连共用 _ioSync
+                lock (_ioSync)
+                {
+                    readAction();
+                }
             }
             catch (Exception ex)
             {
@@ -3071,7 +3082,7 @@ namespace WindowsFormsApplication1
 
                                                 xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
                                                 // 读取short变量
-                                                DemoUtils.ReadResultRender1(busRtuClient.ReadInt16((int.Parse(par.Value[1]) + j).ToString()), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadInt16((int.Parse(par.Value[1]) + j).ToString())), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
@@ -3079,7 +3090,7 @@ namespace WindowsFormsApplication1
                                             {
                                                 xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
                                                 // 读取字符串
-                                                DemoUtils.ReadResultRender1(busRtuClient.ReadString((int.Parse(par.Value[1]) + j).ToString(), 1), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadString((int.Parse(par.Value[1]) + j).ToString(), 1)), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
@@ -3087,7 +3098,7 @@ namespace WindowsFormsApplication1
                                             {
                                                 xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
                                                 // 读取字符串
-                                                DemoUtils.ReadResultRender1(busRtuClient.ReadInt32((int.Parse(par.Value[1]) + j).ToString()), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadInt32((int.Parse(par.Value[1]) + j).ToString())), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
@@ -3095,7 +3106,7 @@ namespace WindowsFormsApplication1
                                             {
                                                 xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
                                                 // 读取字符串
-                                                DemoUtils.ReadResultRender1(busRtuClient.ReadFloat((int.Parse(par.Value[1]) + j).ToString()), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadFloat((int.Parse(par.Value[1]) + j).ToString())), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
@@ -3190,7 +3201,11 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    bool ok = PerformReconnectCore();
+                    bool ok;
+                    lock (_ioSync)   // ★全 I/O 单锁串行：重连的 ConnectClose/ConnectServer 与读/写互斥，杜绝抢同一串口
+                    {
+                        ok = PerformReconnectCore();
+                    }
                     if (ok)
                     {
                         Log("Modbus RTU 自动重连成功");
