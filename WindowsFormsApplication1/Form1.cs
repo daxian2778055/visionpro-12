@@ -7112,17 +7112,23 @@ namespace WindowsFormsApplication1
         /// <summary>停采并确认成功 → 排空在途回调 → 清 pending → 重建取流；成功才清除"恢复未完成"标志。</summary>
         private void RebuildGrabFor(int i, string phase)
         {
-            int stopRet = -1;
-            try { stopRet = _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET(); } catch { stopRet = -1; }
-            SetCameraGrabbing(i, false);
-            if (stopRet != MyCamera.MV_OK)
+            // ★ 2026-09-13：仅当仍处于采集态时才停采。若上一轮已停采成功、只是重建失败，
+            //   此处对"已停止"的设备重复调 StopGrabbing 的返回行为不确定，可能被误判为停采失败，
+            //   从而永远卡在重试前。用 IsCameraGrabbing 判断后，已停则直接进入重建。
+            if (IsCameraGrabbing(i))
             {
-                // 停采未成功：不清记录（否则会留下「帧在路上、记录已删」的错配），保留状态下轮重试
-                _logger.WriteLog("相机" + (i + 1) + " 触发回帧恢复(" + phase + ")：停止采集失败 " + stopRet + "，保留待回帧记录，下轮重试");
-                return;
+                int stopRet = -1;
+                try { stopRet = _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET(); } catch { stopRet = -1; }
+                SetCameraGrabbing(i, false);
+                if (stopRet != MyCamera.MV_OK)
+                {
+                    // 停采未成功：不清记录（否则会留下「帧在路上、记录已删」的错配），保留状态下轮重试
+                    _logger.WriteLog("相机" + (i + 1) + " 触发回帧恢复(" + phase + ")：停止采集失败 " + stopRet + "，保留待回帧记录，下轮重试");
+                    return;
+                }
+                // 排空在途回调：StopGrabbing 返回后，仍在途的回调可能稍后才结束，短暂等待避免旧帧迟到污染新记录
+                try { System.Threading.Thread.Sleep(100); } catch { }
             }
-            // 排空在途回调：StopGrabbing 返回后，仍在途的回调可能稍后才结束，短暂等待避免旧帧迟到污染新记录
-            try { System.Threading.Thread.Sleep(100); } catch { }
             _jobs.ClearCommTriggerPending(i);   // 此时该路新触发已被 _grabRecoveryPending 挡住，不会误清新记录
             int nRet;
             bool ok;
