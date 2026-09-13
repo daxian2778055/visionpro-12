@@ -159,7 +159,14 @@ namespace WindowsFormsApplication1
         private volatile bool _disposingFlag = false;
         private volatile bool _isFormClosing = false;  // ★ 防止关闭对话框重复弹出
         private volatile bool _switchingScheme = false;  // ★ 方案切换进行中：丢弃回调帧，避免旧帧打到新block
-        private int _detectingCount = 0;                 // 正在执行 block.Run 的帧数（方案切换排空等待用，Interlocked 操作）
+        private readonly InspectionLifecycle _inspectionLifecycle = new InspectionLifecycle();
+
+        // ★ 2026-09-13：触发回帧超时恢复。
+        //   PendingCameraTriggers 满员后不驱逐在途记录（保证「记录-图像」配对），
+        //   若相机「命令返回成功却一直不回帧」且未触发设备级重连，pending 会占满并持续拒绝新触发。
+        //   这里做超时监测：超时则 停采 → 清 pending → 重建取流，让配对整条链路归零。
+        private const int TriggerFrameTimeoutMs = 3000;
+        private readonly int[] _triggerRecovering = new int[12];
         private readonly object[] _inspectLocks = new object[12];
         private readonly AutoResetEvent[] _inspectSignal = new AutoResetEvent[12];
         private readonly Thread[] _inspectThreads = new Thread[12];
@@ -207,7 +214,7 @@ namespace WindowsFormsApplication1
             _statCheckBox = new CheckBox[] { checkBox11, checkBox8, checkBox56, checkBox57, checkBox58, checkBox59, checkBox60, checkBox61, checkBox73, checkBox79, checkBox85, checkBox91 };
             _statDgv = new DataGridView[] { dataGridView1, dataGridView2, dataGridView3, dataGridView4, dataGridView5, dataGridView6, dataGridView7, dataGridView8, dataGridView9, dataGridView10, dataGridView11, dataGridView12 };
             _statD = new Dictionary<string, int>[] { d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12 };
-            _jobs.TriggerSoftwareCallback = TriggerSoftwareCamera;
+            _jobs.TriggerSoftwareCallback = SendSoftwareTrigger;
             _config.ReadINIFile(AppDomain.CurrentDomain.BaseDirectory + "//code.ini");
             string savedLayout = _config.ReadString("Display", "LayoutMode", "Grid");
             _layoutMode = (savedLayout == "Row") ? "Row" : "Grid";
@@ -3976,8 +3983,9 @@ namespace WindowsFormsApplication1
             catch { }
         }
 
-        private void StopInspectWorkers()
+        private bool StopInspectWorkers()
         {
+            _inspectionLifecycle.StopAccepting();
             _inspectStop = true;
             for (int i = 0; i < 12; i++)
             {
@@ -3997,53 +4005,49 @@ namespace WindowsFormsApplication1
                     // 帧清理原保护 _pendingFrame（死字段已删），锁在此保持对称
                 }
             }
+            return _inspectionLifecycle.WaitForIdle(10000);
         }
+
+        private sealed class InspectionFrame
+        {
+            public readonly Bitmap Image;
+            public readonly CameraTriggerRecord Trigger;
+            public InspectionFrame(Bitmap image, CameraTriggerRecord trigger)
+            {
+                Image = image;
+                Trigger = trigger;
+            }
+        }
+
+        private const int InspectQueueDepth = 3;
+        private readonly System.Collections.Generic.Queue<InspectionFrame>[] _frameQueue =
+            new System.Collections.Generic.Queue<InspectionFrame>[12];
+        private readonly int[] _droppedFrameCount = new int[12];
+        private readonly DateTime[] _lastDropLogAt = new DateTime[12];
 
         private void InspectWorker(int slot)
         {
             while (!_inspectStop && !_disposingFlag)
             {
-                // ★ 修复「待检队列已有帧却仍要多等 200ms」：
-                //   原实现每轮先 WaitOne(200) 再只取一帧，而 AutoResetEvent 的多次 Set 会合并成一次信号，
-                //   导致第 2、3... 帧要等下一次超时才被取到（实测约 212ms / 414ms）。
-                //   改为：先尝试取帧，取不到才等待；处理完一帧后立刻回到循环再取，持续消费已排队的帧。
-                Bitmap frame = null;
-                System.Collections.Generic.KeyValuePair<string, string> payload = default(System.Collections.Generic.KeyValuePair<string, string>);
-                CommTriggerSource frameSrc = null;
+                InspectionFrame frame = null;
                 lock (_inspectLocks[slot])
                 {
-                    if (_frameQueue[slot] != null && _frameQueue[slot].TryDequeue(out frame))
-                    {
-                        _framePayload[slot]?.TryDequeue(out payload);
-                        if (_frameTriggerSrc[slot] != null) _frameTriggerSrc[slot].TryDequeue(out frameSrc);
-                    }
+                    if (_frameQueue[slot] != null && _frameQueue[slot].Count > 0)
+                        frame = _frameQueue[slot].Dequeue();
                 }
                 if (frame == null)
                 {
-                    // 队列已空才等待新帧信号；保留 200ms 超时兜底，即使 Set 被合并也不会漏帧
-                    try
-                    {
-                        if (_inspectSignal[slot] != null)
-                            _inspectSignal[slot].WaitOne(200);
-                    }
-                    catch
-                    {
-                        break;
-                    }
-                    if (_inspectStop || _disposingFlag) break;
-                    continue;
-                }
-                if (_switchingScheme || _disposingFlag)
-                {
-                    try { frame.Dispose(); } catch { }
+                    try { _inspectSignal[slot].WaitOne(200); }
+                    catch { break; }
                     continue;
                 }
                 try
                 {
+                    if (_switchingScheme || _disposingFlag) continue;
                     ReleaseFrameBitmap(slot);
-                    bmp[slot] = frame;
-                    if (_jobs.Myjobs != null && _jobs.Myjobs[slot] != null)
-                        getrecord(_jobs.Myjobs[slot], payload, frameSrc);
+                    bmp[slot] = frame.Image;
+                    var payload = frame.Trigger != null ? frame.Trigger.Payload : default(System.Collections.Generic.KeyValuePair<string, string>);
+                    getrecord(_jobs.Myjobs[slot], payload, frame.Trigger?.Source, frame.Image == null);
                 }
                 catch (Exception ex)
                 {
@@ -4051,10 +4055,8 @@ namespace WindowsFormsApplication1
                 }
                 finally
                 {
-                    if (slot >= 0 && slot < 12 && bmp[slot] == frame)
-                        ReleaseFrameBitmap(slot);
-                    // ★ 2026-09-06 ⑤：待处理触发计数在 EnqueueInspectFrame 接收帧时已经递减，
-                    //   检测完成不再清零，避免冲掉检测期间到达的新触发置位。
+                    if (bmp[slot] == frame.Image) ReleaseFrameBitmap(slot);
+                    else if (frame.Image != null) frame.Image.Dispose();
                 }
             }
         }
@@ -4066,103 +4068,39 @@ namespace WindowsFormsApplication1
                 if (_inspectLocks[i] == null) continue;
                 lock (_inspectLocks[i])
                 {
-                    if (_frameQueue[i] != null)
-                    {
-                        Bitmap dropped;
-                        while (_frameQueue[i].TryDequeue(out dropped))
-                        {
-                            try { dropped.Dispose(); } catch { }
-                        }
-                    }
-                    if (_framePayload[i] != null)
-                    {
-                        System.Collections.Generic.KeyValuePair<string, string> droppedPayload;
-                        while (_framePayload[i].TryDequeue(out droppedPayload)) { }
-                    }
-                    if (_frameTriggerSrc[i] != null)
-                    {
-                        CommTriggerSource droppedSrc;
-                        while (_frameTriggerSrc[i].TryDequeue(out droppedSrc)) { }
-                    }
+                    if (_frameQueue[i] == null) continue;
+                    while (_frameQueue[i].Count > 0)
+                        _frameQueue[i].Dequeue().Image?.Dispose();
                 }
             }
         }
 
-        /// <summary>
-        /// ★ 2026-09-06 ①：入队待检帧。单槽 latest-wins → 每相机深度 InspectQueueDepth 的有界队列，
-        /// 检测节拍慢于产线时不再静默丢件：队列满时丢弃最旧帧并累加丢弃计数（供日志/后续 NAK 上报），
-        /// 而不是“新帧替换旧帧且无计数无告警”。
-        /// ⑤：帧被接收即递减待处理触发计数，检测完成不再清零，避免冲掉在途新触发的置位。
-        /// ②：回帧时按 FIFO 从 TriggerPayloads 取出本次触发的参数快照，随帧携带到检测阶段。
-        /// </summary>
-        private const int InspectQueueDepth = 3;
-        /// <summary>① 每相机待检帧队列（深度 InspectQueueDepth）</summary>
-        private System.Collections.Concurrent.ConcurrentQueue<Bitmap>[] _frameQueue =
-            new System.Collections.Concurrent.ConcurrentQueue<Bitmap>[12];
-        /// <summary>② 与 _frameQueue 逐元素对齐的 payload 快照队列：(inputKey, selection)</summary>
-        private System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[] _framePayload =
-            new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[12];
-
-        /// <summary>随帧携带的通讯触发来源（与 _frameQueue 一一对应，同 FIFO 顺序）。</summary>
-        private System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>[] _frameTriggerSrc =
-            new System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>[12];
-        /// <summary>① 各相机因队列满被丢弃的帧计数（不再静默丢件，可对外暴露/回 NAK）</summary>
-        private int[] _droppedFrameCount = new int[12];
-        // ★ 2026-09-11：丢帧日志限频（每路每秒至多 1 条）。过载期队列满会连续丢帧，
-        //   若每帧都 WriteLog 会频繁刷盘 IO，反而加重检测过载并撑爆日志文件。
-        private readonly DateTime[] _lastDropLogAt = new DateTime[12];
-
-        private void EnqueueInspectFrame(int slot, Bitmap owned)
+        private void EnqueueInspectFrame(int slot, Bitmap owned, CameraTriggerRecord trigger)
         {
-            if (owned == null) return;
-            if (_inspectStop || _disposingFlag || slot < 0 || slot >= 12)
+            // A null image represents a failed acquisition, processed in order as an NG transaction.
+            if (_inspectStop || _disposingFlag || _switchingScheme || slot < 0 || slot >= 12)
             {
-                try { owned.Dispose(); } catch { }
+                owned?.Dispose();
                 return;
             }
-            // ② payload 快照：从触发队列按 FIFO 取出与本次回帧对应的参数（连续/硬触发模式为空）
-            System.Collections.Generic.KeyValuePair<string, string> payload = default(System.Collections.Generic.KeyValuePair<string, string>);
-            if (_jobs != null && _jobs.TriggerPayloads != null && _jobs.TriggerPayloads[slot] != null)
-                _jobs.TriggerPayloads[slot].TryDequeue(out payload);
-            // ★ 多协议触发同一相机：来源随帧绑定（FIFO），避免后触发覆盖先触发导致结果回错连接
-            CommTriggerSource frameSrc = null;
-            if (_jobs != null && _jobs.TriggerSources != null && _jobs.TriggerSources[slot] != null)
-                _jobs.TriggerSources[slot].TryDequeue(out frameSrc);
-
             lock (_inspectLocks[slot])
             {
-                if (_frameQueue[slot] == null) _frameQueue[slot] = new System.Collections.Concurrent.ConcurrentQueue<Bitmap>();
-                if (_framePayload[slot] == null) _framePayload[slot] = new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>();
-                if (_frameTriggerSrc[slot] == null) _frameTriggerSrc[slot] = new System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>();
+                if (_frameQueue[slot] == null) _frameQueue[slot] = new System.Collections.Generic.Queue<InspectionFrame>();
                 while (_frameQueue[slot].Count >= InspectQueueDepth)
                 {
-                    Bitmap old;
-                    if (!_frameQueue[slot].TryDequeue(out old)) break;
-                    System.Collections.Generic.KeyValuePair<string, string> oldPayload;
-                    _framePayload[slot].TryDequeue(out oldPayload);
-                    CommTriggerSource oldSrc;
-                    if (_frameTriggerSrc[slot] != null) _frameTriggerSrc[slot].TryDequeue(out oldSrc);
-                    int n = System.Threading.Interlocked.Increment(ref _droppedFrameCount[slot]);
-                    try { old.Dispose(); } catch { }
-                    // ★ 2026-09-11：限频写入——过载期连续丢帧不再每帧刷盘，压制到每秒约 1 条。
+                    _frameQueue[slot].Dequeue().Image?.Dispose();
+                    int count = ++_droppedFrameCount[slot];
                     DateTime now = DateTime.Now;
-                    if ((now - _lastDropLogAt[slot]).TotalSeconds >= 1.0)
+                    if ((now - _lastDropLogAt[slot]).TotalSeconds >= 1)
                     {
                         _lastDropLogAt[slot] = now;
-                        _logger.WriteLog("相机" + (slot + 1) + "检测过载：待检队列满，丢弃最旧帧（累计" + n + "）");
+                        _logger.WriteLog("相机" + (slot + 1) + "检测过载：待检队列满，丢弃最旧帧（累计" + count + "）");
                     }
                 }
-                _frameQueue[slot].Enqueue(owned);
-                _framePayload[slot].Enqueue(payload);
-                _frameTriggerSrc[slot].Enqueue(frameSrc);
+                _frameQueue[slot].Enqueue(new InspectionFrame(owned, trigger));
             }
-            // ⑤ 帧已被接收：递减待处理触发计数（不再等检测完成才清，避免冲掉在途新触发）
-            if (_jobs != null && _jobs.Myjobs != null && _jobs.Myjobs[slot] != null
-                && _jobs.Myjobs[slot].commTriggerPendingCount > 0)
-                System.Threading.Interlocked.Decrement(ref _jobs.Myjobs[slot].commTriggerPendingCount);
             try { _inspectSignal[slot].Set(); } catch { }
         }
-
 
         private void EnsureConvertBuffer(int camIndex, uint needSize)
         {
@@ -4188,7 +4126,8 @@ namespace WindowsFormsApplication1
 
         private void AssignBlockInputImage(CogToolBlock block, Bitmap src, bool color)
         {
-            if (block == null || src == null || !block.Inputs.Contains("Input")) return;
+            if (block == null || src == null || !block.Inputs.Contains("Input"))
+                throw new InvalidOperationException("检测输入图像或 Input 端口不存在");
             object old = null;
             try { old = block.Inputs["Input"].Value; } catch { }
             ICogImage next = color
@@ -4275,7 +4214,18 @@ namespace WindowsFormsApplication1
         /// ★ 2026-09-06（②参数错位修复）：增加 payload 参数，将通讯触发时刻的 inputKey/selection 快照
         /// 在检测前写入 block 输入，避免多触发连续到达时共享 block.Inputs 被覆盖。
         /// </summary>
-        private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc = null)
+        private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc = null, bool acquisitionFailed = false)
+        {
+            if (!_inspectionLifecycle.TryEnter()) return;
+            try
+            {
+                if (_switchingScheme || _disposingFlag) return;
+                GetRecordCore(myjob, payload, frameSrc, acquisitionFailed);
+            }
+            finally { _inspectionLifecycle.Exit(); }
+        }
+
+        private void GetRecordCore(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc, bool acquisitionFailed)
         {
             EnsureCameraOutWork(); // ★P2-1：本帧用输出队列，惰性初始化一次
             try
@@ -4305,13 +4255,14 @@ namespace WindowsFormsApplication1
 
                         // ★ 输入准备是否成功：取图 / 传图 / payload 写入任一失败则为 false。
                         //   为 false 时不再执行 block.Run()（原实现会拿上一件的图像/参数生成本件结果）。
-                        bool inputOk = true;
+                        bool inputOk = !acquisitionFailed;
                         if ((!myjob.trrigerEn) && (myjob.trriger == 0) || (myjob.trriger == 0 && myjob.trrigerEn))
                         {
 
                             try
                             {
 
+                                _jobs.ApplyContinuousParameters(camIdx, myjob);
                                 #region 取图
                                 if (camIdx >= 0 && camIdx < 12 && bmp[camIdx] != null)
                                 {
@@ -4342,10 +4293,13 @@ namespace WindowsFormsApplication1
                                 #endregion
 
                                 // ★ 2026-09-06（②参数错位修复）：把随帧携带的 payload 写入 block 输入
-                                if (!string.IsNullOrEmpty(payload.Key) && myjob.block != null && myjob.block.Inputs.Contains(payload.Key))
+                                if (!string.IsNullOrEmpty(payload.Key)
+                                    && !(frameSrc?.Proto == NoProtoProto && !myjob.block.Inputs.Contains(payload.Key)))
                                 {
+                                    if (!myjob.block.Inputs.Contains(payload.Key))
+                                        throw new InvalidOperationException("触发参数端口不存在: " + payload.Key);
                                     try { myjob.block.Inputs[payload.Key].Value = payload.Value; }
-                                    catch (Exception exPayload) { _logger.WriteLog("相机" + myjob.path_number + " payload 写入失败: " + exPayload.Message); }
+                                    catch (Exception exPayload) { inputOk = false; _logger.WriteLog("相机" + myjob.path_number + " payload 写入失败: " + exPayload.Message); }
                                 }
                             }
                             catch (Exception ex)
@@ -4356,7 +4310,7 @@ namespace WindowsFormsApplication1
 
                         }
 
-                        if (myjob.trriger == 1 || (camIdx >= 0 && camIdx < 12 && bmp[camIdx] != null))
+                        if (acquisitionFailed || myjob.trriger == 1 || (camIdx >= 0 && camIdx < 12 && bmp[camIdx] != null))
                         {
                             jobnumber = myjob.numberng;
 
@@ -4394,7 +4348,7 @@ namespace WindowsFormsApplication1
                                 ReleaseFrameBitmap(camIdx);
                                 return;   // 方案切换中：丢弃旧帧，停止检测
                             }
-                            // 检测中计数（供方案切换排空等待，替代固定 Sleep）
+                            // getrecord 的生命周期保护覆盖输入、运行和结果快照。
                             bool runOk = false;
                             if (!inputOk)
                             {
@@ -4404,19 +4358,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                Interlocked.Increment(ref _detectingCount);
                                 try
                                 {
                                     myjob.block.Run();
-                                    runOk = true;
+                                    runOk = myjob.block.RunStatus.Result != CogToolResultConstants.Error;
+                                    if (!runOk) _logger.WriteLog("相机" + myjob.path_number + " 工具块运行状态为 Error");
                                 }
                                 catch (Exception exRun)
                                 {
                                     _logger.WriteLog("相机" + myjob.path_number + " block.Run异常: " + exRun.Message);
-                                }
-                                finally
-                                {
-                                    Interlocked.Decrement(ref _detectingCount);
                                 }
                             }
                             if (_switchingScheme)
@@ -4620,9 +4570,9 @@ namespace WindowsFormsApplication1
                                 {
                                     try
                                     {
-                                        if (trigProto == 1) _comm.Omron.WriteCameraOutputForLink(trigLink, camIdx, fins);
-                                        else if (trigProto == 2) _comm.Modbustcp.WriteCameraOutputForLink(trigLink, camIdx, modbustcps);
-                                        else if (trigProto == 3) _comm.ModbusRtu.WriteCameraOutputForLink(trigLink, camIdx, modbusrtus);
+                                        if (trigProto == 1) _comm.Omron.WriteCameraOutputForLink(trigLink, camIdx, fins, !runOk);
+                                        else if (trigProto == 2) _comm.Modbustcp.WriteCameraOutputForLink(trigLink, camIdx, modbustcps, !runOk);
+                                        else if (trigProto == 3) _comm.ModbusRtu.WriteCameraOutputForLink(trigLink, camIdx, modbusrtus, !runOk);
                                     }
                                     catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 连接(proto" + trigProto + ",link" + trigLink + ")输出失败: " + ex.Message); }
                                 });
@@ -4632,12 +4582,12 @@ namespace WindowsFormsApplication1
                                 // ★ 三协议输出合并为单个后台任务顺序写（行为等价），减少线程池任务数
                                 _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                                 {
-                                    try { _comm.Omron.WriteCameraOutput(camIdx, fins); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " OMRON输出失败: " + ex.Message); }
-                                    try { _comm.Modbustcp.WriteCameraOutput(camIdx, modbustcps); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusTCP输出失败: " + ex.Message); }
-                                    try { _comm.ModbusRtu.WriteCameraOutput(camIdx, modbusrtus); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusRTU输出失败: " + ex.Message); }
+                                    try { _comm.Omron.WriteCameraOutput(camIdx, fins, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " OMRON输出失败: " + ex.Message); }
+                                    try { _comm.Modbustcp.WriteCameraOutput(camIdx, modbustcps, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusTCP输出失败: " + ex.Message); }
+                                    try { _comm.ModbusRtu.WriteCameraOutput(camIdx, modbusrtus, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusRTU输出失败: " + ex.Message); }
                                 });
                             }
-                            if (myjob.zidongbaoguang && camIdx >= 0 && camIdx < 12 && _cameraCtrl.Cameras[camIdx] != null)
+                            if (runOk && myjob.zidongbaoguang && camIdx >= 0 && camIdx < 12 && _cameraCtrl.Cameras[camIdx] != null)
                             {
                                 // ★ 按需创建（性能优先）：未启用自动曝光的相机不再每帧生成空转任务
                                 // 在调用线程快照 UI 曝光基准与补偿输出值，避免后台任务跨线程读控件/VisionPro COM
@@ -4697,8 +4647,7 @@ namespace WindowsFormsApplication1
                             // P2-1 fix: oksum/NG count are critical stats, not queueable (queue drop = miscount).
                             // Back to detection-thread sync; live COM myjob.block.Outputs snapshotted to string first.
                             string _outputSnap;
-                            try { _outputSnap = myjob.block.Outputs["Output"].Value.ToString(); }
-                            catch { _outputSnap = "无"; }
+                            _outputSnap = tempout1;
                             try
                             {
                                 if (_outputSnap == "Accept")
@@ -4846,7 +4795,8 @@ namespace WindowsFormsApplication1
                                     {
                                         // ★ 仅在真正需要渲染本帧时才生成运行记录（原代码无论渲染开关、无论本帧是否被节流丢弃，每帧都执行 CreateLastRunRecord）
                                         ICogRecord rec = myjob.block.CreateLastRunRecord().SubRecords[0];
-                                        SafeBeginInvoke(() => RenderCameraFrame(slotRender, rec, myjob, camIdx));
+                                        if (!TryBeginInvoke(() => RenderCameraFrame(slotRender, rec, myjob, camIdx)))
+                                            Volatile.Write(ref _renderBusy[slotRender], 0);
                                     }
                                     catch (Exception exRender)
                                     {
@@ -5291,21 +5241,18 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void SafeBeginInvoke(Action action)
         {
+            TryBeginInvoke(action);
+        }
+
+        private bool TryBeginInvoke(Action action)
+        {
             try
             {
-                if (!_disposingFlag && this.IsHandleCreated && !this.IsDisposed)
-                {
-                    this.BeginInvoke(action);
-                }
+                if (_disposingFlag || !IsHandleCreated || IsDisposed) return false;
+                BeginInvoke(action);
+                return true;
             }
-            catch (InvalidOperationException)
-            {
-                // 窗口句柄已销毁或正在释放，静默忽略
-            }
-            catch
-            {
-                // 其他异常不做处理
-            }
+            catch { return false; }
         }
 
         /// <summary>
@@ -6593,7 +6540,11 @@ namespace WindowsFormsApplication1
             _disposingFlag = true;
             try
             {
-                StopInspectWorkers();
+                if (!StopInspectWorkers())
+                {
+                    _logger.WriteLog("检测仍未结束，跳过 VisionPro/相机资源释放");
+                    return;
+                }
                 // ★ F14: 退出时释放各相机持有的 VisionPro COM 对象
                 ReleaseAllMyjobVisionObjects();
                 // 1. 释放全部相机（停止抓流 → 关闭设备 → 销毁句柄），释放所有权收口到 CameraController。
@@ -6687,7 +6638,14 @@ namespace WindowsFormsApplication1
                     ResetMyJobOutputs();
 
                     // 停止检测入队线程，避免关相机后仍消费旧帧
-                    StopInspectWorkers();
+                    if (!StopInspectWorkers())
+                    {
+                        _logger.WriteLog("关闭中止：检测事务仍在执行，未释放资源");
+                        e.Cancel = true;
+                        _isFormClosing = false;
+                        MessageBox.Show("检测尚未结束，暂不能安全释放资源。请等待检测结束后再次关闭。", "关闭中止");
+                        return;
+                    }
 
                     // ★ 核心修复：按正确顺序释放相机资源（只做这一件事）
                     ReleaseAllCameras();
@@ -7091,6 +7049,47 @@ namespace WindowsFormsApplication1
             catch { }
         }
 
+        /// <summary>
+        /// ★ 2026-09-13：触发回帧超时恢复（详见 TriggerFrameTimeoutMs 字段注释）。
+        /// 针对「软触发命令返回成功、相机却一直不回帧，且 IsDeviceConnected 仍为 true 因而不会触发设备级重连」
+        /// 这一盲区：pending 占满(容量 3)后将持续拒绝该路新触发，此前没有任何恢复机制。
+        /// 注意：不能直接删除旧记录继续触发（会重新引入「记录-图像」配对错位），
+        /// 必须整条链路归零：停采 → 清 pending → 重建取流。
+        /// </summary>
+        private void RecoverStaleTriggers()
+        {
+            for (int i = 0; i < 12; i++)
+            {
+                if (_switchingScheme || _disposingFlag) return;
+                double age = _jobs.OldestPendingTriggerAgeMs(i);
+                if (age < 0 || age < TriggerFrameTimeoutMs) continue;
+                if (System.Threading.Interlocked.CompareExchange(ref _triggerRecovering[i], 1, 0) != 0) continue;
+                try
+                {
+                    if (_cameraCtrl.Cameras[i] == null)
+                    {
+                        _jobs.ClearCommTriggerPending(i);
+                        continue;
+                    }
+                    _logger.WriteLog("相机" + (i + 1) + " 触发后 " + (int)age + "ms 未回帧（且未触发设备重连），判定采集异常：重建取流并清理待回帧记录");
+                    try { _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET(); } catch { }
+                    SetCameraGrabbing(i, false);
+                    _jobs.ClearCommTriggerPending(i);
+                    int nRet;
+                    if (!PrepareCameraGrab(i, out nRet))
+                        _logger.WriteLog("相机" + (i + 1) + " 重建取流失败: " + nRet);
+                }
+                catch (Exception ex)
+                {
+                    _logger.WriteLog("相机" + (i + 1) + " 触发回帧超时恢复失败: " + ex.Message);
+                }
+                finally
+                {
+                    System.Threading.Volatile.Write(ref _triggerRecovering[i], 0);
+                }
+            }
+        }
+
         private void timer2_Tick(object sender, EventArgs e)
         {
             // 在UI线程判断并发标志，避免Task.Run内非原子check-then-set导致重连任务重叠
@@ -7103,6 +7102,8 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
+                    // ★ 触发回帧超时恢复（命令成功但不回帧、又未触发设备重连时的兜底）
+                    try { RecoverStaleTriggers(); } catch (Exception exT) { _logger.WriteLog("触发回帧超时恢复异常: " + exT.Message); }
                     cameraState = "";
                     int nRet = 1;
                     bool reconnectedThisTick = false;
@@ -7377,100 +7378,13 @@ namespace WindowsFormsApplication1
             // 阶段：无协议连接 2~4 触发经主窗宿主转发，事件内已通过 e.LinkId 携带“原始来源链路号”，
             // 记录到相机使检测结果能回到发出触发的那条无协议连接（修复结果串到连接 1）。
             int nopSrcLink = e.LinkId;
-            try
-            {
-                if (manager1.JobCount > 0)
-                {
-                    if (_jobs.myjob1.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob1.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 1)
-                {
-                    if (_jobs.myjob2.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob2.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 2)
-                {
-                    if (_jobs.myjob3.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob3.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 3)
-                {
-                    if (_jobs.myjob4.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob4.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 4)
-                {
-                    if (_jobs.myjob5.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob5.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 5)
-                {
-                    if (_jobs.myjob6.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob6.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 6)
-                {
-                    if (_jobs.myjob7.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob7.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 7)
-                {
-                    if (_jobs.myjob8.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob8.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 8)
-                {
-                    if (_jobs.myjob9.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob9.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 9)
-                {
-                    if (_jobs.myjob10.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob10.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 10)
-                {
-                    if (_jobs.myjob11.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob11.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-                if (manager1.JobCount > 11)
-                {
-                    if (_jobs.myjob12.block.Inputs.Contains("jieshou"))
-                    {
-                        _jobs.myjob12.block.Inputs["jieshou"].Value = e.Selection;
-                    }
-                }
-            }
-            catch { }
+            for (int slot = 0; slot < 12; slot++)
+                _jobs.StageContinuousParameter(slot, "jieshou", e.Selection);
             if (string.IsNullOrEmpty(_jobs.myjob1.triggerZifu) || e.Selection == _jobs.myjob1.triggerZifu)
             {
                 _jobs.myjob1.jieshouZifu = _jobs.myjob1.triggerZifu;
-                _jobs.EnqueueTriggerSource(0, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob1.triggerZifu));
                 // ch:触发命令 | en:Trigger command
-                int nRet = TriggerSoftwareCamera(0);
+                int nRet = _jobs.RequestTrigger(0, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7479,9 +7393,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob2.triggerZifu) || e.Selection == _jobs.myjob2.triggerZifu)
             {
                 _jobs.myjob2.jieshouZifu = _jobs.myjob2.triggerZifu;
-                _jobs.EnqueueTriggerSource(1, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob2.triggerZifu));
                 // ch:触发命令 | en:Trigger command
-                int nRet = TriggerSoftwareCamera(1);
+                int nRet = _jobs.RequestTrigger(1, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7490,9 +7403,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob3.triggerZifu) || e.Selection == _jobs.myjob3.triggerZifu)
             {
                 _jobs.myjob3.jieshouZifu = _jobs.myjob3.triggerZifu;
-                _jobs.EnqueueTriggerSource(2, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob3.triggerZifu));
                 // ch:触发命令 | en:Trigger command
-                int nRet = TriggerSoftwareCamera(2);
+                int nRet = _jobs.RequestTrigger(2, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7501,9 +7413,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob4.triggerZifu) || e.Selection == _jobs.myjob4.triggerZifu)
             {
                 _jobs.myjob4.jieshouZifu = _jobs.myjob4.triggerZifu;
-                _jobs.EnqueueTriggerSource(3, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob4.triggerZifu));
                 // ch:触发命令 | en:Trigger command
-                int nRet = TriggerSoftwareCamera(3);
+                int nRet = _jobs.RequestTrigger(3, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7512,9 +7423,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob5.triggerZifu) || e.Selection == _jobs.myjob5.triggerZifu)
             {
                 _jobs.myjob5.jieshouZifu = _jobs.myjob5.triggerZifu;
-                _jobs.EnqueueTriggerSource(4, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob5.triggerZifu));
                 // ch:触发命令 | en:Trigger command
-                int nRet = TriggerSoftwareCamera(4);
+                int nRet = _jobs.RequestTrigger(4, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7523,9 +7433,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob6.triggerZifu) || e.Selection == _jobs.myjob6.triggerZifu)
             {
                 _jobs.myjob6.jieshouZifu = _jobs.myjob6.triggerZifu;
-                _jobs.EnqueueTriggerSource(5, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob6.triggerZifu));
                 // ch:触发命令 | en:Trigger command
-                int nRet = TriggerSoftwareCamera(5);
+                int nRet = _jobs.RequestTrigger(5, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7534,9 +7443,8 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob7.triggerZifu) || e.Selection == _jobs.myjob7.triggerZifu)
             {
                 _jobs.myjob7.jieshouZifu = _jobs.myjob7.triggerZifu;
-                _jobs.EnqueueTriggerSource(6, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob7.triggerZifu));
                 // ch:触发命令 | en:Trigger command
-                int nRet = TriggerSoftwareCamera(6);
+                int nRet = _jobs.RequestTrigger(6, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7545,8 +7453,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob8.triggerZifu) || e.Selection == _jobs.myjob8.triggerZifu)
             {
                 _jobs.myjob8.jieshouZifu = _jobs.myjob8.triggerZifu;
-                _jobs.EnqueueTriggerSource(7, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob8.triggerZifu));
-                int nRet = TriggerSoftwareCamera(7);
+                int nRet = _jobs.RequestTrigger(7, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7555,8 +7462,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob9.triggerZifu) || e.Selection == _jobs.myjob9.triggerZifu)
             {
                 _jobs.myjob9.jieshouZifu = _jobs.myjob9.triggerZifu;
-                _jobs.EnqueueTriggerSource(8, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob9.triggerZifu));
-                int nRet = TriggerSoftwareCamera(8);
+                int nRet = _jobs.RequestTrigger(8, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7565,8 +7471,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob10.triggerZifu) || e.Selection == _jobs.myjob10.triggerZifu)
             {
                 _jobs.myjob10.jieshouZifu = _jobs.myjob10.triggerZifu;
-                _jobs.EnqueueTriggerSource(9, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob10.triggerZifu));
-                int nRet = TriggerSoftwareCamera(9);
+                int nRet = _jobs.RequestTrigger(9, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7575,8 +7480,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob11.triggerZifu) || e.Selection == _jobs.myjob11.triggerZifu)
             {
                 _jobs.myjob11.jieshouZifu = _jobs.myjob11.triggerZifu;
-                _jobs.EnqueueTriggerSource(10, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob11.triggerZifu));
-                int nRet = TriggerSoftwareCamera(10);
+                int nRet = _jobs.RequestTrigger(10, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7585,8 +7489,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob12.triggerZifu) || e.Selection == _jobs.myjob12.triggerZifu)
             {
                 _jobs.myjob12.jieshouZifu = _jobs.myjob12.triggerZifu;
-                _jobs.EnqueueTriggerSource(11, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob12.triggerZifu));
-                int nRet = TriggerSoftwareCamera(11);
+                int nRet = _jobs.RequestTrigger(11, new System.Collections.Generic.KeyValuePair<string, string>("jieshou", e.Selection), new CommTriggerSource(nopSrcLink, NoProtoProto, e.Selection));
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
@@ -7676,7 +7579,6 @@ namespace WindowsFormsApplication1
 
                     // 阶段 5：记下本次检测由哪条连接触发，检测结果只回写给这条连接。
                     // 阶段 7：同时记下协议（1=FINS），与 linkId 配对才能唯一定位一条连接。
-                    _jobs.EnqueueTriggerSource(i, new CommTriggerSource(e.LinkId, 1, null));
 
                     // 阶段 5 多连接：触发条件取自“发出触发的那条连接”自己的相机绑定；
                     // 连接 1（LinkId<=1）继续走下面的原路径，行为逐字不变。
@@ -7684,13 +7586,13 @@ namespace WindowsFormsApplication1
                     if (e.LinkId > 1 && _comm.Omron.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
                     {
                         GetCamTrigParams(linkCam, out string lmode, out string ltv1, out string ltv2);
-                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "fins");
+                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "fins", new CommTriggerSource(e.LinkId, 1, e.Selection));
                         continue;
                     }
 
                     if (!_comm.Omron.camera_dic.ContainsKey(i + 1)) continue;
                     GetCamTrigParams(_comm.Omron.camera_dic[i + 1], out string mode, out string tv1, out string tv2);
-                    _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "fins");
+                    _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "fins", new CommTriggerSource(e.LinkId, 1, e.Selection));
                 }
             }
             if (e.Camera.Contains("13"))
@@ -7769,18 +7671,17 @@ namespace WindowsFormsApplication1
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
-                    _jobs.EnqueueTriggerSource(i, new CommTriggerSource(e.LinkId, 2, null));
                     // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
                     string[] linkCam;
                     if (e.LinkId > 1 && _comm.Modbustcp.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
                     {
                         GetCamTrigParams(linkCam, out string lmode, out string ltv1, out string ltv2);
-                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "modbustcp");
+                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "modbustcp", new CommTriggerSource(e.LinkId, 2, e.Selection));
                         continue;
                     }
                     if (!_comm.Modbustcp.camera_dic.ContainsKey(i + 1)) continue;
                     GetCamTrigParams(_comm.Modbustcp.camera_dic[i + 1], out string mode, out string tv1, out string tv2);
-                    _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "modbustcp");
+                    _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "modbustcp", new CommTriggerSource(e.LinkId, 2, e.Selection));
                 }
             }
             if (e.Camera.Contains("13"))
@@ -7858,18 +7759,17 @@ namespace WindowsFormsApplication1
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
-                    _jobs.EnqueueTriggerSource(i, new CommTriggerSource(e.LinkId, 3, null));
                     // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
                     string[] linkCam;
                     if (e.LinkId > 1 && _comm.ModbusRtu.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
                     {
                         GetCamTrigParams(linkCam, out string lmode, out string ltv1, out string ltv2);
-                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "modbusrtu");
+                        _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, lmode, ltv1, ltv2, "modbusrtu", new CommTriggerSource(e.LinkId, 3, e.Selection));
                         continue;
                     }
                     if (!_comm.ModbusRtu.camera_dic.ContainsKey(i + 1)) continue;
                     GetCamTrigParams(_comm.ModbusRtu.camera_dic[i + 1], out string mode, out string tv1, out string tv2);
-                    _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "modbusrtu");
+                    _jobs.ApplyCommTrigger(_jobs.Myjobs[i], i, e.Selection, mode, tv1, tv2, "modbusrtu", new CommTriggerSource(e.LinkId, 3, e.Selection));
                 }
             }
             if (e.Camera.Contains("13"))
@@ -9615,11 +9515,10 @@ namespace WindowsFormsApplication1
 
                 // ★ 切换开始：丢弃回调帧 + 解除通讯触发，防止旧帧/旧触发打到新方案
                 _switchingScheme = true;
+                _inspectionLifecycle.StopAccepting();
                 DisarmCommTrigger();
                 DrainPendingFrames();
 
-                // ★ 先关闭相机，释放旧方案的连接状态，避免切换后报 80000106
-                try { bnClose_Click(null, null); } catch { }
 
                 if (_comm.Omron.qiehuanzhong == 0)
                 {
@@ -9635,13 +9534,7 @@ namespace WindowsFormsApplication1
                     // ★ 排空：等待正在执行的检测帧结束（最长 10 秒）。
                     //   避免 block.Run 未结束就 Shutdown manager1，造成切方案线程与检测线程
                     //   并发操作同一批 VisionPro block/CogJobManager（COM 冲突/卡死）。
-                    for (int w = 0; w < 200; w++)
-                    {
-                        if (Interlocked.CompareExchange(ref _detectingCount, 0, 0) <= 0)
-                            break;
-                        Thread.Sleep(50);
-                    }
-                    if (Interlocked.CompareExchange(ref _detectingCount, 0, 0) > 0)
+                    if (!_inspectionLifecycle.WaitForIdle(10000))
                     {
                         // ★ 2026-09-13 修复：等待 10 秒后仍有检测帧未结束，说明该帧耗时异常甚至卡死。
                         //   原实现只记一条警告就继续 manager1.Shutdown()，会与仍在执行的 block.Run 并发操作
@@ -9659,6 +9552,14 @@ namespace WindowsFormsApplication1
                         }
                         catch { }
                         return;   // 不再执行 Shutdown / 加载新方案
+                    }
+                    // Callbacks are drained; the close handler also updates WinForms controls.
+                    if (_disposingFlag) return;
+                    try { Invoke(new Action(() => bnClose_Click(null, null))); }
+                    catch (Exception exClose)
+                    {
+                        _logger.WriteLog("切方案中止：关闭相机失败 " + exClose.Message);
+                        return;
                     }
                     UpdateSplashProgress(10, "正在停止检测...");
                     _jobs.myjob1.baoguang = 0;
@@ -10350,6 +10251,7 @@ namespace WindowsFormsApplication1
                                 if (_comm.Omron.qiehuanzhong == 0)
                                     Frm2.start = 1;
                                 _switchingScheme = false;
+                                _inspectionLifecycle.Resume();
                                 Interlocked.Exchange(ref qiehuanzhong, 0);
                                 button1.Visible = true;
                             }));
@@ -10476,6 +10378,7 @@ namespace WindowsFormsApplication1
 
                         button1_Click(null, null);
                         _switchingScheme = false;
+                                _inspectionLifecycle.Resume();
                         Interlocked.Exchange(ref qiehuanzhong, 0);
                         button1.Visible = true;
                         display();
@@ -10494,6 +10397,7 @@ namespace WindowsFormsApplication1
                                 Frm2.start = 1;
                             }
                             _switchingScheme = false;
+                                _inspectionLifecycle.Resume();
                             Interlocked.Exchange(ref qiehuanzhong, 0);
                             _schemeAckProto = 0; // 切换失败：取消本次通讯回执（不写回 PLC）
                             button1.Visible = true;
@@ -11087,6 +10991,13 @@ namespace WindowsFormsApplication1
 
         private void ImageCallBack(IntPtr pData, ref MyCamera.MV_FRAME_OUT_INFO_EX pFrameInfo, IntPtr pUser)
         {
+            if (!_inspectionLifecycle.TryEnter()) return;
+            try { ProcessImageCallback(pData, ref pFrameInfo, pUser); }
+            finally { _inspectionLifecycle.Exit(); }
+        }
+
+        private void ProcessImageCallback(IntPtr pData, ref MyCamera.MV_FRAME_OUT_INFO_EX pFrameInfo, IntPtr pUser)
+        {
             if (_disposingFlag || _switchingScheme || _inspectStop) return;
 
             int nIndex = (int)pUser;
@@ -11095,8 +11006,13 @@ namespace WindowsFormsApplication1
             if (!ShouldProcessImageCallback(nIndex))
                 return;
 
+            // Consume the trigger even when conversion fails, so its metadata cannot shift to the next frame.
+            CameraTriggerRecord trigger = _jobs.TakeTrigger(nIndex);
+            if (IsCommTriggerMode(_jobs.Myjobs[nIndex].triggerMode) && trigger == null) return;
             Interlocked.Increment(ref m_nFrames[nIndex]);
 
+            bool frameQueued = false;
+            Bitmap owned = null;
             try
             {
                 // 2026-09-06：更新帧信息，供相机设置页手动保存按钮使用
@@ -11145,7 +11061,7 @@ namespace WindowsFormsApplication1
                 // ① stride 未做 4 字节对齐（原实现宽度非 4 倍数时会取图失败）
                 // ② 彩色把 RGB 序数据按 Format24bppRgb（内存实为 B,G,R）解释导致红蓝颠倒
                 // ③ 不再用 pData 零拷贝包装中间 Bitmap，省掉每帧一次 Bitmap 分配
-                Bitmap owned = CameraPixelFormatHelper.BuildOwnedBitmap(
+                owned = CameraPixelFormatHelper.BuildOwnedBitmap(
                     pData, pFrameInfo.nWidth, pFrameInfo.nHeight, srcFmt, _grayPalette);
                 if (owned == null)
                 {
@@ -11158,11 +11074,20 @@ namespace WindowsFormsApplication1
                     _jobs.Myjobs[nIndex].timewatch = new Stopwatch();
                 _jobs.Myjobs[nIndex].timewatch.Restart();
                 _jobs.Myjobs[nIndex].jieshouZifu = "null";
-                EnqueueInspectFrame(nIndex, owned);
+                EnqueueInspectFrame(nIndex, owned, trigger);
+                frameQueued = true;
             }
             catch (Exception ex)
             {
                 _logger.WriteLog("相机" + (nIndex + 1) + " 取图回调异常: " + ex.Message);
+            }
+            finally
+            {
+                if (!frameQueued)
+                {
+                    owned?.Dispose();
+                    EnqueueInspectFrame(nIndex, null, trigger);
+                }
             }
         }
         /// <summary>

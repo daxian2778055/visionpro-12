@@ -143,12 +143,12 @@ namespace WindowsFormsApplication1
         /// 阶段 5：把检测结果（VP 方案输出值）回写到指定连接（2~4）<b>自己</b>配置的反馈数据块。
         /// 连接 1 仍走 <see cref="WriteCameraOutput"/>（窗体原有逻辑），行为不变。
         /// </summary>
-        public bool WriteCameraOutputForLink(int linkId, int camIdx, string value)
+        public bool WriteCameraOutputForLink(int linkId, int camIdx, string value, bool detectionFailed = false)
         {
             if (linkId <= 1) return false;
             var host = ResolveLinkHost(linkId);
             if (host == null) return false;
-            host.WriteCameraOutput(camIdx, value);
+            host.WriteCameraOutput(camIdx, value, detectionFailed);
             return true;
         }
 
@@ -1709,6 +1709,11 @@ namespace WindowsFormsApplication1
 
         public void WriteCameraOutput(int camIdx, string value)
         {
+            WriteCameraOutput(camIdx, value, false);
+        }
+
+        public void WriteCameraOutput(int camIdx, string value, bool detectionFailed)
+        {
             if (!fins_en || !chushihua || camIdx < 0 || camIdx >= 12) return;
             int key = camIdx + 1;
             // ★ 修复回写错位（2026-09-06）：置位与写入必须全程持 _ioSync。
@@ -1719,6 +1724,18 @@ namespace WindowsFormsApplication1
             {
                 if (camera_dic.ContainsKey(key))
                 {
+                    if (detectionFailed)
+                    {
+                        value = "Reject";
+                        var blocks = CommGridHelper.SnapshotFinsDic(fins_dic);
+                        if (blocks != null)
+                            foreach (var block in blocks.Values)
+                                if (block[0] == camera_dic[key][3])
+                                {
+                                    value = InspectionFailureOutput.ForFormat(block[4]);
+                                    break;
+                                }
+                    }
                     camera_dic[key][4] = value;
                     camera_dic[key][5] = camera_dic[key][3];
                 }

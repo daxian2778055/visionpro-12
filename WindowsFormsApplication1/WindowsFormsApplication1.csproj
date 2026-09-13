@@ -480,6 +480,7 @@
     <Compile Include="Core\Threading\IUiDispatcher.cs" />
     <Compile Include="Core\Threading\ControlUiDispatcher.cs" />
     <Compile Include="Core\Threading\CameraWorkQueue.cs" />
+    <Compile Include="Core\Threading\InspectionLifecycle.cs" />
     <Compile Include="Core\Camera\CameraPixelFormat.cs" />
     <Compile Include="Core\Camera\CameraDeviceInfo.cs" />
     <Compile Include="Core\Camera\HikCameraEnumerator.cs" />
@@ -489,6 +490,7 @@
     <Compile Include="Services\ConfigService.cs" />
     <Compile Include="Services\CommunicationService.cs" />
     <Compile Include="Services\JobService.cs" />
+    <Compile Include="Services\PendingCameraTriggers.cs" />
     <Compile Include="Services\IPlcOutputWriter.cs" />
     <Compile Include="Services\ModbusTcpLink.cs" />
     <Compile Include="Services\ICommLink.cs" />

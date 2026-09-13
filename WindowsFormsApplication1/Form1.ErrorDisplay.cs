@@ -239,6 +239,12 @@ namespace WindowsFormsApplication1
         /// <summary>软触发并标记通讯触发待处理帧（仅通讯触发模式下回调会跑检测）。</summary>
         private int TriggerSoftwareCamera(int cameraIndex)
         {
+            return _jobs.RequestTrigger(cameraIndex,
+                default(System.Collections.Generic.KeyValuePair<string, string>), null);
+        }
+
+        private int SendSoftwareTrigger(int cameraIndex)
+        {
             if (cameraIndex < 0 || cameraIndex >= 12 || _cameraCtrl.Cameras[cameraIndex] == null)
                 return -1;
             // ★ 仅"通讯触发"模式需要 _jobs.CommTriggerArmed 门控；触发拍照模式直接发软触发（修复软触发被静默忽略）
@@ -246,7 +252,7 @@ namespace WindowsFormsApplication1
             if (IsCommTriggerMode(trigMode))
             {
                 if (!_jobs.CommTriggerArmed)
-                    return MyCamera.MV_OK;
+                    return -1;
             }
             // ★ 相机未开始采集时不能发 TriggerSoftware，否则返回 80000106
             if (!IsCameraGrabbing(cameraIndex))
@@ -254,7 +260,6 @@ namespace WindowsFormsApplication1
                 _logger.WriteLog("相机" + (cameraIndex + 1) + "未采集，跳过软触发");
                 return -1;
             }
-            _jobs.MarkCommTriggerPending(cameraIndex);
             return _cameraCtrl.Cameras[cameraIndex].MV_CC_SetCommandValue_NET("TriggerSoftware");
         }
 
@@ -266,10 +271,8 @@ namespace WindowsFormsApplication1
                 return true;
             if (mode == "通讯触发")
             {
-                // ★ 2026-09-06 ⑤：门控改用“待处理触发计数”。旧写法在检测线程 finally 里把 bool 置 false，
-                //   会冲掉检测期间到达的新触发置位，使该触发对应的回帧被拒收（静默丢件）。
-                //   计数在触发时 +1、回帧被 EnqueueInspectFrame 接收时 -1，检测完成不再清零。
-                if (!_jobs.CommTriggerArmed || _jobs.Myjobs[slot].commTriggerPendingCount <= 0)
+                // The transaction queue is the single source of truth for outstanding frames.
+                if (!_jobs.CommTriggerArmed || !_jobs.HasPendingTrigger(slot))
                     return false;
                 return true;
             }
