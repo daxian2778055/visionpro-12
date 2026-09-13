@@ -29,6 +29,8 @@ namespace WindowsFormsApplication1.Core.Threading
         }
         public void StopAccepting() { lock (_sync) _paused = true; }
         public void Resume() { lock (_sync) _paused = false; }
+        /// <summary>★ 2026-09-13：当前是否处于"禁止进入检测"状态（供临时暂停方记录并恢复原状态）。</summary>
+        public bool IsPaused { get { lock (_sync) return _paused; } }
         public bool WaitForIdle(int timeoutMs)
         {
             var clock = Stopwatch.StartNew();

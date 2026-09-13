@@ -98,6 +98,15 @@ namespace WindowsFormsApplication1
                     req.Timeout = 15000;
                     req.ReadWriteTimeout = 30000;
                     req.UserAgent = "MESClient/1.0";
+                    // ★ 2026-09-13 修复：所有自定义请求头必须在 GetRequestStream() 之前设置。
+                    //   HttpWebRequest 一旦开始发送请求(GetRequestStream/GetResponse)，之后再设的 Headers
+                    //   可能不生效（Authorization 等会丢失）。原实现先写请求体、后设请求头，导致自定义头收不到。
+                    foreach (var h in headers)
+                    {
+                        // Content-Type 等受限头由属性设置，跳过避免抛异常
+                        if (h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
+                        req.Headers[h.Key] = h.Value;
+                    }
                     if (method == "POST" || method == "PUT")
                     {
                         byte[] data = Encoding.UTF8.GetBytes(body);
@@ -110,12 +119,6 @@ namespace WindowsFormsApplication1
                         req.ContentLength = data.Length;
                         using (Stream s = req.GetRequestStream())
                             s.Write(data, 0, data.Length);
-                    }
-                    foreach (var h in headers)
-                    {
-                        // Content-Type 等受限头由属性设置，跳过避免抛异常
-                        if (h.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase)) continue;
-                        req.Headers[h.Key] = h.Value;
                     }
 
                     string respText;

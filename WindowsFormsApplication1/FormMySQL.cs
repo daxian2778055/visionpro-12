@@ -133,10 +133,20 @@ namespace WindowsFormsApplication1
         // 判断是否为只读查询语句；其余（UPDATE/DELETE/INSERT/DROP 等）视为写操作
         private static bool IsReadOnlySql(string sql)
         {
-            string head = sql.TrimStart().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(sql)) return true;
+            // ★ 2026-09-13 修复：原实现只凭前缀判断，会被多语句绕过
+            //   （"SELECT 1; DELETE FROM sample_table;" 的头部是 SELECT，被判只读而跳过写确认）。
+            //   规则收紧为：
+            //     ① 含多条语句（去掉结尾分号后仍含 ';'）一律视为"需写确认"，不判只读；
+            //     ② WITH 不能假定只读（可为 CTE 后接 INSERT/UPDATE/DELETE），一律排除；
+            //     ③ 其余仍按前缀白名单判定（DESC/DESCRIBE/EXPLAIN 为元数据查询）。
+            string body = sql.Trim().TrimEnd(';').Trim();
+            if (body.Contains(";")) return false;
+            string head = body.ToUpperInvariant();
+            if (head.StartsWith("WITH")) return false;
             return head.StartsWith("SELECT") || head.StartsWith("SHOW")
                 || head.StartsWith("DESC") || head.StartsWith("DESCRIBE")
-                || head.StartsWith("EXPLAIN") || head.StartsWith("WITH");
+                || head.StartsWith("EXPLAIN");
         }
 
         // 查询结果导出 CSV

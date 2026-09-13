@@ -4569,8 +4569,11 @@ namespace WindowsFormsApplication1
                             //   triggerLinkId 为 0，结果被广播到所有协议的连接 1；且来源用后不清除会粘滞到下一次检测。
                             if (trigLink > 1 && trigProto > 0)
                             {
-                                // 只回写给触发本次检测的那一条连接（协议 + 连接号），不广播、不串到别的协议
-                                Task.Run(() =>
+                                // 只回写给触发本次检测的那一条连接（协议 + 连接号），不广播、不串到别的协议。
+                                // ★ 2026-09-13 修复：原来每帧独立 Task.Run 发送，A/B 两帧不保证获得发送锁的先后，
+                                //   可能 B 先写、A 后写覆盖寄存器（结果顺序颠倒）。改为投递到既有 per-相机 FIFO 队列，
+                                //   保证同一相机的结果严格按帧序发送（不涉及"可丢弃"策略）。
+                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                                 {
                                     try
                                     {
@@ -4744,12 +4747,12 @@ namespace WindowsFormsApplication1
                                                 else
                                                 {
                                                     runlog1(0, 1, myjob.path_number);
-                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
-                                                    if (myjob.tianbiao.Contains(","))
-                                                    {
-                                                        myjob.tianbiao = myjob.tianbiao.Remove(myjob.tianbiao.Length - 1, 1);
-                                                        runlog2(myjob.tianbiao, myjob.tianbiao, myjob.path_number, 0);
-                                                    }
+                                                    // ★ 2026-09-13 修复：同 Accept 分支，改用任务局部字符串，避免共享字段交错串帧。
+                                                    string _tb = _tianbiaoSnap;
+                                                    bool _tbHasComma = _tb.Contains(",");
+                                                    if (_tbHasComma) _tb = _tb.Remove(_tb.Length - 1, 1);
+                                                    myjob.tianbiao = _tb;
+                                                    if (_tbHasComma) runlog2(_tb, _tb, myjob.path_number, 0);
                                                 }
                                             }
                                         }

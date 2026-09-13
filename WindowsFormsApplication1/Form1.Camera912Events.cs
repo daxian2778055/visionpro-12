@@ -832,7 +832,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    _jobs.myjob9.block = (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\9\\" + comboBox42.SelectedItem.ToString());
+                    SwitchJobBlock(8, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\9\\" + comboBox42.SelectedItem.ToString()));
                     _config.WriteString("camera9", "fen", comboBox42.SelectedItem.ToString());
                     MessageBox.Show("切换流程9:" + comboBox42.SelectedItem.ToString() + "成功");
                 }
@@ -906,7 +906,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    _jobs.myjob10.block = (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\10\\" + comboBox46.SelectedItem.ToString());
+                    SwitchJobBlock(9, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\10\\" + comboBox46.SelectedItem.ToString()));
                     _config.WriteString("camera10", "fen", comboBox46.SelectedItem.ToString());
                     MessageBox.Show("切换流程10:" + comboBox46.SelectedItem.ToString() + "成功");
                 }
@@ -980,7 +980,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    _jobs.myjob11.block = (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\11\\" + comboBox50.SelectedItem.ToString());
+                    SwitchJobBlock(10, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\11\\" + comboBox50.SelectedItem.ToString()));
                     _config.WriteString("camera11", "fen", comboBox50.SelectedItem.ToString());
                     MessageBox.Show("切换流程11:" + comboBox50.SelectedItem.ToString() + "成功");
                 }
@@ -1054,7 +1054,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    _jobs.myjob12.block = (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\12\\" + comboBox54.SelectedItem.ToString());
+                    SwitchJobBlock(11, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\12\\" + comboBox54.SelectedItem.ToString()));
                     _config.WriteString("camera12", "fen", comboBox54.SelectedItem.ToString());
                     MessageBox.Show("切换流程12:" + comboBox54.SelectedItem.ToString() + "成功");
                 }
