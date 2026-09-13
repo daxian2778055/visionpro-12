@@ -247,9 +247,10 @@ namespace WindowsFormsApplication1
         {
             if (cameraIndex < 0 || cameraIndex >= 12 || _cameraCtrl.Cameras[cameraIndex] == null)
                 return -1;
-            // ★ 2026-09-13：触发回帧恢复进行中，禁止该路新触发。
-            //   否则新记录会先登记成功、随后被恢复流程的 ClearCommTriggerPending 清掉，再次破坏配对。
-            if (_triggerRecovering[cameraIndex] != 0)
+            // ★ 2026-09-13：触发回帧恢复进行中(含"恢复未完成待重试")禁止该路新触发。
+            //   否则新记录会先登记成功、随后被恢复流程的 ClearCommTriggerPending 清掉，再次破坏配对；
+            //   也会与"未完成重试"再次停采/清记录相互打架。
+            if (_triggerRecovering[cameraIndex] != 0 || _grabRecoveryPending[cameraIndex] != 0)
                 return -1;
             // ★ 仅"通讯触发"模式需要 _jobs.CommTriggerArmed 门控；触发拍照模式直接发软触发（修复软触发被静默忽略）
             string trigMode = NormalizeTriggerMode(_jobs.Myjobs[cameraIndex].triggerMode);
@@ -518,6 +519,9 @@ namespace WindowsFormsApplication1
             }
             if (IsCommTriggerMode(_jobs.Myjobs[camIndex].triggerMode))
                 _jobs.ClearCommTriggerPending(camIndex);
+            // ★ 2026-09-13：只要采集成功启动（设备重连恢复、或本恢复流程最终成功），就清除"恢复未完成"标志，
+            //   避免下一轮定时器再按旧标志停采、清掉刚接收的触发。
+            System.Threading.Volatile.Write(ref _grabRecoveryPending[camIndex], 0);
             return true;
             }
         }

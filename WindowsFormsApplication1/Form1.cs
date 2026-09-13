@@ -4500,7 +4500,9 @@ namespace WindowsFormsApplication1
                                 string tcpVal;
                                 try { tcpVal = runOk ? myjob.block.Outputs["tcp"].Value.ToString() : "Reject"; }
                                 catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " TCP输出失败: " + ex.Message); tcpVal = "无"; }
-                                Task.Run(() =>
+                                // ★ 2026-09-13：同样接入 per-相机 FIFO 队列，保证同一相机结果按帧序发送
+                                //   （Task.Run 逐帧并发不保证获取 changeok 锁的先后，A/B 可能乱序）。
+                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                                 {
                                     try
                                     {
@@ -4517,7 +4519,8 @@ namespace WindowsFormsApplication1
                                 string serialVal;
                                 try { serialVal = runOk ? myjob.block.Outputs["serial"].Value.ToString() : "Reject"; }
                                 catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 串口输出失败: " + ex.Message); serialVal = "无"; }
-                                Task.Run(() =>
+                                // ★ 2026-09-13：同 TCP，接入 per-相机 FIFO 队列保证发送顺序。
+                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                                 {
                                     try
                                     {

@@ -832,7 +832,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    SwitchJobBlock(8, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\9\\" + comboBox42.SelectedItem.ToString()));
+                    if (!SwitchJobBlock(8, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\9\\" + comboBox42.SelectedItem.ToString()))) throw new Exception("检测事务未结束，已取消切换流程" + 9);
                     _config.WriteString("camera9", "fen", comboBox42.SelectedItem.ToString());
                     MessageBox.Show("切换流程9:" + comboBox42.SelectedItem.ToString() + "成功");
                 }
@@ -906,7 +906,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    SwitchJobBlock(9, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\10\\" + comboBox46.SelectedItem.ToString()));
+                    if (!SwitchJobBlock(9, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\10\\" + comboBox46.SelectedItem.ToString()))) throw new Exception("检测事务未结束，已取消切换流程" + 10);
                     _config.WriteString("camera10", "fen", comboBox46.SelectedItem.ToString());
                     MessageBox.Show("切换流程10:" + comboBox46.SelectedItem.ToString() + "成功");
                 }
@@ -980,7 +980,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    SwitchJobBlock(10, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\11\\" + comboBox50.SelectedItem.ToString()));
+                    if (!SwitchJobBlock(10, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\11\\" + comboBox50.SelectedItem.ToString()))) throw new Exception("检测事务未结束，已取消切换流程" + 11);
                     _config.WriteString("camera11", "fen", comboBox50.SelectedItem.ToString());
                     MessageBox.Show("切换流程11:" + comboBox50.SelectedItem.ToString() + "成功");
                 }
@@ -1054,7 +1054,7 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    SwitchJobBlock(11, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\12\\" + comboBox54.SelectedItem.ToString()));
+                    if (!SwitchJobBlock(11, (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\12\\" + comboBox54.SelectedItem.ToString()))) throw new Exception("检测事务未结束，已取消切换流程" + 12);
                     _config.WriteString("camera12", "fen", comboBox54.SelectedItem.ToString());
                     MessageBox.Show("切换流程12:" + comboBox54.SelectedItem.ToString() + "成功");
                 }

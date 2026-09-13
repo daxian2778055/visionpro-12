@@ -130,23 +130,31 @@ namespace WindowsFormsApplication1
             return Encoding.UTF8.GetString(data);
         }
 
-        // 判断是否为只读查询语句；其余（UPDATE/DELETE/INSERT/DROP 等）视为写操作
-        private static bool IsReadOnlySql(string sql)
+        /// <summary>★ 2026-09-13：执行方式判定——该语句是否要读结果集（用 DataAdapter 填充）。
+        /// 与"是否需要写确认"分开：WITH...SELECT 是合法查询(读结果)，但仍需确认(可能是写)。</summary>
+        private static bool IsQuerySql(string sql)
         {
-            if (string.IsNullOrWhiteSpace(sql)) return true;
-            // ★ 2026-09-13 修复：原实现只凭前缀判断，会被多语句绕过
-            //   （"SELECT 1; DELETE FROM sample_table;" 的头部是 SELECT，被判只读而跳过写确认）。
-            //   规则收紧为：
-            //     ① 含多条语句（去掉结尾分号后仍含 ';'）一律视为"需写确认"，不判只读；
-            //     ② WITH 不能假定只读（可为 CTE 后接 INSERT/UPDATE/DELETE），一律排除；
-            //     ③ 其余仍按前缀白名单判定（DESC/DESCRIBE/EXPLAIN 为元数据查询）。
-            string body = sql.Trim().TrimEnd(';').Trim();
-            if (body.Contains(";")) return false;
-            string head = body.ToUpperInvariant();
-            if (head.StartsWith("WITH")) return false;
+            if (string.IsNullOrWhiteSpace(sql)) return false;
+            string head = sql.Trim().ToUpperInvariant();
             return head.StartsWith("SELECT") || head.StartsWith("SHOW")
                 || head.StartsWith("DESC") || head.StartsWith("DESCRIBE")
-                || head.StartsWith("EXPLAIN");
+                || head.StartsWith("EXPLAIN") || head.StartsWith("WITH");
+        }
+
+        /// <summary>★ 2026-09-13：该语句是否需要"写操作二次确认"。
+        /// 规则：① 含多条语句（去掉结尾分号后仍含 ';'）→ 需要（防 "SELECT 1; DELETE ..." 绕过）；
+        ///       ② WITH 不能假定只读(可能是 CTE 后接 INSERT/UPDATE/DELETE) → 需要；
+        ///       ③ 其余按前缀白名单（SELECT/SHOW/DESC/DESCRIBE/EXPLAIN 之外的都视为写）。</summary>
+        private static bool NeedsWriteConfirm(string sql)
+        {
+            if (string.IsNullOrWhiteSpace(sql)) return false;
+            string body = sql.Trim().TrimEnd(';').Trim();
+            if (body.Contains(";")) return true;
+            string head = body.ToUpperInvariant();
+            if (head.StartsWith("WITH")) return true;
+            return !(head.StartsWith("SELECT") || head.StartsWith("SHOW")
+                || head.StartsWith("DESC") || head.StartsWith("DESCRIBE")
+                || head.StartsWith("EXPLAIN"));
         }
 
         // 查询结果导出 CSV
@@ -254,8 +262,10 @@ namespace WindowsFormsApplication1
                 return;
             }
             // 写语句（UPDATE/DELETE/INSERT/DROP 等）无法撤销，先强制二次确认，避免误触造成数据不可恢复
-            bool isQuery = IsReadOnlySql(sql);
-            if (!isQuery)
+            // ★ 2026-09-13：执行方式与"是否确认"分开判定（原实现用同一变量会导致
+            //   WITH...SELECT、含分号字面量的 SELECT 被当成写语句走 ExecuteNonQuery，查询结果不再显示）。
+            bool isQuery = IsQuerySql(sql);
+            if (NeedsWriteConfirm(sql))
             {
                 if (MessageBox.Show("该语句将对数据库执行写入/删除操作（可能不可恢复），是否继续？\n\n" + sql,
                     "确认执行写操作", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
