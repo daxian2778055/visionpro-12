@@ -543,7 +543,16 @@ namespace WindowsFormsApplication1
                 Thread.Sleep(1000);
                 if (fins_en && !commBlocked)
                 {
-                    button1_Click(null, null);
+                    // ★P3.1：button1_Click 是 async void，其同步前缀（读 comboBox/textBox/checkBox）
+                    // 若在线程池线程执行会裸访问控件（Debug 开跨线程校验抛 InvalidOperationException，Release 下竞态）。
+                    // 收口到 UI 线程执行同步前缀；await 之后的 UI 回显该方法内部已自带 BeginInvoke，行为不变。
+                    try
+                    {
+                        if (IsDisposed || Disposing) return;
+                        if (this.InvokeRequired) this.Invoke(new Action(() => button1_Click(null, null)));
+                        else button1_Click(null, null);
+                    }
+                    catch { }
                 }
                 if (!commBlocked) chushihua = true;
             });
@@ -758,19 +767,19 @@ namespace WindowsFormsApplication1
         private void button_read_bool_Click( object sender, EventArgs e )
         {
             // 读取bool变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadCoil( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadCoil( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button4_Click_1( object sender, EventArgs e )
         {
             // 读取离散输入bool变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadDiscrete( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadDiscrete( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_short_Click( object sender, EventArgs e )
         {
             // 读取short变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadInt16( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadInt16( textBox3.Text ), textBox3.Text, textBox4 ));
 
             // 这一行是测试读取short数组的代码，忽略就行
             // short[] values = busTcpClient.ReadInt16( "100", 2 ).Content;
@@ -779,47 +788,67 @@ namespace WindowsFormsApplication1
         private void button_read_ushort_Click( object sender, EventArgs e )
         {
             // 读取ushort变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadUInt16( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadUInt16( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_int_Click( object sender, EventArgs e )
         {
             // 读取int变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadInt32(  textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadInt32(  textBox3.Text ), textBox3.Text, textBox4 ));
         }
         private void button_read_uint_Click( object sender, EventArgs e )
         {
             // 读取uint变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadUInt32( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadUInt32( textBox3.Text ), textBox3.Text, textBox4 ));
         }
         private void button_read_long_Click( object sender, EventArgs e )
         {
             // 读取long变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadInt64( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadInt64( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_ulong_Click( object sender, EventArgs e )
         {
             // 读取ulong变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadUInt64( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadUInt64( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_float_Click( object sender, EventArgs e )
         {
             // 读取float变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadFloat( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadFloat( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_double_Click( object sender, EventArgs e )
         {
             // 读取double变量
-            DemoUtils.ReadResultRender( busTcpClient.ReadDouble( textBox3.Text ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadDouble( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_string_Click( object sender, EventArgs e )
         {
             // 读取字符串
-            DemoUtils.ReadResultRender( busTcpClient.ReadString( textBox3.Text , ushort.Parse( textBox5.Text ) ), textBox3.Text, textBox4 );
+            ManualRead(() => DemoUtils.ReadResultRender( busTcpClient.ReadString( textBox3.Text , ushort.Parse( textBox5.Text ) ), textBox3.Text, textBox4 ));
+        }
+
+        // ★BUG1/BUG3 修复：手动"读"按钮运行在 UI 线程，若此刻正在重连或客户端未连接，
+        //   裸调 Hsl 读会因对关闭中的 socket 发请求而抛异常 → UI 线程未处理 → 整个程序崩。
+        //   复用与轮询读相同的 _reconnecting 门控（重连进行中直接返回），并统一 try/catch 兜底。
+        private void ManualRead(Action readAction)
+        {
+            if (_reconnecting != 0)
+            {
+                MessageBox.Show("通讯正在重连，请稍候再试。", "提示");
+                return;
+            }
+            try
+            {
+                readAction();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, "读取出错");
+            }
         }
 
 
@@ -1119,7 +1148,9 @@ namespace WindowsFormsApplication1
             y = 999;
         }
         bool fins_lunxunen = false;
-        public bool fins_en = false;
+        // ★BUG2：与 chushihua 同款。UI 线程（勾选"通讯使能"）写、轮询线程（Fins_duxie / TryAutoReconnect）读，
+        //   必须 volatile 保证跨线程可见性，否则极端下轮询线程长期读旧值 → "勾了使能但轮询空转"。
+        public volatile bool fins_en = false;
         decimal lunxun_time = 0;
         // ★P2：线程池线程（InitializeForm 末尾 Task.Run）写 true，轮询线程（Fins_duxie）读；加 volatile 保证跨线程可见性
         public volatile bool chushihua = false;
@@ -1501,6 +1532,9 @@ namespace WindowsFormsApplication1
 
         private void WriteTriggerFanhuizhi(string[] parValue, string fanhuizhi, ref int xuanzhong_temp, ref string fins_temp)
         {
+            // ★BUG1：重连进行中（_reconnecting!=0）socket 正被 ConnectClose/ConnectServer 操作，
+            //   此刻写会与重连抢同一 socket → 写脏数据/抛异常。与轮询读、手动读共用同一道 _reconnecting 门控。
+            if (_reconnecting != 0) return;
             lock (_ioSync)   // ★ I/O 串行：与 xie()/回执写互斥，防同一 Hsl 客户端并发写
             {
             for (int j = 0; j < int.Parse(parValue[2]); j++)
@@ -1865,6 +1899,8 @@ namespace WindowsFormsApplication1
             try
             {
                 if (!chushihua || fins_dic.Count == 0) return;
+                // ★BUG1：重连进行中不写，避免与 ConnectClose/ConnectServer 抢同一 socket（与轮询读/手动读共用 _reconnecting 门控）。
+                if (_reconnecting != 0) return;
 
                 string fins_temp = "";
                 // ★P1：xie 会被检测/回写路径调用，同样在遍历"活字典"；UI 清配置时会撞车导致本次回写丢失。
