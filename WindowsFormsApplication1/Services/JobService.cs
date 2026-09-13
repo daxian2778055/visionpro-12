@@ -67,6 +67,8 @@ namespace WindowsFormsApplication1
             //   在此统一构造，与 Myjobs 同步完成，避免引用处再做惰性判空。
             for (int i = 0; i < TriggerPayloads.Length; i++)
                 TriggerPayloads[i] = new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>();
+            for (int i = 0; i < TriggerSources.Length; i++)
+                TriggerSources[i] = new System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>();
             _cameraCtrl = cameraCtrl;
             _logger = logger;
         }
@@ -79,6 +81,13 @@ namespace WindowsFormsApplication1
         /// 按相机 FIFO 配对，故队列长度与未处理触发数一致，无需额外上限。</summary>
         public System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[] TriggerPayloads =
             new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[12];
+
+        /// <summary>★ 2026-09-13（多协议触发同一相机·来源覆盖修复）：通讯触发来源快照队列。
+        /// 与 TriggerPayloads 同机制：触发时刻把 (协议, 连接号, 接收字符) 压入对应相机队列，
+        /// 帧回调 EnqueueInspectFrame 按 FIFO 取出、随帧携带到检测阶段，结果回写用帧自带的来源。
+        /// 原实现把来源存在 Myjob 单个字段上，多协议先后触发同一相机会互相覆盖，导致结果回错连接。</summary>
+        public System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>[] TriggerSources =
+            new System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>[12];
 
         /// <summary>★ 2026-09-07：单相机 payload 快照队列上限（与 Form1 的待检帧队列深度一致）。
         /// 防止「触发成功但相机未回帧」时快照无限滞留导致后续帧取到过期参数。</summary>
@@ -120,6 +129,20 @@ namespace WindowsFormsApplication1
                 // ★ 原子清零：避免与轮询线程的 Interlocked.Increment 形成 lost-update（裸 =0 会吞掉在途增量）
                 System.Threading.Interlocked.Exchange(ref Myjobs[i].commTriggerPendingCount, 0);
             }
+        }
+
+        /// <summary>
+        /// 把本次通讯触发的来源（协议 + 连接号 + 接收字符）入队到对应相机，随帧携带到检测阶段。
+        /// ★ 队列上限与 TriggerPayloadQueueDepth 一致，防止「触发成功但未回帧」时来源无限滞留。
+        /// </summary>
+        public void EnqueueTriggerSource(int cameraIndex, CommTriggerSource src)
+        {
+            if (src == null || cameraIndex < 0 || cameraIndex >= 12) return;
+            var q = TriggerSources != null ? TriggerSources[cameraIndex] : null;
+            if (q == null) return;
+            CommTriggerSource stale;
+            while (q.Count >= TriggerPayloadQueueDepth && q.TryDequeue(out stale)) { }
+            q.Enqueue(src);
         }
 
         /// <summary>

@@ -4015,10 +4015,14 @@ namespace WindowsFormsApplication1
                 if (_inspectStop || _disposingFlag) break;
                 Bitmap frame = null;
                 System.Collections.Generic.KeyValuePair<string, string> payload = default(System.Collections.Generic.KeyValuePair<string, string>);
+                CommTriggerSource frameSrc = null;
                 lock (_inspectLocks[slot])
                 {
                     if (_frameQueue[slot] != null && _frameQueue[slot].TryDequeue(out frame))
+                    {
                         _framePayload[slot]?.TryDequeue(out payload);
+                        if (_frameTriggerSrc[slot] != null) _frameTriggerSrc[slot].TryDequeue(out frameSrc);
+                    }
                 }
                 if (frame == null) continue;
                 if (_switchingScheme || _disposingFlag)
@@ -4031,7 +4035,7 @@ namespace WindowsFormsApplication1
                     ReleaseFrameBitmap(slot);
                     bmp[slot] = frame;
                     if (_jobs.Myjobs != null && _jobs.Myjobs[slot] != null)
-                        getrecord(_jobs.Myjobs[slot], payload);
+                        getrecord(_jobs.Myjobs[slot], payload, frameSrc);
                 }
                 catch (Exception ex)
                 {
@@ -4067,6 +4071,11 @@ namespace WindowsFormsApplication1
                         System.Collections.Generic.KeyValuePair<string, string> droppedPayload;
                         while (_framePayload[i].TryDequeue(out droppedPayload)) { }
                     }
+                    if (_frameTriggerSrc[i] != null)
+                    {
+                        CommTriggerSource droppedSrc;
+                        while (_frameTriggerSrc[i].TryDequeue(out droppedSrc)) { }
+                    }
                 }
             }
         }
@@ -4085,6 +4094,10 @@ namespace WindowsFormsApplication1
         /// <summary>② 与 _frameQueue 逐元素对齐的 payload 快照队列：(inputKey, selection)</summary>
         private System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[] _framePayload =
             new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>[12];
+
+        /// <summary>随帧携带的通讯触发来源（与 _frameQueue 一一对应，同 FIFO 顺序）。</summary>
+        private System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>[] _frameTriggerSrc =
+            new System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>[12];
         /// <summary>① 各相机因队列满被丢弃的帧计数（不再静默丢件，可对外暴露/回 NAK）</summary>
         private int[] _droppedFrameCount = new int[12];
         // ★ 2026-09-11：丢帧日志限频（每路每秒至多 1 条）。过载期队列满会连续丢帧，
@@ -4103,17 +4116,24 @@ namespace WindowsFormsApplication1
             System.Collections.Generic.KeyValuePair<string, string> payload = default(System.Collections.Generic.KeyValuePair<string, string>);
             if (_jobs != null && _jobs.TriggerPayloads != null && _jobs.TriggerPayloads[slot] != null)
                 _jobs.TriggerPayloads[slot].TryDequeue(out payload);
+            // ★ 多协议触发同一相机：来源随帧绑定（FIFO），避免后触发覆盖先触发导致结果回错连接
+            CommTriggerSource frameSrc = null;
+            if (_jobs != null && _jobs.TriggerSources != null && _jobs.TriggerSources[slot] != null)
+                _jobs.TriggerSources[slot].TryDequeue(out frameSrc);
 
             lock (_inspectLocks[slot])
             {
                 if (_frameQueue[slot] == null) _frameQueue[slot] = new System.Collections.Concurrent.ConcurrentQueue<Bitmap>();
                 if (_framePayload[slot] == null) _framePayload[slot] = new System.Collections.Concurrent.ConcurrentQueue<System.Collections.Generic.KeyValuePair<string, string>>();
+                if (_frameTriggerSrc[slot] == null) _frameTriggerSrc[slot] = new System.Collections.Concurrent.ConcurrentQueue<CommTriggerSource>();
                 while (_frameQueue[slot].Count >= InspectQueueDepth)
                 {
                     Bitmap old;
                     if (!_frameQueue[slot].TryDequeue(out old)) break;
                     System.Collections.Generic.KeyValuePair<string, string> oldPayload;
                     _framePayload[slot].TryDequeue(out oldPayload);
+                    CommTriggerSource oldSrc;
+                    if (_frameTriggerSrc[slot] != null) _frameTriggerSrc[slot].TryDequeue(out oldSrc);
                     int n = System.Threading.Interlocked.Increment(ref _droppedFrameCount[slot]);
                     try { old.Dispose(); } catch { }
                     // ★ 2026-09-11：限频写入——过载期连续丢帧不再每帧刷盘，压制到每秒约 1 条。
@@ -4126,6 +4146,7 @@ namespace WindowsFormsApplication1
                 }
                 _frameQueue[slot].Enqueue(owned);
                 _framePayload[slot].Enqueue(payload);
+                _frameTriggerSrc[slot].Enqueue(frameSrc);
             }
             // ⑤ 帧已被接收：递减待处理触发计数（不再等检测完成才清，避免冲掉在途新触发）
             if (_jobs != null && _jobs.Myjobs != null && _jobs.Myjobs[slot] != null
@@ -4246,7 +4267,7 @@ namespace WindowsFormsApplication1
         /// ★ 2026-09-06（②参数错位修复）：增加 payload 参数，将通讯触发时刻的 inputKey/selection 快照
         /// 在检测前写入 block 输入，避免多触发连续到达时共享 block.Inputs 被覆盖。
         /// </summary>
-        private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload)
+        private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc = null)
         {
             EnsureCameraOutWork(); // ★P2-1：本帧用输出队列，惰性初始化一次
             try
@@ -4485,8 +4506,9 @@ namespace WindowsFormsApplication1
                             // 阶段：无协议连接2~4 的结果回写“发出触发的那条无协议连接”的端口，而非固定 connection 1
                             Form3 nprotoTarget = null;
                             // BUG A 修复：一次性取出触发来源快照并置 null（引用赋值原子，proto/link 配对永真，防粘滞）
-                            var trigSrc = myjob.triggerSrc;
-                            myjob.triggerSrc = null;
+                            // 用随帧携带的来源（入队时绑定），不再读 Myjob 共享字段：
+                            // 多协议触发同一相机时，后触发不会再覆盖先触发的来源，结果不会回错连接。
+                            var trigSrc = frameSrc;
                             int trigLink = trigSrc != null ? trigSrc.LinkId : 0;
                             int trigProto = trigSrc != null ? trigSrc.Proto : 0;
                             if (trigProto == NoProtoProto && trigLink > 1)
@@ -7409,7 +7431,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob1.triggerZifu) || e.Selection == _jobs.myjob1.triggerZifu)
             {
                 _jobs.myjob1.jieshouZifu = _jobs.myjob1.triggerZifu;
-                _jobs.myjob1.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob1.triggerZifu);
+                _jobs.EnqueueTriggerSource(0, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob1.triggerZifu));
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(0);
                 if (MyCamera.MV_OK != nRet)
@@ -7420,7 +7442,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob2.triggerZifu) || e.Selection == _jobs.myjob2.triggerZifu)
             {
                 _jobs.myjob2.jieshouZifu = _jobs.myjob2.triggerZifu;
-                _jobs.myjob2.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob2.triggerZifu);
+                _jobs.EnqueueTriggerSource(1, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob2.triggerZifu));
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(1);
                 if (MyCamera.MV_OK != nRet)
@@ -7431,7 +7453,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob3.triggerZifu) || e.Selection == _jobs.myjob3.triggerZifu)
             {
                 _jobs.myjob3.jieshouZifu = _jobs.myjob3.triggerZifu;
-                _jobs.myjob3.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob3.triggerZifu);
+                _jobs.EnqueueTriggerSource(2, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob3.triggerZifu));
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(2);
                 if (MyCamera.MV_OK != nRet)
@@ -7442,7 +7464,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob4.triggerZifu) || e.Selection == _jobs.myjob4.triggerZifu)
             {
                 _jobs.myjob4.jieshouZifu = _jobs.myjob4.triggerZifu;
-                _jobs.myjob4.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob4.triggerZifu);
+                _jobs.EnqueueTriggerSource(3, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob4.triggerZifu));
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(3);
                 if (MyCamera.MV_OK != nRet)
@@ -7453,7 +7475,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob5.triggerZifu) || e.Selection == _jobs.myjob5.triggerZifu)
             {
                 _jobs.myjob5.jieshouZifu = _jobs.myjob5.triggerZifu;
-                _jobs.myjob5.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob5.triggerZifu);
+                _jobs.EnqueueTriggerSource(4, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob5.triggerZifu));
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(4);
                 if (MyCamera.MV_OK != nRet)
@@ -7464,7 +7486,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob6.triggerZifu) || e.Selection == _jobs.myjob6.triggerZifu)
             {
                 _jobs.myjob6.jieshouZifu = _jobs.myjob6.triggerZifu;
-                _jobs.myjob6.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob6.triggerZifu);
+                _jobs.EnqueueTriggerSource(5, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob6.triggerZifu));
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(5);
                 if (MyCamera.MV_OK != nRet)
@@ -7475,7 +7497,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob7.triggerZifu) || e.Selection == _jobs.myjob7.triggerZifu)
             {
                 _jobs.myjob7.jieshouZifu = _jobs.myjob7.triggerZifu;
-                _jobs.myjob7.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob7.triggerZifu);
+                _jobs.EnqueueTriggerSource(6, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob7.triggerZifu));
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(6);
                 if (MyCamera.MV_OK != nRet)
@@ -7486,7 +7508,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob8.triggerZifu) || e.Selection == _jobs.myjob8.triggerZifu)
             {
                 _jobs.myjob8.jieshouZifu = _jobs.myjob8.triggerZifu;
-                _jobs.myjob8.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob8.triggerZifu);
+                _jobs.EnqueueTriggerSource(7, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob8.triggerZifu));
                 int nRet = TriggerSoftwareCamera(7);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7496,7 +7518,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob9.triggerZifu) || e.Selection == _jobs.myjob9.triggerZifu)
             {
                 _jobs.myjob9.jieshouZifu = _jobs.myjob9.triggerZifu;
-                _jobs.myjob9.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob9.triggerZifu);
+                _jobs.EnqueueTriggerSource(8, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob9.triggerZifu));
                 int nRet = TriggerSoftwareCamera(8);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7506,7 +7528,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob10.triggerZifu) || e.Selection == _jobs.myjob10.triggerZifu)
             {
                 _jobs.myjob10.jieshouZifu = _jobs.myjob10.triggerZifu;
-                _jobs.myjob10.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob10.triggerZifu);
+                _jobs.EnqueueTriggerSource(9, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob10.triggerZifu));
                 int nRet = TriggerSoftwareCamera(9);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7516,7 +7538,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob11.triggerZifu) || e.Selection == _jobs.myjob11.triggerZifu)
             {
                 _jobs.myjob11.jieshouZifu = _jobs.myjob11.triggerZifu;
-                _jobs.myjob11.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob11.triggerZifu);
+                _jobs.EnqueueTriggerSource(10, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob11.triggerZifu));
                 int nRet = TriggerSoftwareCamera(10);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7526,7 +7548,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob12.triggerZifu) || e.Selection == _jobs.myjob12.triggerZifu)
             {
                 _jobs.myjob12.jieshouZifu = _jobs.myjob12.triggerZifu;
-                _jobs.myjob12.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob12.triggerZifu);
+                _jobs.EnqueueTriggerSource(11, new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob12.triggerZifu));
                 int nRet = TriggerSoftwareCamera(11);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7617,7 +7639,7 @@ namespace WindowsFormsApplication1
 
                     // 阶段 5：记下本次检测由哪条连接触发，检测结果只回写给这条连接。
                     // 阶段 7：同时记下协议（1=FINS），与 linkId 配对才能唯一定位一条连接。
-                    _jobs.Myjobs[i].triggerSrc = new CommTriggerSource(e.LinkId, 1, null);
+                    _jobs.EnqueueTriggerSource(i, new CommTriggerSource(e.LinkId, 1, null));
 
                     // 阶段 5 多连接：触发条件取自“发出触发的那条连接”自己的相机绑定；
                     // 连接 1（LinkId<=1）继续走下面的原路径，行为逐字不变。
@@ -7710,7 +7732,7 @@ namespace WindowsFormsApplication1
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
-                    _jobs.Myjobs[i].triggerSrc = new CommTriggerSource(e.LinkId, 2, null);
+                    _jobs.EnqueueTriggerSource(i, new CommTriggerSource(e.LinkId, 2, null));
                     // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
                     string[] linkCam;
                     if (e.LinkId > 1 && _comm.Modbustcp.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
@@ -7799,7 +7821,7 @@ namespace WindowsFormsApplication1
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
-                    _jobs.Myjobs[i].triggerSrc = new CommTriggerSource(e.LinkId, 3, null);
+                    _jobs.EnqueueTriggerSource(i, new CommTriggerSource(e.LinkId, 3, null));
                     // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
                     string[] linkCam;
                     if (e.LinkId > 1 && _comm.ModbusRtu.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
