@@ -1858,7 +1858,15 @@ namespace WindowsFormsApplication1
                         string ip = comboBox1.SelectedItem == null ? "" : comboBox1.SelectedItem.ToString();
                         Socket s;
                         if (ip.Length > 0 && serverSocket.TryGetValue(ip, out s) && s != null)
-                            s.Send(buffer);
+                        {
+                            // ★ 2026-09-13：TCP 服务端发送同样设置超时。客户机已有 SendTimeout，
+                            //   服务端原来裸 Send()：对端连接正常但停止读取时，发送缓冲耗尽会永久阻塞；
+                            //   该调用已在相机顺序队列内，阻塞会连带拖住后续 PLC/IO 输出，且占着本窗体发送锁。
+                            try { s.SendTimeout = 2000; } catch { }
+                            int sent = s.Send(buffer);
+                            if (sent != buffer.Length)
+                                MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送不完整: " + sent + "/" + buffer.Length + " " + aa);
+                        }
                         else
                             MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送合格失败: 无客户端连接 " + aa);
                     }

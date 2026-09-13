@@ -1772,7 +1772,7 @@ namespace WindowsFormsApplication1
                                 if (fmt == "int")
                                 {
                                     // 逗号分隔 → short数组, 批量写 (Omron FINS memory write)
-                                    string[] parts = value.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
                                     short[] vals = new short[parts.Length];
                                     for (int i = 0; i < parts.Length; i++)
                                         vals[i] = (short)Math.Round(double.Parse(parts[i].Trim()));
@@ -1785,7 +1785,7 @@ namespace WindowsFormsApplication1
                                 }
                                 else if (fmt == "long")
                                 {
-                                    string[] parts = value.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
                                     int[] vals = new int[parts.Length];
                                     for (int i = 0; i < parts.Length; i++)
                                         vals[i] = (int)Math.Round(double.Parse(parts[i].Trim()));
@@ -1798,7 +1798,7 @@ namespace WindowsFormsApplication1
                                 }
                                 else if (fmt == "float")
                                 {
-                                    string[] parts = value.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
                                     float[] vals = new float[parts.Length];
                                     for (int i = 0; i < parts.Length; i++)
                                         vals[i] = float.Parse(parts[i].Trim());
@@ -1811,7 +1811,7 @@ namespace WindowsFormsApplication1
                                 }
                                 else if (fmt == "string")
                                 {
-                                    string[] parts = value.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
                                     for (int j = 0; j < parts.Length; j++)
                                     {
                                         int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
