@@ -9643,7 +9643,22 @@ namespace WindowsFormsApplication1
                     }
                     if (Interlocked.CompareExchange(ref _detectingCount, 0, 0) > 0)
                     {
-                        _logger.WriteLog("切方案警告：等待 10 秒后仍有检测帧未结束，继续切换（存在并发风险，请检查方案单帧耗时）");
+                        // ★ 2026-09-13 修复：等待 10 秒后仍有检测帧未结束，说明该帧耗时异常甚至卡死。
+                        //   原实现只记一条警告就继续 manager1.Shutdown()，会与仍在执行的 block.Run 并发操作
+                        //   同一批 VisionPro block/CogJobManager（COM 冲突/卡死风险）。
+                        //   改为「中止本次切换」：不卸载方案、不并发 Shutdown，fail-stop 并提示用户重启，
+                        //   避免把系统拖入不可恢复的卡死状态。
+                        _logger.WriteLog("切方案中止：等待 10 秒后仍有检测帧未结束，已中止切换（未卸载方案、未并发 Shutdown），请检查方案单帧耗时或重启软件。");
+                        try
+                        {
+                            SafeBeginInvoke(new Action(() =>
+                            {
+                                try { if (Frm2 != null && !Frm2.IsDisposed) Frm2.Close(); } catch { }
+                                try { MessageBox.Show("方案切换已中止：检测线程长时间未结束，为避免与检测冲突，本次未卸载方案。请检查方案后重启软件重试。", "切换中止", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                            }));
+                        }
+                        catch { }
+                        return;   // 不再执行 Shutdown / 加载新方案
                     }
                     UpdateSplashProgress(10, "正在停止检测...");
                     _jobs.myjob1.baoguang = 0;
