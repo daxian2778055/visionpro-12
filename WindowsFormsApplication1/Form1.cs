@@ -4295,6 +4295,9 @@ namespace WindowsFormsApplication1
                     if (myjob.job.State == CogJobStateConstants.Stopped)
                     {
 
+                        // ★ 输入准备是否成功：取图 / 传图 / payload 写入任一失败则为 false。
+                        //   为 false 时不再执行 block.Run()（原实现会拿上一件的图像/参数生成本件结果）。
+                        bool inputOk = true;
                         if ((!myjob.trrigerEn) && (myjob.trriger == 0) || (myjob.trriger == 0 && myjob.trrigerEn))
                         {
 
@@ -4339,6 +4342,7 @@ namespace WindowsFormsApplication1
                             }
                             catch (Exception ex)
                             {
+                                inputOk = false;
                                 _logger.WriteLog(ex.Message + "相机" + myjob.path_number + "取图");
                             };
 
@@ -4356,7 +4360,12 @@ namespace WindowsFormsApplication1
                                     AssignBlockInputImage(myjob.block, myjob.img, myjob.Color);
                                     myjob.img.Dispose();
                                 }
-                                catch { }
+                                catch (Exception exIn)
+                                {
+                                    // ★ 原为空 catch：输入图准备失败被静默吞掉，后续仍拿旧输入跑 Run
+                                    inputOk = false;
+                                    _logger.WriteLog("相机" + myjob.path_number + " 输入图像准备失败: " + exIn.Message);
+                                }
                             }
                             else
                             {
@@ -4378,20 +4387,29 @@ namespace WindowsFormsApplication1
                                 return;   // 方案切换中：丢弃旧帧，停止检测
                             }
                             // 检测中计数（供方案切换排空等待，替代固定 Sleep）
-                            Interlocked.Increment(ref _detectingCount);
                             bool runOk = false;
-                            try
+                            if (!inputOk)
                             {
-                                myjob.block.Run();
-                                runOk = true;
+                                // ★ 输入准备失败：终止本帧，不跑检测，后续统一按失败输出（Reject/NG），
+                                //   避免用上一件的图像或参数生成当前件的结果。
+                                _logger.WriteLog("相机" + myjob.path_number + " 输入准备失败，本帧判失败（不再检测）");
                             }
-                            catch (Exception exRun)
+                            else
                             {
-                                _logger.WriteLog("相机" + myjob.path_number + " block.Run异常: " + exRun.Message);
-                            }
-                            finally
-                            {
-                                Interlocked.Decrement(ref _detectingCount);
+                                Interlocked.Increment(ref _detectingCount);
+                                try
+                                {
+                                    myjob.block.Run();
+                                    runOk = true;
+                                }
+                                catch (Exception exRun)
+                                {
+                                    _logger.WriteLog("相机" + myjob.path_number + " block.Run异常: " + exRun.Message);
+                                }
+                                finally
+                                {
+                                    Interlocked.Decrement(ref _detectingCount);
+                                }
                             }
                             if (_switchingScheme)
                             {
@@ -4518,7 +4536,7 @@ namespace WindowsFormsApplication1
                             {
                                 // 在检测线程上快照输出值，避免后台任务跨线程读 VisionPro COM(block.Outputs) 引发竞态
                                 string tcpVal;
-                                try { tcpVal = myjob.block.Outputs["tcp"].Value.ToString(); }
+                                try { tcpVal = runOk ? myjob.block.Outputs["tcp"].Value.ToString() : "Reject"; }
                                 catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " TCP输出失败: " + ex.Message); tcpVal = "无"; }
                                 Task.Run(() =>
                                 {
@@ -4535,7 +4553,7 @@ namespace WindowsFormsApplication1
                             if (myjob.serial)
                             {
                                 string serialVal;
-                                try { serialVal = myjob.block.Outputs["serial"].Value.ToString(); }
+                                try { serialVal = runOk ? myjob.block.Outputs["serial"].Value.ToString() : "Reject"; }
                                 catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 串口输出失败: " + ex.Message); serialVal = "无"; }
                                 Task.Run(() =>
                                 {
@@ -4553,7 +4571,7 @@ namespace WindowsFormsApplication1
                             {
                                 try
                                 {
-                                    fins = myjob.block.Outputs["fins"].Value.ToString();
+                                    fins = runOk ? myjob.block.Outputs["fins"].Value.ToString() : "Reject";
                                 }
                                 catch
                                 {
@@ -4564,7 +4582,7 @@ namespace WindowsFormsApplication1
                             {
                                 try
                                 {
-                                    modbustcps = myjob.block.Outputs["modbustcp"].Value.ToString();
+                                    modbustcps = runOk ? myjob.block.Outputs["modbustcp"].Value.ToString() : "Reject";
                                 }
                                 catch
                                 {
@@ -4575,7 +4593,7 @@ namespace WindowsFormsApplication1
                             {
                                 try
                                 {
-                                    modbusrtus = myjob.block.Outputs["modbusrtu"].Value.ToString();
+                                    modbusrtus = runOk ? myjob.block.Outputs["modbusrtu"].Value.ToString() : "Reject";
                                 }
                                 catch
                                 {
