@@ -4484,8 +4484,13 @@ namespace WindowsFormsApplication1
                             }
                             // 阶段：无协议连接2~4 的结果回写“发出触发的那条无协议连接”的端口，而非固定 connection 1
                             Form3 nprotoTarget = null;
-                            if (myjob.triggerProto == NoProtoProto && myjob.triggerLinkId > 1)
-                                nprotoTarget = frmCommManager.GetNoProtoLink(myjob.triggerLinkId);
+                            // BUG A 修复：一次性取出触发来源快照并置 null（引用赋值原子，proto/link 配对永真，防粘滞）
+                            var trigSrc = myjob.triggerSrc;
+                            myjob.triggerSrc = null;
+                            int trigLink = trigSrc != null ? trigSrc.LinkId : 0;
+                            int trigProto = trigSrc != null ? trigSrc.Proto : 0;
+                            if (trigProto == NoProtoProto && trigLink > 1)
+                                nprotoTarget = frmCommManager.GetNoProtoLink(trigLink);
                             Form3 noProtoOut = nprotoTarget ?? frm3;
                             if (myjob.tcp)
                             {
@@ -4560,10 +4565,6 @@ namespace WindowsFormsApplication1
                             // triggerProto：0=非通讯触发，1=FINS，2=ModbusTCP，3=ModbusRTU（与 linkId 配对唯一定位一条连接）。
                             // ★ 修复跨协议串扰（2026-09-06）：原实现只有 FINS 记录来源，Modbus TCP/RTU 的连接 2~4 触发时
                             //   triggerLinkId 为 0，结果被广播到所有协议的连接 1；且来源用后不清除会粘滞到下一次检测。
-                            int trigLink = myjob.triggerLinkId;
-                            int trigProto = myjob.triggerProto;
-                            myjob.triggerProto = 0;
-                            myjob.triggerLinkId = 0;
                             if (trigLink > 1 && trigProto > 0)
                             {
                                 // 只回写给触发本次检测的那一条连接（协议 + 连接号），不广播、不串到别的协议
@@ -7408,8 +7409,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob1.triggerZifu) || e.Selection == _jobs.myjob1.triggerZifu)
             {
                 _jobs.myjob1.jieshouZifu = _jobs.myjob1.triggerZifu;
-                _jobs.myjob1.triggerLinkId = nopSrcLink;
-                _jobs.myjob1.triggerProto = NoProtoProto;
+                _jobs.myjob1.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob1.triggerZifu);
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(0);
                 if (MyCamera.MV_OK != nRet)
@@ -7420,8 +7420,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob2.triggerZifu) || e.Selection == _jobs.myjob2.triggerZifu)
             {
                 _jobs.myjob2.jieshouZifu = _jobs.myjob2.triggerZifu;
-                _jobs.myjob2.triggerLinkId = nopSrcLink;
-                _jobs.myjob2.triggerProto = NoProtoProto;
+                _jobs.myjob2.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob2.triggerZifu);
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(1);
                 if (MyCamera.MV_OK != nRet)
@@ -7432,8 +7431,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob3.triggerZifu) || e.Selection == _jobs.myjob3.triggerZifu)
             {
                 _jobs.myjob3.jieshouZifu = _jobs.myjob3.triggerZifu;
-                _jobs.myjob3.triggerLinkId = nopSrcLink;
-                _jobs.myjob3.triggerProto = NoProtoProto;
+                _jobs.myjob3.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob3.triggerZifu);
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(2);
                 if (MyCamera.MV_OK != nRet)
@@ -7444,8 +7442,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob4.triggerZifu) || e.Selection == _jobs.myjob4.triggerZifu)
             {
                 _jobs.myjob4.jieshouZifu = _jobs.myjob4.triggerZifu;
-                _jobs.myjob4.triggerLinkId = nopSrcLink;
-                _jobs.myjob4.triggerProto = NoProtoProto;
+                _jobs.myjob4.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob4.triggerZifu);
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(3);
                 if (MyCamera.MV_OK != nRet)
@@ -7456,8 +7453,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob5.triggerZifu) || e.Selection == _jobs.myjob5.triggerZifu)
             {
                 _jobs.myjob5.jieshouZifu = _jobs.myjob5.triggerZifu;
-                _jobs.myjob5.triggerLinkId = nopSrcLink;
-                _jobs.myjob5.triggerProto = NoProtoProto;
+                _jobs.myjob5.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob5.triggerZifu);
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(4);
                 if (MyCamera.MV_OK != nRet)
@@ -7468,8 +7464,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob6.triggerZifu) || e.Selection == _jobs.myjob6.triggerZifu)
             {
                 _jobs.myjob6.jieshouZifu = _jobs.myjob6.triggerZifu;
-                _jobs.myjob6.triggerLinkId = nopSrcLink;
-                _jobs.myjob6.triggerProto = NoProtoProto;
+                _jobs.myjob6.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob6.triggerZifu);
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(5);
                 if (MyCamera.MV_OK != nRet)
@@ -7480,8 +7475,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob7.triggerZifu) || e.Selection == _jobs.myjob7.triggerZifu)
             {
                 _jobs.myjob7.jieshouZifu = _jobs.myjob7.triggerZifu;
-                _jobs.myjob7.triggerLinkId = nopSrcLink;
-                _jobs.myjob7.triggerProto = NoProtoProto;
+                _jobs.myjob7.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob7.triggerZifu);
                 // ch:触发命令 | en:Trigger command
                 int nRet = TriggerSoftwareCamera(6);
                 if (MyCamera.MV_OK != nRet)
@@ -7492,8 +7486,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob8.triggerZifu) || e.Selection == _jobs.myjob8.triggerZifu)
             {
                 _jobs.myjob8.jieshouZifu = _jobs.myjob8.triggerZifu;
-                _jobs.myjob8.triggerLinkId = nopSrcLink;
-                _jobs.myjob8.triggerProto = NoProtoProto;
+                _jobs.myjob8.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob8.triggerZifu);
                 int nRet = TriggerSoftwareCamera(7);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7503,8 +7496,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob9.triggerZifu) || e.Selection == _jobs.myjob9.triggerZifu)
             {
                 _jobs.myjob9.jieshouZifu = _jobs.myjob9.triggerZifu;
-                _jobs.myjob9.triggerLinkId = nopSrcLink;
-                _jobs.myjob9.triggerProto = NoProtoProto;
+                _jobs.myjob9.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob9.triggerZifu);
                 int nRet = TriggerSoftwareCamera(8);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7514,8 +7506,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob10.triggerZifu) || e.Selection == _jobs.myjob10.triggerZifu)
             {
                 _jobs.myjob10.jieshouZifu = _jobs.myjob10.triggerZifu;
-                _jobs.myjob10.triggerLinkId = nopSrcLink;
-                _jobs.myjob10.triggerProto = NoProtoProto;
+                _jobs.myjob10.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob10.triggerZifu);
                 int nRet = TriggerSoftwareCamera(9);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7525,8 +7516,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob11.triggerZifu) || e.Selection == _jobs.myjob11.triggerZifu)
             {
                 _jobs.myjob11.jieshouZifu = _jobs.myjob11.triggerZifu;
-                _jobs.myjob11.triggerLinkId = nopSrcLink;
-                _jobs.myjob11.triggerProto = NoProtoProto;
+                _jobs.myjob11.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob11.triggerZifu);
                 int nRet = TriggerSoftwareCamera(10);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7536,8 +7526,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrEmpty(_jobs.myjob12.triggerZifu) || e.Selection == _jobs.myjob12.triggerZifu)
             {
                 _jobs.myjob12.jieshouZifu = _jobs.myjob12.triggerZifu;
-                _jobs.myjob12.triggerLinkId = nopSrcLink;
-                _jobs.myjob12.triggerProto = NoProtoProto;
+                _jobs.myjob12.triggerSrc = new CommTriggerSource(nopSrcLink, NoProtoProto, _jobs.myjob12.triggerZifu);
                 int nRet = TriggerSoftwareCamera(11);
                 if (MyCamera.MV_OK != nRet)
                 {
@@ -7628,8 +7617,7 @@ namespace WindowsFormsApplication1
 
                     // 阶段 5：记下本次检测由哪条连接触发，检测结果只回写给这条连接。
                     // 阶段 7：同时记下协议（1=FINS），与 linkId 配对才能唯一定位一条连接。
-                    _jobs.Myjobs[i].triggerLinkId = e.LinkId;
-                    _jobs.Myjobs[i].triggerProto = 1;
+                    _jobs.Myjobs[i].triggerSrc = new CommTriggerSource(e.LinkId, 1, null);
 
                     // 阶段 5 多连接：触发条件取自“发出触发的那条连接”自己的相机绑定；
                     // 连接 1（LinkId<=1）继续走下面的原路径，行为逐字不变。
@@ -7722,8 +7710,7 @@ namespace WindowsFormsApplication1
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
-                    _jobs.Myjobs[i].triggerLinkId = e.LinkId;
-                    _jobs.Myjobs[i].triggerProto = 2;
+                    _jobs.Myjobs[i].triggerSrc = new CommTriggerSource(e.LinkId, 2, null);
                     // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
                     string[] linkCam;
                     if (e.LinkId > 1 && _comm.Modbustcp.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))
@@ -7812,8 +7799,7 @@ namespace WindowsFormsApplication1
                 {
                     if (e.Camera != (i + 1).ToString()) continue;
                     // 阶段 7：补齐触发来源（原缺失，导致连接 2~4 触发的结果被广播回连接 1）
-                    _jobs.Myjobs[i].triggerLinkId = e.LinkId;
-                    _jobs.Myjobs[i].triggerProto = 3;
+                    _jobs.Myjobs[i].triggerSrc = new CommTriggerSource(e.LinkId, 3, null);
                     // 阶段 7 补强：连接2~4 触发参数取该连接自己 camera_dic 的绑定（对齐 FINS TryGetLinkCamera）
                     string[] linkCam;
                     if (e.LinkId > 1 && _comm.ModbusRtu.TryGetLinkCamera(e.LinkId, i + 1, out linkCam))

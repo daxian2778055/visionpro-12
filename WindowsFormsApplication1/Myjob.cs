@@ -15,7 +15,24 @@ namespace WindowsFormsApplication1
 {
     public delegate void delegateHanndler();
 
-    public class Myjob
+        /// <summary>
+    /// BUG A 修复：通讯触发来源快照（不可变）。一次检测只对应一个来源，
+    /// 引用赋值是原子的，保证 Proto + LinkId 永远成对一致（原两个独立 volatile int 存在跨协议交错风险）。
+    /// </summary>
+    public sealed class CommTriggerSource
+    {
+        public readonly int LinkId;
+        public readonly int Proto;
+        public readonly string Received;
+        public CommTriggerSource(int linkId, int proto, string received)
+        {
+            LinkId = linkId;
+            Proto = proto;
+            Received = received;
+        }
+    }
+
+public class Myjob
     {
         public int trriger;
         public int yun;
@@ -61,16 +78,11 @@ namespace WindowsFormsApplication1
         /// 检测完成不再清零，避免冲掉在途新触发的置位。&gt;0 表示仍有触发在等回帧。</summary>
         public volatile int commTriggerPendingCount;
         /// <summary>
-        /// 阶段 5：本次检测由哪条通讯连接触发（0=非通讯触发/未知，1=该协议主连接，2..4=扩展连接）。
-        /// 检测结果只回写给这条连接。
+        /// BUG A 修复（2026-09-13 重建）：触发来源的<b>不可变快照</b>。
+        /// 原 triggerLinkId / triggerProto 是两个独立 volatile int，多协议并发写、检测线程两次独立读会交错成配对错乱；
+        /// 改为单个引用一次性原子替换，proto/link 配对永真；读取方取出后立刻置 null，避免粘滞到下一次检测。
         /// </summary>
-        public volatile int triggerLinkId;
-        /// <summary>
-        /// 阶段 7（2026-09-06）：触发来源的<b>协议</b>。0=非通讯触发，1=FINS，2=ModbusTCP，3=ModbusRTU。
-        /// 光有 linkId 无法定位连接（FINS 连接 2 与 ModbusTCP 连接 2 是两条不同的连接），必须与 triggerLinkId 配对；
-        /// 回写后由主界面清零，避免残留导致后续检测串到别的连接。
-        /// </summary>
-        public volatile int triggerProto;
+        public volatile CommTriggerSource triggerSrc;
         public bool dengluEn;
         public bool shijianEn;
         public bool jiasu;
