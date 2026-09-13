@@ -583,6 +583,8 @@ namespace WindowsFormsApplication1
                 }
                 if (!commBlocked) chushihua = true;
             });
+            // 初始化完成：使能开则锁定参数控件（运行期使能开不容许修改参数，杜绝热改冲突）
+            SetParamControlsEnabled(!fins_en);
         }
 
 
@@ -736,11 +738,8 @@ namespace WindowsFormsApplication1
 
         private void button2_Click( object sender, EventArgs e )
         {
-            // 断开连接
-            _finsLink.Close( );
-            button2.Enabled = false;
-            button1.Enabled = true;
-            panel2.Enabled = false;
+            // 断开连接（手动断开按钮，逻辑与使能关闭断连一致）
+            DisconnectLink();
         }
         
 
@@ -1225,6 +1224,7 @@ namespace WindowsFormsApplication1
         private void TryBindCamera(int cam, ComboBox box, int slot)
         {
             if (!chushihua) return;
+            if (fins_en) return;   // 使能开时参数锁定，不容许修改相机绑定（防运行期热改 camera_dic 竞态）
             if (cam < 1 || cam >= camera_dic.Count + 1) return;
             string val = box.Text;
             if (val == "（无绑定）") val = "";        // “（无绑定）”= 清空绑定（相机让出给别的连接）
@@ -1264,6 +1264,15 @@ namespace WindowsFormsApplication1
                 }
             }
 
+            // ★ 跨协议相机绑定软提示（不硬拦）：另一协议已绑同物理相机时，提示重复触发风险，仍允许保存
+            if (cam >= 1 && cam <= 12)
+            {
+                try { wdini.ReadINIFile(wdini.FileName); } catch { }
+                string xwarn = CommCameraGuard.CrossProtoWarning(wdini, CommCameraGuard.CommProto.Fins, _linkId, cam);
+                if (!string.IsNullOrEmpty(xwarn))
+                    MessageBox.Show(this, xwarn, "跨协议相机绑定提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
             camera_dic[cam][slot] = val;
             string key = slot == 0 ? "chufa" : "fankui";
             wdini.WriteString(FinsIniStore.CameraSection(_linkId, cam), key, val);
@@ -1274,20 +1283,65 @@ namespace WindowsFormsApplication1
             FormOperationHelp.ShowHelp(this, "欧姆龙Fins");
         }
 
+        /// <summary>断开当前连接（使能关闭时调用），不影响“使能”状态本身。</summary>
+        private void DisconnectLink()
+        {
+            try { _finsLink.Close(); } catch { }
+            button2.Enabled = false;
+            button1.Enabled = true;
+            panel2.Enabled = false;
+        }
+
+        /// <summary>
+        /// 参数控件锁定：使能开(en=true)时锁定所有通讯/相机参数控件，运行时不容许修改；
+        /// 使能关(en=false)时解禁，此时才可修改参数。配合“使能关立即断连”，
+        /// 保证“修改参数”与“活跃连接”严格互斥，从根上消除运行期热改参数的并发冲突。
+        /// </summary>
+        private void SetParamControlsEnabled(bool enable)
+        {
+            // 连接参数
+            textBox1.Enabled = enable; textBox2.Enabled = enable;
+            textBox15.Enabled = enable; textBox16.Enabled = enable;
+            comboBox1.Enabled = enable;
+            // 轮询 / 地址参数
+            numericUpDown1.Enabled = enable; numericUpDown2.Enabled = enable; numericUpDown3.Enabled = enable;
+            // 相机绑定下拉 comboBox4..29
+            for (int i = 4; i <= 29; i++)
+            {
+                var found = this.Controls.Find("comboBox" + i, true);
+                if (found.Length > 0 && found[0] is ComboBox cb) cb.Enabled = enable;
+            }
+            // 触发值 / 返回值文本框（静态）
+            foreach (var t in new TextBox[] { textBox14, textBox17, textBox19, textBox18, textBox23, textBox22, textBox21, textBox20, textBox24, textBox42, textBox43, textBox44, textBox41, textBox53 })
+                if (t != null) t.Enabled = enable;
+            // 触发模式 / 触发值（动态）
+            foreach (var c in new ComboBox[] { cboTrigMode1, cboTrigMode2, cboTrigMode3, cboTrigMode4, cboTrigMode5, cboTrigMode6, cboTrigMode7, cboTrigMode8, cboTrigMode9, cboTrigMode10, cboTrigMode11, cboTrigMode12 })
+                if (c != null) c.Enabled = enable;
+            foreach (var t in new TextBox[] { txtTrigVal1, txtTrigVal2, txtTrigVal3, txtTrigVal4, txtTrigVal5, txtTrigVal6, txtTrigVal7, txtTrigVal8, txtTrigVal9, txtTrigVal10, txtTrigVal11, txtTrigVal12 })
+                if (t != null) t.Enabled = enable;
+            // 反馈使能 / 心跳使能开关
+            checkBox3.Enabled = enable; checkBox16.Enabled = enable;
+        }
+
         private void checkBox2_CheckedChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
-                if (checkBox2.CheckState == CheckState.Checked)
+                bool en = checkBox2.CheckState == CheckState.Checked;
+                fins_en = en;
+                wdini.WriteString(FinsIniStore.ConnSection(_linkId), "fins_en", fins_en.ToString());
+                if (!en)
                 {
-                    fins_en = true;
+                    // 使能关闭：立即断连（fins_en 已置 false，轮询/重连逻辑均不会自动重连），参数控件解禁后可安全修改
+                    DisconnectLink();
+                    SetParamControlsEnabled(true);
                 }
                 else
                 {
-                    fins_en = false;
+                    // 使能开启：锁定参数控件 + 确保通讯在线（立即自动建连；运行中断线由轮询后台自动重连兜底）
+                    SetParamControlsEnabled(false);
+                    try { button1_Click(null, null); } catch { }
                 }
-                wdini.WriteString(FinsIniStore.ConnSection(_linkId), "fins_en", fins_en.ToString());
-               
             }
         }
 

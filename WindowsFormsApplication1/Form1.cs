@@ -7098,382 +7098,50 @@ namespace WindowsFormsApplication1
                                     }
                                 }
 
-                                if (_cameraCtrl.Cameras[0] == null)
+                                                                for (int _ci = 0; _ci < 12 && _ci < manager1.JobCount; _ci++)
+                                    CheckAndReconnectCamera(_ci);
+
+                                // 原 12 路复制粘贴的重连逻辑统一抽取为下方局部函数；顺手修复历史不一致：
+                                // 原相机4/8/9/10/11/12 失败字符串缺 "\r\n"、相机8/9 缺"断线开始重连/重连失败"日志，现已统一为规范格式。
+                                void CheckAndReconnectCamera(int slot)
                                 {
-                                    cameraState += "相机1不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[0].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机1断线，开始重连...");
-                                    if (!ReconnectCameraSlot(0, _jobs.myjob1.index, out nRet))
+                                    var job = _jobs.Myjobs[slot];
+                                    if (_cameraCtrl.Cameras[slot] == null)
                                     {
-                                        _logger.WriteLog("相机1重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机1断线\r\n";
+                                        cameraState += "相机" + (slot + 1) + "不在线\r\n";
+                                        return;
+                                    }
+                                    if (_cameraCtrl.Cameras[slot].MV_CC_IsDeviceConnected_NET())
+                                    {
+                                        cameraState += "\r\n";
+                                        return;
+                                    }
+                                    string camName = "相机" + (slot + 1);
+                                    _logger.WriteLog(camName + "断线，开始重连...");
+                                    if (!ReconnectCameraSlot(slot, job.index, out nRet))
+                                    {
+                                        _logger.WriteLog(camName + "重连失败: 0x" + Convert.ToString(nRet, 16));
+                                        cameraState += Convert.ToString(nRet, 16) + camName + "断线\r\n";
                                     }
                                     else
                                     {
-                                        _logger.WriteLog("相机1重连成功");
+                                        _logger.WriteLog(camName + "重连成功");
                                         reconnectedThisTick = true;
-                                        _jobs.myjob1.state = "相机1断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(0)));
+                                        job.state = camName + "断线\r\n";
+                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(slot)));
                                         if (_jobs.yunxing)
                                         {
-                                            _jobs.myjob1.yun = 1;
+                                            job.yun = 1;
                                             int grabRet;
-                                            PrepareCameraGrab(0, out grabRet);
+                                            PrepareCameraGrab(slot, out grabRet);
                                         }
-                                        _jobs.myjob1.state = "";
+                                        job.state = "";
                                     }
                                 }
-                                else
-                                    cameraState += "\r\n";
-                            }
-                            if (manager1.JobCount > 1)
-                            {
-                                if (_cameraCtrl.Cameras[1] == null)
-                                {
-                                    cameraState += "相机2不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[1].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机2断线，开始重连...");
-                                    if (!ReconnectCameraSlot(1, _jobs.myjob2.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机2重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机2断线\r\n";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机2重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob2.state = "相机2断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(1)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob2.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(1, out grabRet);
-                                        }
-                                        _jobs.myjob2.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "\r\n";
-                            }
-                            if (manager1.JobCount > 2)
-                            {
-                                if (_cameraCtrl.Cameras[2] == null)
-                                {
-                                    cameraState += "相机3不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[2].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机3断线，开始重连...");
-                                    if (!ReconnectCameraSlot(2, _jobs.myjob3.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机3重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机3断线\r\n";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机3重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob3.state = "相机3断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(2)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob3.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(2, out grabRet);
-                                        }
-                                        _jobs.myjob3.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "\r\n";
-                            }
-                            if (manager1.JobCount > 3)
-                            {
-                                if (_cameraCtrl.Cameras[3] == null)
-                                {
-                                    cameraState += "相机4不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[3].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机4断线，开始重连...");
-                                    if (!ReconnectCameraSlot(3, _jobs.myjob4.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机4重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机4断线";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机4重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob4.state = "相机4断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(3)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob4.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(3, out grabRet);
-                                        }
-                                        _jobs.myjob4.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "";
-                            }
-                            if (manager1.JobCount > 4)
-                            {
-                                if (_cameraCtrl.Cameras[4] == null)
-                                {
-                                    cameraState += "相机5不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[4].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机5断线，开始重连...");
-                                    if (!ReconnectCameraSlot(4, _jobs.myjob5.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机5重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机5断线\r\n";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机5重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob5.state = "相机5断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(4)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob5.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(4, out grabRet);
-                                        }
-                                        _jobs.myjob5.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "\r\n";
-                            }
-                            if (manager1.JobCount > 5)
-                            {
-                                if (_cameraCtrl.Cameras[5] == null)
-                                {
-                                    cameraState += "相机6不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[5].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机6断线，开始重连...");
-                                    if (!ReconnectCameraSlot(5, _jobs.myjob6.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机6重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机6断线\r\n";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机6重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob6.state = "相机6断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(5)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob6.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(5, out grabRet);
-                                        }
-                                        _jobs.myjob6.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "\r\n";
-                            }
-                            if (manager1.JobCount > 6)
-                            {
-                                if (_cameraCtrl.Cameras[6] == null)
-                                {
-                                    cameraState += "相机7不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[6].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机7断线，开始重连...");
-                                    if (!ReconnectCameraSlot(6, _jobs.myjob7.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机7重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机7断线\r\n";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机7重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob7.state = "相机7断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(6)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob7.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(6, out grabRet);
-                                        }
-                                        _jobs.myjob7.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "\r\n";
-                            }
-                            if (manager1.JobCount > 7)
-                            {
-                                if (_cameraCtrl.Cameras[7] == null)
-                                {
-                                    cameraState += "相机8不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[7].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    if (!ReconnectCameraSlot(7, _jobs.myjob8.index, out nRet))
-                                        cameraState += Convert.ToString(nRet, 16) + "相机8断线";
-                                    else
-                                    {
-                                        _logger.WriteLog("相机8重连");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob8.state = "相机8断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(7)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob8.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(7, out grabRet);
-                                        }
-                                        _jobs.myjob8.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "";
-                            }
-                            if (manager1.JobCount > 8)
-                            {
-                                if (_cameraCtrl.Cameras[8] == null)
-                                {
-                                    cameraState += "相机9不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[8].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    if (!ReconnectCameraSlot(8, _jobs.myjob9.index, out nRet))
-                                        cameraState += Convert.ToString(nRet, 16) + "相机9断线";
-                                    else
-                                    {
-                                        _logger.WriteLog("相机9重连");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob9.state = "相机9断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(8)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob9.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(8, out grabRet);
-                                        }
-                                        _jobs.myjob9.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "";
-                            }
-                            if (manager1.JobCount > 9)
-                            {
-                                if (_cameraCtrl.Cameras[9] == null)
-                                {
-                                    cameraState += "相机10不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[9].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机10断线，开始重连...");
-                                    if (!ReconnectCameraSlot(9, _jobs.myjob10.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机10重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机10断线";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机10重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob10.state = "相机10断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(9)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob10.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(9, out grabRet);
-                                        }
-                                        _jobs.myjob10.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "";
-                            }
-                            if (manager1.JobCount > 10)
-                            {
-                                if (_cameraCtrl.Cameras[10] == null)
-                                {
-                                    cameraState += "相机11不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[10].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机11断线，开始重连...");
-                                    if (!ReconnectCameraSlot(10, _jobs.myjob11.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机11重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机11断线";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机11重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob11.state = "相机11断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(10)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob11.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(10, out grabRet);
-                                        }
-                                        _jobs.myjob11.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "";
-                            }
-                            if (manager1.JobCount > 11)
-                            {
-                                if (_cameraCtrl.Cameras[11] == null)
-                                {
-                                    cameraState += "相机12不在线\r\n";
-                                }
-                                else if (!_cameraCtrl.Cameras[11].MV_CC_IsDeviceConnected_NET())
-                                {
-                                    _logger.WriteLog("相机12断线，开始重连...");
-                                    if (!ReconnectCameraSlot(11, _jobs.myjob12.index, out nRet))
-                                    {
-                                        _logger.WriteLog("相机12重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + "相机12断线";
-                                    }
-                                    else
-                                    {
-                                        _logger.WriteLog("相机12重连成功");
-                                        reconnectedThisTick = true;
-                                        _jobs.myjob12.state = "相机12断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(11)));
-                                        if (_jobs.yunxing)
-                                        {
-                                            _jobs.myjob12.yun = 1;
-                                            int grabRet;
-                                            PrepareCameraGrab(11, out grabRet);
-                                        }
-                                        _jobs.myjob12.state = "";
-                                    }
-                                }
-                                else
-                                    cameraState += "";
-                            }
+                        }
                         }
                     catch { }
+
                     if (!cameraState.Contains("相"))
                         cameraState = "";
                     if (reconnectedThisTick)
@@ -11344,6 +11012,19 @@ namespace WindowsFormsApplication1
         /// <summary>
         /// 相机帧回调（SDK 线程）：只做格式转换与像素拷贝入队，检测在独立线程执行
         /// </summary>
+        // 静态灰度调色板：所有 Mono8 帧复用同一份，避免每帧 256 次 Color.FromArgb 构造（性能优化）
+        private static readonly ColorPalette _grayPalette = CreateGrayPalette();
+        private static ColorPalette CreateGrayPalette()
+        {
+            using (var tmp = new Bitmap(1, 1, PixelFormat.Format8bppIndexed))
+            {
+                ColorPalette cp = tmp.Palette;
+                for (int i = 0; i < 256; i++)
+                    cp.Entries[i] = Color.FromArgb(i, i, i);
+                return cp; // ColorPalette 为值拷贝，与 tmp 解耦，Dispose 后依然有效
+            }
+        }
+
         private void ImageCallBack(IntPtr pData, ref MyCamera.MV_FRAME_OUT_INFO_EX pFrameInfo, IntPtr pUser)
         {
             if (_disposingFlag || _switchingScheme || _inspectStop) return;
@@ -11393,10 +11074,7 @@ namespace WindowsFormsApplication1
                 if (CameraPixelFormatHelper.IsHikMonoData(pFrameInfo.enPixelType))
                 {
                     wrapped = new Bitmap(pFrameInfo.nWidth, pFrameInfo.nHeight, pFrameInfo.nWidth * 1, PixelFormat.Format8bppIndexed, pData);
-                    ColorPalette cp = wrapped.Palette;
-                    for (int i = 0; i < 256; i++)
-                        cp.Entries[i] = Color.FromArgb(i, i, i);
-                    wrapped.Palette = cp;
+                    wrapped.Palette = _grayPalette;   // 复用静态灰度调色板，省每帧 256 次 Color.FromArgb 构造
                 }
                 else
                 {

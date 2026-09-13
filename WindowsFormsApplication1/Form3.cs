@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -700,13 +700,13 @@ namespace WindowsFormsApplication1
                             || ((SocketException)ex).SocketErrorCode == SocketError.ConnectionReset);
                     if (isShutdown)
                     {
-                        ShowMsg("TCP服务器(端口" + textBox3.Text + ")已停止监听");
-                        MsgErroeLog.WriteLog("TCP服务器(端口" + textBox3.Text + ")监听线程正常退出，服务器已停止");
+                        ShowMsg("TCP服务器(端口" + SafeRead(() => textBox3.Text) + ")已停止监听");
+                        MsgErroeLog.WriteLog("TCP服务器(端口" + SafeRead(() => textBox3.Text) + ")监听线程正常退出，服务器已停止");
                     }
                     else
                     {
-                        ShowMsg("TCP服务器(端口" + textBox3.Text + ")监听异常：" + ex.Message);
-                        MsgErroeLog.WriteLog("TCP服务器(端口" + textBox3.Text + ",本机监听)监听线程异常退出，原因：" + ex.GetType().Name
+                        ShowMsg("TCP服务器(端口" + SafeRead(() => textBox3.Text) + ")监听异常：" + ex.Message);
+                        MsgErroeLog.WriteLog("TCP服务器(端口" + SafeRead(() => textBox3.Text) + ",本机监听)监听线程异常退出，原因：" + ex.GetType().Name
                             + "，" + ex.Message + "，来自Form3.TCP服务器");
                     }
                     break;

@@ -161,10 +161,22 @@ namespace WindowsFormsApplication1
         /// <returns>true=放行；false=被占用，已回滚并提示</returns>
         private bool GuardCamera(int cameraNo, string newVal, int slot, System.Windows.Forms.ComboBox cb)
         {
+            if (fins_en) return false;   // 使能开时参数锁定，不容许修改相机绑定（防运行期热改 camera_dic 竞态）
             // 空值（清空）不占资源，其它连接即使占着本连接也可选择“无”
             if (!CommCameraGuard.IsBoundValue(newVal)) return true;
             int owner = CommCameraGuard.FindOwnerModbusTcp(wdini, _linkId, cameraNo);
-            if (owner == 0) return true;
+            if (owner == 0)
+            {
+                // 跨协议相机绑定软提示（不硬拦）：另一协议已绑同物理相机时提示，仍放行保存
+                if (cameraNo >= 1 && cameraNo <= 12)
+                {
+                    try { wdini.ReadINIFile(wdini.FileName); } catch { }
+                    string xwarn = CommCameraGuard.CrossProtoWarning(wdini, CommCameraGuard.CommProto.ModbusTcp, _linkId, cameraNo);
+                    if (!string.IsNullOrEmpty(xwarn))
+                        System.Windows.Forms.MessageBox.Show(this, xwarn, "跨协议相机绑定提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                return true;
+            }
             string old = camera_dic[cameraNo][slot];
             cb.Text = old;             // 回滚到原值（新选项可能来自其它连接，不能从 Items 里删）
             string ownerName = CommCameraGuard.OwnerDisplayNameModbusTcp(wdini, owner);
@@ -556,6 +568,8 @@ namespace WindowsFormsApplication1
                 }
                 if (!commBlocked) chushihua = true;
             });
+            // 初始化完成：使能开则锁定参数控件（运行期使能开不容许修改参数，杜绝热改冲突）
+            SetParamControlsEnabled(!fins_en);
         }
 
 
@@ -752,11 +766,7 @@ namespace WindowsFormsApplication1
 
         private void button2_Click( object sender, EventArgs e )
         {
-            // 断开连接
-            _modbusLink.Close( );
-            button2.Enabled = false;
-            button1.Enabled = true;
-            panel2.Enabled = false;
+            DisconnectLink();
         }
         
         #endregion
@@ -1268,20 +1278,57 @@ namespace WindowsFormsApplication1
             }
         }
 
+        private void DisconnectLink()
+        {
+            try { _modbusLink.Close(); } catch { }
+            button2.Enabled = false;
+            button1.Enabled = true;
+            panel2.Enabled = false;
+        }
+
+        /// <summary>
+        /// 参数控件锁定：使能开(en=true)时锁定所有通讯/相机参数控件，运行时不容许修改；
+        /// 使能关(en=false)时解禁。配合“使能关立即断连”，保证“修改参数”与“活跃连接”严格互斥。
+        /// 控件按名称查找（兼容各协议控件命名差异，不存在的控件自动跳过）。
+        /// </summary>
+        private void SetParamControlsEnabled(bool enable)
+        {
+            foreach (var name in new[] { "textBox1", "textBox2", "textBox15", "textBox16", "comboBox1", "numericUpDown1", "numericUpDown2", "numericUpDown3" })
+            {
+                var c = this.Controls.Find(name, true);
+                if (c.Length > 0) c[0].Enabled = enable;
+            }
+            for (int i = 4; i <= 29; i++) { var c = this.Controls.Find("comboBox" + i, true); if (c.Length > 0) c[0].Enabled = enable; }
+            foreach (var name in new[] { "textBox14", "textBox17", "textBox19", "textBox18", "textBox23", "textBox22", "textBox21", "textBox20", "textBox24", "textBox42", "textBox43", "textBox44", "textBox41", "textBox53" })
+            { var c = this.Controls.Find(name, true); if (c.Length > 0) c[0].Enabled = enable; }
+            for (int i = 1; i <= 12; i++)
+            {
+                var m = this.Controls.Find("cboTrigMode" + i, true); if (m.Length > 0) m[0].Enabled = enable;
+                var v = this.Controls.Find("txtTrigVal" + i, true); if (v.Length > 0) v[0].Enabled = enable;
+            }
+            foreach (var name in new[] { "checkBox3", "checkBox16" })
+            { var c = this.Controls.Find(name, true); if (c.Length > 0) c[0].Enabled = enable; }
+        }
+
         private void checkBox2_CheckedChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
-                if (checkBox2.CheckState == CheckState.Checked)
+                bool en = checkBox2.CheckState == CheckState.Checked;
+                fins_en = en;
+                wdini.WriteString(ModbusTcpIniStore.ConnSection(_linkId), "modbus_en", fins_en.ToString());
+                if (!en)
                 {
-                    fins_en = true;
+                    // 使能关闭：立即断连（fins_en 已置 false，轮询/重连逻辑均不会自动重连），参数控件解禁后可安全修改
+                    DisconnectLink();
+                    SetParamControlsEnabled(true);
                 }
                 else
                 {
-                    fins_en = false;
+                    // 使能开启：锁定参数控件 + 确保通讯在线（立即自动建连；运行中断线由轮询后台自动重连兜底）
+                    SetParamControlsEnabled(false);
+                    try { button1_Click(null, null); } catch { }
                 }
-                wdini.WriteString(ModbusTcpIniStore.ConnSection(_linkId), "modbus_en", fins_en.ToString());
-
             }
         }
 

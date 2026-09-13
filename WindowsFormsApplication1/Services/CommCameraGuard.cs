@@ -250,5 +250,117 @@ namespace WindowsFormsApplication1
                  + "同一协议内，一台相机只能归属一条连接（不同协议之间互不影响）。\r\n"
                  + "如要改为本连接，请先到占用它的连接，把相机 " + cameraNo + " 对应的触发/反馈清空并保存。";
         }
+
+        /// <summary>通讯协议枚举（跨协议软提示用）。</summary>
+        public enum CommProto { Fins, ModbusTcp, ModbusRtu }
+
+        /// <summary>
+        /// 跨协议相机绑定软提示（不硬拦）：检查物理相机 cameraNo（仅 1..12）是否已被“其它协议”的连接绑定
+        /// （触发 chufa 或反馈 fankui 任一有值）。命中返回 warning 文案，无则 null。
+        /// 背景：双协议绑同一台物理相机是设计允许的行为（各连接独立触发/反馈），但产线运行时该相机会被
+        /// 两个连接各自软触发，造成重复检测、commTriggerPendingCount 计数语义混乱（对标 vision master 4.4 审查结论）。
+        /// 属误用配置，故仅警告、不阻止保存，与同协议内的硬拦（FindOwner 系列）区分。
+        /// 相机 13（切方案/心跳功能槽）跨协议有意允许，不在此提示。
+        /// </summary>
+        public static string CrossProtoWarning(ClassIni ini, CommProto selfProto, int selfLinkId, int cameraNo)
+        {
+            if (ini == null || cameraNo < 1 || cameraNo > 12) return null;   // 仅物理相机
+            foreach (var other in OtherProtos(selfProto))
+            {
+                int max = other == CommProto.Fins ? FinsIniStore.MaxLinks
+                          : other == CommProto.ModbusTcp ? ModbusTcpIniStore.MaxLinks
+                          : ModbusRtuIniStore.MaxLinks;
+                for (int link = 1; link <= max; link++)
+                {
+                    // 各协议 CameraBindings 元素类型不同（Fins/ModbusTcp/ModbusRtu 各自定义），分分支用强类型遍历
+                    if (other == CommProto.Fins)
+                    {
+                        var cfg = FinsIniStore.Load(ini, link);
+                        var cam = cfg?.CameraBindings?.Find(c => c.CameraNo == cameraNo);
+                        if (cam != null && (IsBoundValue(cam.Chufa) || IsBoundValue(cam.Fankui)))
+                            return BuildCrossProtoWarn("FINS", link, ini, cameraNo);
+                    }
+                    else if (other == CommProto.ModbusTcp)
+                    {
+                        var cfg = ModbusTcpIniStore.Load(ini, link);
+                        var cam = cfg?.CameraBindings?.Find(c => c.CameraNo == cameraNo);
+                        if (cam != null && (IsBoundValue(cam.Chufa) || IsBoundValue(cam.Fankui)))
+                            return BuildCrossProtoWarn("Modbus-TCP", link, ini, cameraNo);
+                    }
+                    else
+                    {
+                        var cfg = ModbusRtuIniStore.Load(ini, link);
+                        var cam = cfg?.CameraBindings?.Find(c => c.CameraNo == cameraNo);
+                        if (cam != null && (IsBoundValue(cam.Chufa) || IsBoundValue(cam.Fankui)))
+                            return BuildCrossProtoWarn("Modbus-RTU", link, ini, cameraNo);
+                    }
+                }
+            }
+            return null;
+        }
+
+        private static string BuildCrossProtoWarn(string protoName, int link, ClassIni ini, int cameraNo)
+        {
+            string name = protoName == "FINS" ? OwnerDisplayName(ini, link)
+                        : protoName == "Modbus-TCP" ? OwnerDisplayNameModbusTcp(ini, link)
+                        : OwnerDisplayNameModbusRtu(ini, link);
+            return "相机 " + cameraNo + " 已被 " + protoName + " 连接 " + link + "（" + name + "）绑定了触发/反馈。" + System.Environment.NewLine
+                 + "不同协议之间允许绑定同一台相机，但产线运行时该相机会被两个连接各自触发（重复软触发），" + System.Environment.NewLine
+                 + "可能造成重复检测或触发计数异常。建议：同一台物理相机只绑定到一个协议的一条连接。";
+        }
+
+        private static System.Collections.Generic.IEnumerable<CommProto> OtherProtos(CommProto self)
+        {
+            if (self != CommProto.Fins) yield return CommProto.Fins;
+            if (self != CommProto.ModbusTcp) yield return CommProto.ModbusTcp;
+            if (self != CommProto.ModbusRtu) yield return CommProto.ModbusRtu;
+        }
+
+        /// <summary>
+        /// 启动期全局扫描：找出被“多个协议”绑定的物理相机（1..12），每条冲突返回一条 warning 文案。
+        /// 用于软件启动时写日志（不弹窗）：双协议绑同相机是设计允许，但提示误用风险。
+        /// 返回 List&lt;string&gt;，无冲突则为空。
+        /// </summary>
+        public static System.Collections.Generic.List<string> ScanCrossProtoConflicts(ClassIni ini)
+        {
+            var warns = new System.Collections.Generic.List<string>();
+            if (ini == null) return warns;
+            var map = new System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<string>>();
+            for (int link = 1; link <= FinsIniStore.MaxLinks; link++)
+            {
+                var cfg = FinsIniStore.Load(ini, link);
+                if (cfg?.CameraBindings == null) continue;
+                foreach (var c in cfg.CameraBindings)
+                    if (c.CameraNo >= 1 && c.CameraNo <= 12 && (IsBoundValue(c.Chufa) || IsBoundValue(c.Fankui)))
+                        AddCrossProtoOwner(map, c.CameraNo, "FINS 连接 " + link);
+            }
+            for (int link = 1; link <= ModbusTcpIniStore.MaxLinks; link++)
+            {
+                var cfg = ModbusTcpIniStore.Load(ini, link);
+                if (cfg?.CameraBindings == null) continue;
+                foreach (var c in cfg.CameraBindings)
+                    if (c.CameraNo >= 1 && c.CameraNo <= 12 && (IsBoundValue(c.Chufa) || IsBoundValue(c.Fankui)))
+                        AddCrossProtoOwner(map, c.CameraNo, "Modbus-TCP 连接 " + link);
+            }
+            for (int link = 1; link <= ModbusRtuIniStore.MaxLinks; link++)
+            {
+                var cfg = ModbusRtuIniStore.Load(ini, link);
+                if (cfg?.CameraBindings == null) continue;
+                foreach (var c in cfg.CameraBindings)
+                    if (c.CameraNo >= 1 && c.CameraNo <= 12 && (IsBoundValue(c.Chufa) || IsBoundValue(c.Fankui)))
+                        AddCrossProtoOwner(map, c.CameraNo, "Modbus-RTU 连接 " + link);
+            }
+            foreach (var kv in map)
+                if (kv.Value.Count >= 2)
+                    warns.Add("相机 " + kv.Key + " 被多个协议绑定 (" + string.Join("、", kv.Value)
+                             + ")，运行时该相机会被重复软触发，建议同一台物理相机只绑定到一个协议的一条连接。");
+            return warns;
+        }
+
+        private static void AddCrossProtoOwner(System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<string>> map, int cam, string who)
+        {
+            if (!map.ContainsKey(cam)) map[cam] = new System.Collections.Generic.List<string>();
+            map[cam].Add(who);
+        }
     }
 }

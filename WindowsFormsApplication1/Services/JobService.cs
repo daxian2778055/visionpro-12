@@ -107,7 +107,8 @@ namespace WindowsFormsApplication1
             {
                 Myjobs[slot].commTriggerPending = false;
                 // ★ ⑤ 仅在开关机/切型等显式重置场景清零计数；检测完成不再调用本方法（见 InspectWorker.finally）
-                Myjobs[slot].commTriggerPendingCount = 0;
+                // ★ 原子清零：避免与轮询线程的 Interlocked.Increment 形成 lost-update（裸 =0 会吞掉在途增量）
+                System.Threading.Interlocked.Exchange(ref Myjobs[slot].commTriggerPendingCount, 0);
             }
         }
 
@@ -116,7 +117,8 @@ namespace WindowsFormsApplication1
             for (int i = 0; i < 12; i++)
             {
                 Myjobs[i].commTriggerPending = false;
-                Myjobs[i].commTriggerPendingCount = 0;
+                // ★ 原子清零：避免与轮询线程的 Interlocked.Increment 形成 lost-update（裸 =0 会吞掉在途增量）
+                System.Threading.Interlocked.Exchange(ref Myjobs[i].commTriggerPendingCount, 0);
             }
         }
 

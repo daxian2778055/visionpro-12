@@ -186,6 +186,20 @@ namespace WindowsFormsApplication1
                     return;
                 }
 
+                // ★ 跨协议相机绑定软提示（不硬拦）：本连接要绑的物理相机若已被另一协议绑定，警告但仍保存
+                try { _ini.ReadINIFile(_ini.FileName); } catch { }
+                foreach (var cb in cfg.CameraBindings)
+                {
+                    if (cb.CameraNo < 1 || cb.CameraNo > 12) continue;
+                    if (!CommCameraGuard.IsBoundValue(cb.Chufa) && !CommCameraGuard.IsBoundValue(cb.Fankui)) continue;
+                    string xwarn = CommCameraGuard.CrossProtoWarning(_ini, CommCameraGuard.CommProto.Fins, _linkId, cb.CameraNo);
+                    if (!string.IsNullOrEmpty(xwarn))
+                    {
+                        MessageBox.Show(this, xwarn, "跨协议相机绑定提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        break;
+                    }
+                }
+
                 FinsIniStore.Save(_ini, cfg);
                 lblInfo.Text = "已保存并应用：FINS 连接 " + _linkId;
                 Saved?.Invoke(_linkId);
