@@ -247,6 +247,10 @@ namespace WindowsFormsApplication1
         {
             if (cameraIndex < 0 || cameraIndex >= 12 || _cameraCtrl.Cameras[cameraIndex] == null)
                 return -1;
+            // ★ 2026-09-13：触发回帧恢复进行中，禁止该路新触发。
+            //   否则新记录会先登记成功、随后被恢复流程的 ClearCommTriggerPending 清掉，再次破坏配对。
+            if (_triggerRecovering[cameraIndex] != 0)
+                return -1;
             // ★ 仅"通讯触发"模式需要 _jobs.CommTriggerArmed 门控；触发拍照模式直接发软触发（修复软触发被静默忽略）
             string trigMode = NormalizeTriggerMode(_jobs.Myjobs[cameraIndex].triggerMode);
             if (IsCommTriggerMode(trigMode))

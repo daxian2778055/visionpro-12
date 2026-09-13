@@ -167,6 +167,10 @@ namespace WindowsFormsApplication1
         //   这里做超时监测：超时则 停采 → 清 pending → 重建取流，让配对整条链路归零。
         private const int TriggerFrameTimeoutMs = 3000;
         private readonly int[] _triggerRecovering = new int[12];
+        // ★ 2026-09-13：采集恢复未完成标志。独立于 pending 与设备在线状态：
+        //   清 pending 后若重建取流失败，pending 已空、设备仍在线，原逻辑不会再重试；
+        //   保留此标志即可每轮重试重建，直到成功。
+        private readonly int[] _grabRecoveryPending = new int[12];
         private readonly object[] _inspectLocks = new object[12];
         private readonly AutoResetEvent[] _inspectSignal = new AutoResetEvent[12];
         private readonly Thread[] _inspectThreads = new Thread[12];
@@ -7052,15 +7056,28 @@ namespace WindowsFormsApplication1
         /// <summary>
         /// ★ 2026-09-13：触发回帧超时恢复（详见 TriggerFrameTimeoutMs 字段注释）。
         /// 针对「软触发命令返回成功、相机却一直不回帧，且 IsDeviceConnected 仍为 true 因而不会触发设备级重连」
-        /// 这一盲区：pending 占满(容量 3)后将持续拒绝该路新触发，此前没有任何恢复机制。
-        /// 注意：不能直接删除旧记录继续触发（会重新引入「记录-图像」配对错位），
-        /// 必须整条链路归零：停采 → 清 pending → 重建取流。
+        /// 这一盲区：pending 占满(容量 3)后将持续拒绝该路新触发。
+        /// 约束：
+        ///   ① 不能删除旧记录继续触发（会重新引入「记录-图像」配对错位），必须整条链路归零；
+        ///   ② 恢复期间必须禁止该路新触发（_triggerRecovering 同时被触发路径检查），
+        ///      否则新登记成功的记录会被本流程的 Clear 清掉，再次破坏配对；
+        ///   ③ 停采必须确认成功后才清记录；重建失败要保留状态下轮重试（独立于 pending/在线状态）。
         /// </summary>
         private void RecoverStaleTriggers()
         {
             for (int i = 0; i < 12; i++)
             {
                 if (_switchingScheme || _disposingFlag) return;
+                // ★ 优先重试「上次恢复未完成」的相机：不依赖 pending（已被清空），也独立于设备在线状态。
+                if (System.Threading.Volatile.Read(ref _grabRecoveryPending[i]) != 0)
+                {
+                    if (System.Threading.Interlocked.CompareExchange(ref _triggerRecovering[i], 1, 0) == 0)
+                    {
+                        try { RebuildGrabFor(i, "重试"); }
+                        finally { System.Threading.Volatile.Write(ref _triggerRecovering[i], 0); }
+                    }
+                    continue;
+                }
                 double age = _jobs.OldestPendingTriggerAgeMs(i);
                 if (age < 0 || age < TriggerFrameTimeoutMs) continue;
                 if (System.Threading.Interlocked.CompareExchange(ref _triggerRecovering[i], 1, 0) != 0) continue;
@@ -7071,22 +7088,48 @@ namespace WindowsFormsApplication1
                         _jobs.ClearCommTriggerPending(i);
                         continue;
                     }
-                    _logger.WriteLog("相机" + (i + 1) + " 触发后 " + (int)age + "ms 未回帧（且未触发设备重连），判定采集异常：重建取流并清理待回帧记录");
-                    try { _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET(); } catch { }
-                    SetCameraGrabbing(i, false);
-                    _jobs.ClearCommTriggerPending(i);
-                    int nRet;
-                    if (!PrepareCameraGrab(i, out nRet))
-                        _logger.WriteLog("相机" + (i + 1) + " 重建取流失败: " + nRet);
+                    _logger.WriteLog("相机" + (i + 1) + " 触发后 " + (int)age + "ms 未回帧（且未触发设备重连），判定采集异常：禁止新触发 -> 停采 -> 清记录 -> 重建取流");
+                    System.Threading.Volatile.Write(ref _grabRecoveryPending[i], 1);  // 先标记：恢复未完成(同时用于禁止新触发)
+                    RebuildGrabFor(i, "首次");
                 }
                 catch (Exception ex)
                 {
-                    _logger.WriteLog("相机" + (i + 1) + " 触发回帧超时恢复失败: " + ex.Message);
+                    _logger.WriteLog("相机" + (i + 1) + " 触发回帧超时恢复异常: " + ex.Message);
                 }
                 finally
                 {
                     System.Threading.Volatile.Write(ref _triggerRecovering[i], 0);
                 }
+            }
+        }
+
+        /// <summary>停采并确认成功 → 排空在途回调 → 清 pending → 重建取流；成功才清除"恢复未完成"标志。</summary>
+        private void RebuildGrabFor(int i, string phase)
+        {
+            int stopRet = -1;
+            try { stopRet = _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET(); } catch { stopRet = -1; }
+            SetCameraGrabbing(i, false);
+            if (stopRet != MyCamera.MV_OK)
+            {
+                // 停采未成功：不清记录（否则会留下「帧在路上、记录已删」的错配），保留状态下轮重试
+                _logger.WriteLog("相机" + (i + 1) + " 触发回帧恢复(" + phase + ")：停止采集失败 " + stopRet + "，保留待回帧记录，下轮重试");
+                return;
+            }
+            // 排空在途回调：StopGrabbing 返回后，仍在途的回调可能稍后才结束，短暂等待避免旧帧迟到污染新记录
+            try { System.Threading.Thread.Sleep(100); } catch { }
+            _jobs.ClearCommTriggerPending(i);   // 此时该路新触发已被 _grabRecoveryPending 挡住，不会误清新记录
+            int nRet;
+            bool ok;
+            try { ok = PrepareCameraGrab(i, out nRet); }
+            catch (Exception ex) { ok = false; nRet = -1; _logger.WriteLog("相机" + (i + 1) + " 重建取流异常: " + ex.Message); }
+            if (ok)
+            {
+                System.Threading.Volatile.Write(ref _grabRecoveryPending[i], 0);
+                _logger.WriteLog("相机" + (i + 1) + " 触发回帧恢复(" + phase + ")完成：已重建取流");
+            }
+            else
+            {
+                _logger.WriteLog("相机" + (i + 1) + " 触发回帧恢复(" + phase + ")：重建取流失败 " + nRet + "，保留状态下轮重试");
             }
         }
 
