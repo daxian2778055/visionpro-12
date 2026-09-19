@@ -132,10 +132,19 @@ namespace WindowsFormsApplication1
 
         /// <summary>★ 2026-09-13：执行方式判定——该语句是否要读结果集（用 DataAdapter 填充）。
         /// 与"是否需要写确认"分开：WITH...SELECT 是合法查询(读结果)，但仍需确认(可能是写)。</summary>
+        /// <summary>★ 空白归一：换行/制表符/连续空格在 SQL 中与单空格等价，
+        /// 统一压成单空格再大写，防止 "SELECT 1 INTO\nOUTFILE"、"INTO  OUTFILE" 之类绕过关键字判定。</summary>
+        private static string NormalizeSqlHead(string sql)
+        {
+            string s = (sql ?? "").Trim().TrimEnd(';').Trim();
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ");
+            return s.ToUpperInvariant();
+        }
+
         private static bool IsQuerySql(string sql)
         {
             if (string.IsNullOrWhiteSpace(sql)) return false;
-            string head = sql.Trim().ToUpperInvariant();
+            string head = NormalizeSqlHead(sql);
             return head.StartsWith("SELECT") || head.StartsWith("SHOW")
                 || head.StartsWith("DESC") || head.StartsWith("DESCRIBE")
                 || head.StartsWith("EXPLAIN") || head.StartsWith("WITH");
@@ -150,7 +159,7 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrWhiteSpace(sql)) return false;
             string body = sql.Trim().TrimEnd(';').Trim();
             if (body.Contains(";")) return true;
-            string head = body.ToUpperInvariant();
+            string head = NormalizeSqlHead(body);   // ★ 先空白归一（防换行/多空格绕过），再做全部判定
             if (head.StartsWith("WITH")) return true;
             // ★ 追加拦截：SELECT 前缀但实为高危文件读写的语句同样需要写确认，防止绕过——
             //   SELECT ... INTO OUTFILE/DUMPFILE：向服务器磁盘任意路径写文件；

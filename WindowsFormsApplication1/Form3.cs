@@ -1895,11 +1895,19 @@ namespace WindowsFormsApplication1
         /// </summary>
         public void changeok(string aa)
         {
+            // ★ 跨线程快照：本方法由相机输出队列线程调用（Form1 结果输出），不能直读/直写 UI 控件——
+            //   Debug 开跨线程校验时直读控件会抛异常被外层 catch 吞掉，导致该路结果不发出；Release 下也无同步保证。
+            //   在 lock 外一次性取 UI 线程快照（与文件内 P3.1 的 SafeRead 模式一致），锁内只用局部值。
+            bool ui_client = SafeRead(() => checkBox3.CheckState) == CheckState.Checked;
+            bool ui_server = SafeRead(() => checkBox2.CheckState) == CheckState.Checked;
+            bool ui_serial = SafeRead(() => checkBox4.CheckState) == CheckState.Checked;
+            bool ui_hex = SafeRead(() => checkBox1.CheckState) == CheckState.Checked;
+            string ui_serverIp = SafeRead(() => comboBox1.SelectedItem == null ? "" : comboBox1.SelectedItem.ToString());
             lock (locker_1)
             {
-                if (checkBox3.CheckState == CheckState.Checked)
+                if (ui_client)
                 {
-                    try { textBox8.Text = aa; } catch { }
+                    SafeUi(() => textBox8.Text = aa);
                     oks++;
                     try
                     {
@@ -1910,7 +1918,7 @@ namespace WindowsFormsApplication1
                         }
                         else
                         {
-                            byte[] buffer = BuildSendBuffer(aa, checkBox1.CheckState == CheckState.Checked);
+                            byte[] buffer = BuildSendBuffer(aa, ui_hex);
                             socketClient.SendTimeout = 2000;   // 对端不读时不无限阻塞
                             socketClient.Send(buffer);
                         }
@@ -1920,15 +1928,15 @@ namespace WindowsFormsApplication1
                         MsgErroeLog.WriteLog("[Form3-TCP客户机] 发送合格失败: " + aa + " " + ex.Message);
                     }
                 }
-                try { textBox9.Text = "1"; } catch { }
-                if (checkBox2.CheckState == CheckState.Checked)
+                SafeUi(() => textBox9.Text = "1");
+                if (ui_server)
                 {
-                    try { textBox2.Text = aa; } catch { }
+                    SafeUi(() => textBox2.Text = aa);
                     oks++;
                     try
                     {
-                        byte[] buffer = BuildSendBuffer(aa, checkBox1.CheckState == CheckState.Checked);
-                        string ip = comboBox1.SelectedItem == null ? "" : comboBox1.SelectedItem.ToString();
+                        byte[] buffer = BuildSendBuffer(aa, ui_hex);
+                        string ip = ui_serverIp;
                         Socket s;
                         if (ip.Length > 0 && serverSocket.TryGetValue(ip, out s) && s != null)
                         {
@@ -1948,13 +1956,13 @@ namespace WindowsFormsApplication1
                         MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送合格失败: " + aa + " " + ex.Message);
                     }
                 }
-                if (checkBox4.CheckState == CheckState.Checked)
+                if (ui_serial)
                 {
                     if (mdcan.port.IsOpen)
                     {
                         try
                         {
-                            byte[] buffer = BuildSendBuffer(aa, checkBox1.CheckState == CheckState.Checked);
+                            byte[] buffer = BuildSendBuffer(aa, ui_hex);
                             mdcan.port.Encoding = System.Text.Encoding.GetEncoding("GB2312");
                             mdcan.port.Write(buffer, 0, buffer.Length);
                         }
@@ -1976,11 +1984,18 @@ namespace WindowsFormsApplication1
         /// </summary>
         public void changeng(string aa)
         {
+            // ★ 跨线程快照：本方法由相机输出队列线程调用，不能直读/直写 UI 控件（同 changeok）。
+            //   注：当前工程内 changeng 暂无调用点（NG 结果现走 changeok + "Reject" 值），此处一并加固防未来启用。
+            bool ui_client = SafeRead(() => checkBox3.CheckState) == CheckState.Checked;
+            bool ui_server = SafeRead(() => checkBox2.CheckState) == CheckState.Checked;
+            bool ui_serial = SafeRead(() => checkBox4.CheckState) == CheckState.Checked;
+            bool ui_hex = SafeRead(() => checkBox1.CheckState) == CheckState.Checked;
+            string ui_serverIp = SafeRead(() => comboBox1.SelectedItem == null ? "" : comboBox1.SelectedItem.ToString());
             lock (locker_1)
             {
-                if (checkBox3.CheckState == CheckState.Checked)
+                if (ui_client)
                 {
-                    try { textBox8.Text = aa; } catch { }
+                    SafeUi(() => textBox8.Text = aa);
                     oks++;
                     try
                     {
@@ -1991,7 +2006,7 @@ namespace WindowsFormsApplication1
                         }
                         else
                         {
-                            byte[] buffer = BuildSendBuffer(aa, checkBox1.CheckState == CheckState.Checked);
+                            byte[] buffer = BuildSendBuffer(aa, ui_hex);
                             socketClient.SendTimeout = 2000;   // 对端不读时不无限阻塞
                             int sent = socketClient.Send(buffer);
                             if (sent != buffer.Length)
@@ -2003,15 +2018,15 @@ namespace WindowsFormsApplication1
                         MsgErroeLog.WriteLog("[Form3-TCP客户机] 发送NG失败: " + aa + " " + ex.Message);
                     }
                 }
-                try { textBox9.Text = "0"; } catch { }
-                if (checkBox2.CheckState == CheckState.Checked)
+                SafeUi(() => textBox9.Text = "0");
+                if (ui_server)
                 {
-                    try { textBox2.Text = aa; } catch { }
+                    SafeUi(() => textBox2.Text = aa);
                     ngs++;
                     try
                     {
-                        byte[] buffer = BuildSendBuffer(aa, checkBox1.CheckState == CheckState.Checked);
-                        string ip = comboBox1.SelectedItem == null ? "" : comboBox1.SelectedItem.ToString();
+                        byte[] buffer = BuildSendBuffer(aa, ui_hex);
+                        string ip = ui_serverIp;
                         Socket s;
                         if (ip.Length > 0 && serverSocket.TryGetValue(ip, out s) && s != null)
                         {
@@ -2031,13 +2046,13 @@ namespace WindowsFormsApplication1
                         MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送NG失败: " + aa + " " + ex.Message);
                     }
                 }
-                if (checkBox4.CheckState == CheckState.Checked)
+                if (ui_serial)
                 {
                     if (mdcan.port.IsOpen)
                     {
                         try
                         {
-                            byte[] buffer = BuildSendBuffer(aa, checkBox1.CheckState == CheckState.Checked);
+                            byte[] buffer = BuildSendBuffer(aa, ui_hex);
                             mdcan.port.Encoding = System.Text.Encoding.GetEncoding("GB2312");
                             mdcan.port.Write(buffer, 0, buffer.Length);
                         }
