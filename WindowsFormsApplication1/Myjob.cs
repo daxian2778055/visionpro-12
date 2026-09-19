@@ -60,7 +60,6 @@ public class Myjob
         public bool cunok;
         public bool cunng;
         public ICogRecord newrecod;
-        public int temptu;
         public int index;
         public int xianshi;
         public int fit;
@@ -85,7 +84,6 @@ public class Myjob
         public volatile CommTriggerSource triggerSrc;
         public bool dengluEn;
         public bool shijianEn;
-        public bool jiasu;
         public string danwu_time;
         public int danwu_cishu;
         public DataTable myTable;

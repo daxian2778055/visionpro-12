@@ -185,6 +185,22 @@ namespace WindowsFormsApplication1
         private readonly Thread[] _inspectThreads = new Thread[12];
         private readonly int[] _saveFlying = new int[12];   // ★ 性能优先：每相机存图任务"单飞"标志（0/1，忙则丢弃本帧存图，允许漏存）
         private readonly int[] _renderBusy = new int[12];   // ★ 性能优先：每相机渲染请求"单飞"标志（0/1，UI 未消化完则丢弃中间帧，允许漏显示）
+        // ★ 显示降载（2026-09-19）：全局渲染速率门控。UI 线程光栅化天然串行，缺的是总量上限——
+        //   12 路各自单飞叠加仍可能把 UI 打满。限制两次渲染启动的最小间隔（code.ini 可调），
+        //   间隔内到达的请求走各自丢帧路径；每相机饥饿计数防某路被高频路永久挤占。
+        private int _renderMinIntervalMs = 16;
+        private int _lastRenderStartTick;
+        private readonly int[] _renderStarve = new int[12];
+        // ★ 原图快速路径（弱机现场开关，code.ini [Display]RawImageMode 持久化）：
+        //   只贴原图，跳过 VisionPro record 深拷贝与 overlay 光栅化，CPU 降一个量级。
+        private volatile bool _displayRawImage;
+        private readonly PictureBox[] _rawBox = new PictureBox[12];
+        // ★ 交互优先（2026-09-19）：检测到鼠标/键盘活动时临时放宽渲染限速，
+        //   操作员看屏时画面跟手；无人交互时按 RenderMinIntervalMs 正常节流省 CPU。
+        //   初值回拨 1 秒，避免启动瞬间被误判为"正在交互"。
+        private volatile int _lastUserTick = Environment.TickCount - 1000;
+        private int _renderInteractiveIntervalMs = 20;
+        private UserActivityFilter _userActivityFilter;
         private volatile bool _inspectStop;
         private Cognex.VisionPro.CogRecordDisplay[] _cogDisplay;
         private ListBox[] _recentListBox;
@@ -231,6 +247,17 @@ namespace WindowsFormsApplication1
             _config.ReadINIFile(AppDomain.CurrentDomain.BaseDirectory + "//code.ini");
             string savedLayout = _config.ReadString("Display", "LayoutMode", "Grid");
             _layoutMode = (savedLayout == "Row") ? "Row" : "Grid";
+            // ★ 显示降载配置（2026-09-19）：全局渲染最小间隔（ms，0=不限速）与原图快速路径开关。
+            //   弱机现场可把间隔调大（如 33）或开 RawImageMode=1；配置坏值回退默认。
+            if (!int.TryParse(_config.ReadString("Display", "RenderMinIntervalMs", "16"), out _renderMinIntervalMs)
+                || _renderMinIntervalMs < 0 || _renderMinIntervalMs > 1000)
+                _renderMinIntervalMs = 16;
+            _displayRawImage = _config.ReadString("Display", "RawImageMode", "0") == "1";
+            // 交互期间渲染间隔（ms）：只在用户活动时生效，比 RenderMinIntervalMs 小才有意义
+            //（弱机把常规间隔调大省 CPU 时，操作员一动鼠标就临时放宽到本值保流畅）；坏值回退默认
+            if (!int.TryParse(_config.ReadString("Display", "RenderInteractiveIntervalMs", "20"), out _renderInteractiveIntervalMs)
+                || _renderInteractiveIntervalMs < 0 || _renderInteractiveIntervalMs > 1000)
+                _renderInteractiveIntervalMs = 20;
             comboBoxLayoutMode.SelectedIndexChanged -= comboBoxLayoutMode_SelectedIndexChanged;
             comboBoxLayoutMode.Items.Clear();
             comboBoxLayoutMode.Items.AddRange(new object[] { "方格布局", "行布局" });
@@ -484,10 +511,10 @@ namespace WindowsFormsApplication1
                     _jobs.myjob12.myhandle += new delegateHanndler(IO12OK);
                     _jobs.myjob12.myhandle1 += new delegateHanndler(IO12NG);
                     for (int _i = 0; _i < 12; _i++) _jobs.Myjobs[_i].Color = false;
-                    for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].tishi = false; _jobs.Myjobs[_i].modbustemp = false; _jobs.Myjobs[_i].dengluEn = false; _jobs.Myjobs[_i].jiasu = false; }
+                    for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].tishi = false; _jobs.Myjobs[_i].modbustemp = false; _jobs.Myjobs[_i].dengluEn = false; }
                     for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].runtime = 0; _jobs.Myjobs[_i].runcishu = 0; _jobs.Myjobs[_i].index = -1; _jobs.Myjobs[_i].xianshi = 0; }
                     for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].shijianEn = false; _jobs.Myjobs[_i].tcp = false; _jobs.Myjobs[_i].serial = false; }
-                    for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].temptu = 0; _jobs.Myjobs[_i].newrecod = null; _jobs.Myjobs[_i].timespace = 100; }
+                    for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].newrecod = null; _jobs.Myjobs[_i].timespace = 100; }
                     int[] _master = { 0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66 };
                     for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].master = _master[_i]; _jobs.Myjobs[_i].trrigersum = 0; _jobs.Myjobs[_i].trriger = 0; }
                     jiankongshijian = 1000;
@@ -2800,6 +2827,11 @@ namespace WindowsFormsApplication1
         }
         private void Form1_Load(object sender, EventArgs e)
         {
+            // ★ 交互优先（2026-09-19）：挂只读消息过滤器，记录最后鼠标/键盘活动时间，
+            //   供 TryClaimRenderBudget 在有人操作时临时放宽渲染限速；恒返回 false 不吞消息。
+            _userActivityFilter = new UserActivityFilter(this);
+            Application.AddMessageFilter(_userActivityFilter);
+
             int dayt = 0;
             int dayz = 0;
             int authV1 = 0;   // ★ 2026-09-07：授权到期日期（用于统一计算 _authExpired，见下方）
@@ -4808,24 +4840,62 @@ namespace WindowsFormsApplication1
                                 // ★ 渲染节流（性能优先）：每相机至多 1 个渲染请求在飞。
                                 //   UI 尚未消化完上一帧渲染时本帧直接丢弃（允许漏显示中间帧），
                                 //   避免高频下渲染委托在 UI 消息队列无限积压、拖垮界面线程与 CPU。
+                                // ★ 显示降载（2026-09-19）：单飞之上再叠全局速率门控（两次渲染启动最小间隔，
+                                //   code.ini [Display]RenderMinIntervalMs 可调），给光栅化总量封顶；
+                                //   每相机饥饿计数防某路被高频路永久挤占。
                                 int slotRender = int.Parse(myjob.path_number) - 1;
                                 if (slotRender >= 0 && slotRender < 12
                                     && Interlocked.CompareExchange(ref _renderBusy[slotRender], 1, 0) == 0)
                                 {
-                                    try
+                                    if (!TryClaimRenderBudget(slotRender))
                                     {
-                                        // ★ 仅在真正需要渲染本帧时才生成运行记录（原代码无论渲染开关、无论本帧是否被节流丢弃，每帧都执行 CreateLastRunRecord）
-                                        ICogRecord rec = myjob.block.CreateLastRunRecord().SubRecords[0];
-                                        if (!TryBeginInvoke(() => RenderCameraFrame(slotRender, rec, myjob, camIdx)))
-                                            Volatile.Write(ref _renderBusy[slotRender], 0);
-                                    }
-                                    catch (Exception exRender)
-                                    {
-                                        // ★ 修复：创建记录或投递失败时必须释放单飞标志。
-                                        //   标志只在 RenderCameraFrame 内部复位，若此处抛异常则渲染函数根本不会被调用，
-                                        //   该相机后续所有帧都会被 CompareExchange 挡住 —— 表现为这一路永久停止刷新。
                                         Volatile.Write(ref _renderBusy[slotRender], 0);
-                                        _logger.WriteLog("相机" + (slotRender + 1) + " 渲染记录创建/投递失败: " + exRender.Message);
+                                    }
+                                    else if (_displayRawImage)
+                                    {
+                                        // ★ 原图快速路径：UI 只换 PictureBox 的 Image，跳过 record 深拷贝与 overlay 光栅化。
+                                        //   像素在检测线程自包含复制（与存图同纪律），UI 不碰 VisionPro COM。
+                                        Bitmap rawCopy = null;
+                                        try
+                                        {
+                                            if (camIdx >= 0 && camIdx < 12 && bmp[camIdx] != null)
+                                            {
+                                                Bitmap src = bmp[camIdx];
+                                                rawCopy = src.Clone(new Rectangle(0, 0, src.Width, src.Height), src.PixelFormat);
+                                            }
+                                        }
+                                        catch (Exception exRaw)
+                                        {
+                                            _logger.WriteLog("相机" + (slotRender + 1) + " 原图拷贝失败: " + exRaw.Message);
+                                            rawCopy = null;
+                                        }
+                                        if (rawCopy == null)
+                                        {
+                                            Volatile.Write(ref _renderBusy[slotRender], 0);
+                                        }
+                                        else if (!TryBeginInvoke(() => ShowRawFrame(slotRender, rawCopy)))
+                                        {
+                                            rawCopy.Dispose();
+                                            Volatile.Write(ref _renderBusy[slotRender], 0);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        try
+                                        {
+                                            // ★ 仅在真正需要渲染本帧时才生成运行记录（原代码无论渲染开关、无论本帧是否被节流丢弃，每帧都执行 CreateLastRunRecord）
+                                            ICogRecord rec = myjob.block.CreateLastRunRecord().SubRecords[0];
+                                            if (!TryBeginInvoke(() => RenderCameraFrame(slotRender, rec, myjob, camIdx)))
+                                                Volatile.Write(ref _renderBusy[slotRender], 0);
+                                        }
+                                        catch (Exception exRender)
+                                        {
+                                            // ★ 修复：创建记录或投递失败时必须释放单飞标志。
+                                            //   标志只在 RenderCameraFrame 内部复位，若此处抛异常则渲染函数根本不会被调用，
+                                            //   该相机后续所有帧都会被 CompareExchange 挡住 —— 表现为这一路永久停止刷新。
+                                            Volatile.Write(ref _renderBusy[slotRender], 0);
+                                            _logger.WriteLog("相机" + (slotRender + 1) + " 渲染记录创建/投递失败: " + exRender.Message);
+                                        }
                                     }
                                 }
                             }
@@ -5202,32 +5272,21 @@ namespace WindowsFormsApplication1
                 var _mj = _jobs.Myjobs[slot];
                 try
                 {
-                    if (_mj.jiasu == false)
+                    _cd.DrawingEnabled = false;
+                    _cd.Record = temprecord;
+                    _cd.BackColor = Color.FromArgb(255, 60, 60, 60);
+                    _cd.DrawingEnabled = true;
+                    // ★ 降载：Refresh() 强制 UI 线程同步光栅化完才返回；Invalidate() 回到消息泵异步绘制，
+                    //   高频下多次失效自动合并成一次绘制。
+                    _cd.Invalidate();
+                    if (_mj.fit == 0)
                     {
-                        _mj.jiasu = true;
-                        _cd.DrawingEnabled = false;
-                        _cd.Record = temprecord;
-                        _cd.BackColor = Color.FromArgb(255, 60, 60, 60);
-                        _cd.DrawingEnabled = true;
-                        _cd.Refresh();
-                        if (_mj.fit == 0)
-                        {
-                            _cd.Fit(true);
-                            _mj.fit = 1;
-                        }
-                        _mj.jiasu = false;
-                    }
-                    else
-                    {
-                        // 原代码仅 case "1" 有此 else 分支（case "2".."12" 均无，属遗留遗漏）。
-                        // temptu 全工程仅被赋值 0、从无任何读取（死字段），故统一为 12 路一致，行为等价。
-                        _mj.temptu = 0;
+                        _cd.Fit(true);
+                        _mj.fit = 1;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _mj.jiasu = false;
-                    _mj.temptu = 0;
                     _logger.WriteLog(ex.Message + "相机" + (slot + 1) + "record");
                 }
                 try
@@ -5250,6 +5309,101 @@ namespace WindowsFormsApplication1
                     // MessageBox.Show( f9[0].Inspect1.CreateLastRunRecord().SubRecords[2].RecordKey);
                     _logger.WriteLog("缺陷:" + ex.Message);
                 }
+            }
+            finally
+            {
+                Volatile.Write(ref _renderBusy[slot], 0);
+            }
+        }
+
+        /// <summary>
+        /// 全局渲染速率门控（检测线程并发调用，全 Interlocked/Volatile，无锁）。
+        /// 两次渲染启动之间不足最小间隔则拒绝本次（走丢帧路径），给 UI 光栅化总量封顶；
+        /// UI 线程本身串行，无需再加互斥。被拒相机累计饥饿计数，超阈值放行一次，
+        /// 防止低频相机（如通讯触发路）被高频连续采集路永久挤占显示。
+        /// Environment.TickCount 为 int 毫秒，差值运算对回绕自洽。
+        /// </summary>
+        private bool TryClaimRenderBudget(int slot)
+        {
+            int now = Environment.TickCount;
+            int interval = _renderMinIntervalMs;
+            // 交互优先：最近 120ms 内有鼠标/键盘活动时，把限速临时放宽到交互间隔
+            //（仅当交互间隔更小时生效；interval=0 表示不限速，不参与）
+            if (interval > 0
+                && _renderInteractiveIntervalMs < interval
+                && unchecked(now - _lastUserTick) < 120)
+                interval = _renderInteractiveIntervalMs;
+            if (interval > 0
+                && unchecked(now - Volatile.Read(ref _lastRenderStartTick)) < interval
+                && Volatile.Read(ref _renderStarve[slot]) < 40)
+            {
+                Volatile.Write(ref _renderStarve[slot], Volatile.Read(ref _renderStarve[slot]) + 1);
+                return false;
+            }
+            Volatile.Write(ref _renderStarve[slot], 0);
+            Volatile.Write(ref _lastRenderStartTick, now);
+            return true;
+        }
+
+        /// <summary>
+        /// 只读消息过滤器：仅记录最后一次用户交互的 tick，永不吞消息（恒返回 false）。
+        /// PreFilterMessage 在 UI 线程执行；_lastUserTick 为 volatile，检测线程直接读。
+        /// </summary>
+        private sealed class UserActivityFilter : IMessageFilter
+        {
+            private readonly Form1 _owner;
+            public UserActivityFilter(Form1 owner) { _owner = owner; }
+            // ★ 必须写全名：本工程 Datas.cs 里有自定义 class Message（同命名空间会遮蔽），
+            //   写 ref Message 会解析到它 → 不匹配 IMessageFilter.PreFilterMessage → CS0535 编译失败。
+            public bool PreFilterMessage(ref System.Windows.Forms.Message m)
+            {
+                switch (m.Msg)
+                {
+                    case 0x0200: // WM_MOUSEMOVE
+                    case 0x0201: // WM_LBUTTONDOWN
+                    case 0x0204: // WM_RBUTTONDOWN
+                    case 0x00A1: // WM_NCLBUTTONDOWN
+                    case 0x0100: // WM_KEYDOWN
+                    case 0x020A: // WM_MOUSEWHEEL
+                        _owner._lastUserTick = Environment.TickCount;
+                        break;
+                }
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 原图快速路径 UI 侧：直接换 PictureBox 的 Image，不走 VisionPro record/光栅化。
+        /// 控件首帧惰性创建，与对应 CogRecordDisplay 同父容器同位置同锚定，盖在其上。
+        /// 单飞标志在 finally 释放；未成功交给控件的位图由本方法负责 Dispose。
+        /// </summary>
+        private void ShowRawFrame(int slot, Bitmap frame)
+        {
+            bool assigned = false;
+            try
+            {
+                PictureBox pb = _rawBox[slot];
+                if (pb == null)
+                {
+                    pb = new PictureBox();
+                    pb.SizeMode = PictureBoxSizeMode.Zoom;
+                    pb.BackColor = Color.FromArgb(255, 60, 60, 60);
+                    var cd = _cogDisplay[slot];
+                    pb.Parent = cd.Parent;
+                    pb.Bounds = cd.Bounds;
+                    pb.Anchor = cd.Anchor;
+                    _rawBox[slot] = pb;
+                }
+                pb.Visible = true;
+                var old = pb.Image as Bitmap;
+                pb.Image = frame;
+                assigned = true;
+                if (old != null) old.Dispose();
+            }
+            catch (Exception ex)
+            {
+                if (!assigned) frame.Dispose();
+                _logger.WriteLog("相机" + (slot + 1) + " 原图显示失败: " + ex.Message);
             }
             finally
             {
@@ -6614,6 +6768,8 @@ namespace WindowsFormsApplication1
         {
             try
             {
+                if (_userActivityFilter != null)
+                    Application.RemoveMessageFilter(_userActivityFilter);
                 CrashMonitor.MarkExitedCleanly();
             }
             catch { }

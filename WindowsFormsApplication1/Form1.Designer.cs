@@ -1697,56 +1697,56 @@ namespace WindowsFormsApplication1
             // 连接设备ToolStripMenuItem
             // 
             this.连接设备ToolStripMenuItem.Name = "连接设备ToolStripMenuItem";
-            this.连接设备ToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.连接设备ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.连接设备ToolStripMenuItem.Text = "连接设备";
             this.连接设备ToolStripMenuItem.Click += new System.EventHandler(this.连接设备ToolStripMenuItem_Click);
             // 
             // 打开日志界面ToolStripMenuItem
             // 
             this.打开日志界面ToolStripMenuItem.Name = "打开日志界面ToolStripMenuItem";
-            this.打开日志界面ToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.打开日志界面ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.打开日志界面ToolStripMenuItem.Text = "打开日志界面";
             this.打开日志界面ToolStripMenuItem.Click += new System.EventHandler(this.打开日志界面ToolStripMenuItem_Click);
             // 
             // 打开参数调整界面ToolStripMenuItem
             // 
             this.打开参数调整界面ToolStripMenuItem.Name = "打开参数调整界面ToolStripMenuItem";
-            this.打开参数调整界面ToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.打开参数调整界面ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.打开参数调整界面ToolStripMenuItem.Text = "打开参数调整界面";
             this.打开参数调整界面ToolStripMenuItem.Click += new System.EventHandler(this.打开参数调整界面ToolStripMenuItem_Click);
             // 
             // mesToolStripMenuItem
             // 
             this.mesToolStripMenuItem.Name = "mesToolStripMenuItem";
-            this.mesToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.mesToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.mesToolStripMenuItem.Text = "MES";
             this.mesToolStripMenuItem.Click += new System.EventHandler(this.mesToolStripMenuItem_Click);
             // 
             // 三菱Fx编程口ToolStripMenuItem
             // 
             this.三菱Fx编程口ToolStripMenuItem.Name = "三菱Fx编程口ToolStripMenuItem";
-            this.三菱Fx编程口ToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.三菱Fx编程口ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.三菱Fx编程口ToolStripMenuItem.Text = "三菱Fx编程口";
             this.三菱Fx编程口ToolStripMenuItem.Click += new System.EventHandler(this.三菱Fx编程口ToolStripMenuItem_Click);
             // 
             // 显示备注ToolStripMenuItem
             // 
             this.显示备注ToolStripMenuItem.Name = "显示备注ToolStripMenuItem";
-            this.显示备注ToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.显示备注ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.显示备注ToolStripMenuItem.Text = "显示备注";
             this.显示备注ToolStripMenuItem.Click += new System.EventHandler(this.显示备注ToolStripMenuItem_Click);
             // 
             // mysqlToolStripMenuItem
             // 
             this.mysqlToolStripMenuItem.Name = "mysqlToolStripMenuItem";
-            this.mysqlToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.mysqlToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.mysqlToolStripMenuItem.Text = "MySQL";
             this.mysqlToolStripMenuItem.Click += new System.EventHandler(this.mysqlToolStripMenuItem_Click);
             // 
             // 版本信息ToolStripMenuItem
             // 
             this.版本信息ToolStripMenuItem.Name = "版本信息ToolStripMenuItem";
-            this.版本信息ToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.版本信息ToolStripMenuItem.Size = new System.Drawing.Size(180, 22);
             this.版本信息ToolStripMenuItem.Text = "版本信息";
             this.版本信息ToolStripMenuItem.Click += new System.EventHandler(this.版本信息ToolStripMenuItem_Click);
             // 
@@ -13546,7 +13546,7 @@ namespace WindowsFormsApplication1
             this.label148.Name = "label148";
             this.label148.Size = new System.Drawing.Size(82, 21);
             this.label148.TabIndex = 125;
-            this.label148.Text = "YA0911";
+            this.label148.Text = "YA0919";
             // 
             // timer17
             // 
