@@ -5389,9 +5389,24 @@ namespace WindowsFormsApplication1
                     pb.SizeMode = PictureBoxSizeMode.Zoom;
                     pb.BackColor = Color.FromArgb(255, 60, 60, 60);
                     var cd = _cogDisplay[slot];
-                    pb.Parent = cd.Parent;
-                    pb.Bounds = cd.Bounds;
-                    pb.Anchor = cd.Anchor;
+                    var tlp = cd.Parent as TableLayoutPanel;
+                    if (tlp != null)
+                    {
+                        // ★H1 修复（RawImageMode 错位）：父容器是 TableLayoutPanel 时，
+                        //   必须用 Add(control,col,row) 直接放入 cd 所在单元格并 Dock=Fill——
+                        //   原实现只设 Parent+Bounds：TLP 布局器会无视手动 Bounds，
+                        //   并把 pb 塞进自动分配的新单元格，导致画面跑到错误位置并挤压原布局。
+                        var cell = tlp.GetCellPosition(cd);
+                        tlp.Controls.Add(pb, cell.Column, cell.Row);
+                        pb.Dock = DockStyle.Fill;
+                    }
+                    else
+                    {
+                        pb.Parent = cd.Parent;
+                        pb.Bounds = cd.Bounds;
+                        pb.Anchor = cd.Anchor;
+                    }
+                    pb.BringToFront();   // 覆盖在 CogRecordDisplay 之上
                     _rawBox[slot] = pb;
                 }
                 pb.Visible = true;
@@ -10923,6 +10938,15 @@ namespace WindowsFormsApplication1
         private volatile bool _authExpired = false;
         private void bnOpen_Click(object sender, EventArgs e)
         {
+            // ★M10 修复：原实现 dakaizhong=true 后仅在"参数错误"与"正常结尾"两处复位，
+            //   中途任何异常（枚举/开相机等）都会让标志永久为 true → 重连线程永久停摆。
+            //   改为包装方法：无论本体如何退出（提前 return / 异常）都由 finally 复位。
+            try { bnOpenCore(); }
+            finally { dakaizhong = false; }
+        }
+
+        private void bnOpenCore()
+        {
             if (manager1 == null || manager1.JobCount <= 0)
                 return;
 
@@ -11501,7 +11525,11 @@ namespace WindowsFormsApplication1
 
                 try
                 {
-                    if (manager1.JobCount > i)
+                    // ★H4 修复：原实现只在 JobCount 以内的槽位真正关设备，却无条件把 12 个槽全置 null——
+                    //   槽位 ≥ JobCount 的已开设备（例如此前方案数量调小过）句柄被丢弃但设备未关：
+                    //   设备资源被占用直到进程退出、回调仍推帧，且旧委托失去 rooting 有打到已回收委托的崩溃窗口。
+                    //   现改为按"槽位是否真有相机对象"无条件关闭全部 12 槽。
+                    if (_cameraCtrl.Cameras[i] != null)
                     {
                         // ★ 关键修复：先停止抓流，再关闭设备（防止回调线程冲突）
                         lock (_cameraLock)

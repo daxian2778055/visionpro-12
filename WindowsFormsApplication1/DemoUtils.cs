@@ -81,7 +81,9 @@ namespace WindowsFormsApplication1
                 MessageBox.Show( "Data for writting is not corrent: " + ex.Message );
             }
         }
-        public static void WriteResultRender1(Func<OperateResult> write, string address,out string err)
+        /// <summary>★H3：改为返回是否成功（原 void 只设 err 字符串、调用方无法得知成败，
+        /// 导致 xie() 写失败也清槽、结果与完成字一次丢光）。现有调用点作为语句调用不受影响。</summary>
+        public static bool WriteResultRender1(Func<OperateResult> write, string address,out string err)
         {
             try
             {
@@ -89,16 +91,19 @@ namespace WindowsFormsApplication1
                 if (result.IsSuccess)
                 {
                     err=DateTime.Now.ToString("[HH:mm:ss] ") + "[" + address + "] Write Success";
+                    return true;
                 }
                 else
                 {
                     err = DateTime.Now.ToString("[HH:mm:ss] ") + "[" + address + "] Write Failed " + Environment.NewLine + " Reason：" + result.ToMessageShowString();
+                    return false;
                 }
             }
             catch (Exception ex)
             {
                 // 主要是为了捕获写入的值不正确的情况
                 err="Data for writting is not corrent: " + ex.Message;
+                return false;
             }
         }
         public static void BulkReadRenderResult( HslCommunication.Core.IReadWriteNet readWrite, TextBox addTextBox, TextBox lengthTextBox, TextBox resultTextBox )

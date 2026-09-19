@@ -462,7 +462,12 @@ namespace WindowsFormsApplication1
                 }
                 ApplyGigePacketSizeAfterOpen(slot, deviceArrayIndex);
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
-                return nRet == MyCamera.MV_OK;
+                if (nRet != MyCamera.MV_OK) return false;
+                // ★M11 修复：原重连路径只注册图像回调、漏了异常回调——重连后该路 SDK 异常不再上报；
+                //   与首次打开路径（Form1.cs:7179/11044）保持一致注册异常回调
+                //   （cbException 为常驻字段，已防 GC）。
+                try { _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(cbException, (IntPtr)slot); } catch { }
+                return true;
             }
         }
 

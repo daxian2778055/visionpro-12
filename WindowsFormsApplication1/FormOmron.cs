@@ -1747,7 +1747,8 @@ namespace WindowsFormsApplication1
                                 if (block[0] == camera_dic[key][3])
                                 {
                                     int failRegs;
-                                    int.TryParse(block[2], out failRegs);   // block[2]=字数（寄存器个数）
+                                    if (!int.TryParse(block[2], out failRegs) || failRegs <= 0)
+                                        InspectionFailureOutput.NotifyRegsUnset();   // ★M3：字数未配置/非法会静默退化回单寄存器写，告警一次
                                     value = InspectionFailureOutput.RepeatForRegisters(block[4], failRegs);
                                     break;
                                 }
@@ -1776,69 +1777,86 @@ namespace WindowsFormsApplication1
                 if (camSnapshot == null || finsSnapshot == null) return;
                 foreach (var pat in camSnapshot)
                 {
-                    if (pat.Value[5] != "无")
+                    if (pat.Value[5] == "无") continue;
+                    // ★H2 修复：每槽独立 try/catch。原实现整个 foreach 共用一个 try——
+                    //   任一槽取值/解析抛异常（如值为"无"/"Reject"而格式为 int）会中断当次全部回写，
+                    //   且该槽未走到清槽保持"待写"，下次调用在同一槽再抛 → 字典序靠后的回写被永久堵死。
+                    try
                     {
+                        bool writeAllOk = true;   // 本槽所有写调用是否成功
                         foreach (var par in finsSnapshot)
                         {
-                            if (pat.Value[5] == par.Value[0])
-                            {
-                                int addr_start = int.Parse(par.Value[1]);
-                                string fmt = par.Value[4];
+                            if (pat.Value[5] != par.Value[0]) continue;
+                            int addr_start = int.Parse(par.Value[1]);
+                            string fmt = par.Value[4];
+                            // ★H2：值非法不再抛——替换为失败值并保持原值个数（个数即现场约定的一块寄存器数）
+                            string dataVal = EnsureWritableValue(pat.Value[4], fmt);
 
-                                if (fmt == "int")
+                            if (fmt == "int")
+                            {
+                                // 逗号分隔 → short数组, 批量写 (Omron FINS memory write)
+                                string[] parts = dataVal.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                short[] vals = new short[parts.Length];
+                                for (int i = 0; i < parts.Length; i++)
+                                    vals[i] = (short)Math.Round(double.Parse(parts[i].Trim()));
+                                writeAllOk = DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + addr_start.ToString(), vals), "D" + addr_start.ToString(), out fins_temp);
+                                for (int j = 0; j < vals.Length; j++)
                                 {
-                                    // 逗号分隔 → short数组, 批量写 (Omron FINS memory write)
-                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                                    short[] vals = new short[parts.Length];
-                                    for (int i = 0; i < parts.Length; i++)
-                                        vals[i] = (short)Math.Round(double.Parse(parts[i].Trim()));
-                                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + addr_start.ToString(), vals), "D" + addr_start.ToString(), out fins_temp);
-                                    for (int j = 0; j < vals.Length; j++)
-                                    {
-                                        int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
-                                        CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
-                                    }
+                                    int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
+                                    CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                                 }
-                                else if (fmt == "long")
-                                {
-                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                                    int[] vals = new int[parts.Length];
-                                    for (int i = 0; i < parts.Length; i++)
-                                        vals[i] = (int)Math.Round(double.Parse(parts[i].Trim()));
-                                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + addr_start.ToString(), vals), "D" + addr_start.ToString(), out fins_temp);
-                                    for (int j = 0; j < vals.Length * 2; j++)
-                                    {
-                                        int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
-                                        CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
-                                    }
-                                }
-                                else if (fmt == "float")
-                                {
-                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                                    float[] vals = new float[parts.Length];
-                                    for (int i = 0; i < parts.Length; i++)
-                                        vals[i] = float.Parse(parts[i].Trim());
-                                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + addr_start.ToString(), vals), "D" + addr_start.ToString(), out fins_temp);
-                                    for (int j = 0; j < vals.Length * 2; j++)
-                                    {
-                                        int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
-                                        CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
-                                    }
-                                }
-                                else if (fmt == "string")
-                                {
-                                    string[] parts = pat.Value[4].Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
-                                    for (int j = 0; j < parts.Length; j++)
-                                    {
-                                        int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
-                                        DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (addr_start + j).ToString(), parts[j].Trim()), "D" + (addr_start + j).ToString(), out fins_temp);
-                                        CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
-                                    }
-                                }
-                                break;
                             }
+                            else if (fmt == "long")
+                            {
+                                string[] parts = dataVal.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                int[] vals = new int[parts.Length];
+                                for (int i = 0; i < parts.Length; i++)
+                                    vals[i] = (int)Math.Round(double.Parse(parts[i].Trim()));
+                                writeAllOk = DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + addr_start.ToString(), vals), "D" + addr_start.ToString(), out fins_temp);
+                                for (int j = 0; j < vals.Length * 2; j++)
+                                {
+                                    int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
+                                    CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
+                                }
+                            }
+                            else if (fmt == "float")
+                            {
+                                string[] parts = dataVal.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                float[] vals = new float[parts.Length];
+                                for (int i = 0; i < parts.Length; i++)
+                                    vals[i] = float.Parse(parts[i].Trim());
+                                writeAllOk = DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + addr_start.ToString(), vals), "D" + addr_start.ToString(), out fins_temp);
+                                for (int j = 0; j < vals.Length * 2; j++)
+                                {
+                                    int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
+                                    CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
+                                }
+                            }
+                            else if (fmt == "string")
+                            {
+                                string[] parts = dataVal.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                                for (int j = 0; j < parts.Length; j++)
+                                {
+                                    int xuanzhong_temp = addr_start - int.Parse(address_qishi.ToString()) + j;
+                                    if (!DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (addr_start + j).ToString(), parts[j].Trim()), "D" + (addr_start + j).ToString(), out fins_temp))
+                                        writeAllOk = false;
+                                    CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
+                                }
+                            }
+                            break;
                         }
+                        // ★H3 修复：写成功才清槽；失败保留"待写"，下次 xie() 自动重试
+                        //   （PLC 侧靠超时判 NG 兜底；不再"写失败也清槽"导致结果与完成字一次丢光）。
+                        if (writeAllOk)
+                            pat.Value[5] = "无";
+                        else
+                            LogXieRetry("D 槽 " + pat.Value[5] + " → " + fins_temp);
+                    }
+                    catch (Exception exSlot)
+                    {
+                        // 地址非法等不可重试错误：清槽避免毒化堵死后续回写（H2），并记录
                         pat.Value[5] = "无";
+                        try { Log("回写跳过(该槽配置异常，已清槽防堵死): " + exSlot.Message); } catch { }
                     }
                 }
             }
@@ -1847,6 +1865,46 @@ namespace WindowsFormsApplication1
                 Log(ex.Message);
             }
             }
+        }
+
+        /// <summary>★H2：把待写值规范成该格式可解析的串——非法值（"无"/"Reject" 配数值块等）
+        /// 替换为失败值并保持原值个数（个数即现场约定的一块寄存器数）；合法则原样返回。</summary>
+        private static string EnsureWritableValue(string value, string fmt)
+        {
+            string[] parts = (value ?? "").Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) parts = new string[] { "" };
+            bool ok = true;
+            if (fmt == "int" || fmt == "long")
+            {
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    double d;
+                    if (!double.TryParse(parts[i].Trim(), out d)) { ok = false; break; }
+                }
+            }
+            else if (fmt == "float")
+            {
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    float f;
+                    if (!float.TryParse(parts[i].Trim(), out f)) { ok = false; break; }
+                }
+            }
+            if (ok) return value ?? "";
+            string fv = InspectionFailureOutput.ForFormat(fmt);
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < parts.Length; i++) { if (i > 0) sb.Append(','); sb.Append(fv); }
+            return sb.ToString();
+        }
+
+        // ★H3：回写失败保留待写会随每次 xie() 重试，日志按 5 秒限流避免刷屏
+        private int _lastXieRetryLogTick;
+        private void LogXieRetry(string detail)
+        {
+            int now = Environment.TickCount;
+            if (unchecked(now - _lastXieRetryLogTick) < 5000) return;
+            _lastXieRetryLogTick = now;
+            try { Log("回写失败(不清槽，下次 xie 自动重试)： " + detail); } catch { }
         }
         private void timer2_Tick(object sender, EventArgs e)
         {
