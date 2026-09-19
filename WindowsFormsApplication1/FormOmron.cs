@@ -1746,7 +1746,9 @@ namespace WindowsFormsApplication1
                             foreach (var block in blocks.Values)
                                 if (block[0] == camera_dic[key][3])
                                 {
-                                    value = InspectionFailureOutput.ForFormat(block[4]);
+                                    int failRegs;
+                                    int.TryParse(block[2], out failRegs);   // block[2]=字数（寄存器个数）
+                                    value = InspectionFailureOutput.RepeatForRegisters(block[4], failRegs);
                                     break;
                                 }
                     }
