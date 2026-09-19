@@ -4537,12 +4537,13 @@ namespace WindowsFormsApplication1
                             if (trigProto == NoProtoProto && trigLink > 1)
                                 nprotoTarget = frmCommManager.GetNoProtoLink(trigLink);
                             Form3 noProtoOut = nprotoTarget ?? frm3;
-                            // ★低风险加固：本帧来自无协议连接2~4但目标实例已释放（如该连接被删除）时，
-                            //   原实现静默回落到连接1端口发送——会污染连接1的数据且无任何提示。
-                            //   此处仅补告警日志（不改回落行为；是否改为"不发+靠PLC超时"待现场确认）。
-                            if (nprotoTarget == null && trigProto == NoProtoProto && trigLink > 1)
-                                _logger.WriteLog("无协议连接" + trigLink + "的实例已释放，本帧结果回落到连接1端口发送，请检查该连接是否被删除");
-                            if (myjob.tcp)
+                            // ★修复（现场确认）：本帧来自无协议连接2~4但目标实例已释放（如该连接被删除）时，
+                            //   不再回落到连接1端口发送（原实现静默错发会污染连接1的数据），
+                            //   本帧的无协议输出整体跳过——PLC 靠超时判 NG（安全侧）。
+                            bool noProtoTargetMissing = (trigProto == NoProtoProto && trigLink > 1 && nprotoTarget == null);
+                            if (noProtoTargetMissing)
+                                _logger.WriteLog("无协议连接" + trigLink + "的实例已释放，本帧无协议结果不再发送（靠 PLC 超时判 NG），请检查该连接是否被删除");
+                            if (myjob.tcp && !noProtoTargetMissing)
                             {
                                 // 在检测线程上快照输出值，避免后台任务跨线程读 VisionPro COM(block.Outputs) 引发竞态
                                 string tcpVal;
@@ -4562,7 +4563,7 @@ namespace WindowsFormsApplication1
                                     }
                                 });
                             }
-                            if (myjob.serial)
+                            if (myjob.serial && !noProtoTargetMissing)
                             {
                                 string serialVal;
                                 try { serialVal = runOk ? myjob.block.Outputs["serial"].Value.ToString() : "Reject"; }
