@@ -1280,7 +1280,9 @@ namespace WindowsFormsApplication1
 
         private void DisconnectLink()
         {
-            try { _modbusLink.Close(); } catch { }
+            // ★M5 修复：与轮询读/写/重连共用 _ioSync 单锁——原实现直接 Close，
+            //   会与在途 I/O 抢同一 socket。
+            lock (_ioSync) { try { _modbusLink.Close(); } catch { } }
             button2.Enabled = false;
             button1.Enabled = true;
             panel2.Enabled = false;

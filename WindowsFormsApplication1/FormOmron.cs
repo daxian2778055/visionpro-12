@@ -1286,7 +1286,9 @@ namespace WindowsFormsApplication1
         /// <summary>断开当前连接（使能关闭时调用），不影响“使能”状态本身。</summary>
         private void DisconnectLink()
         {
-            try { _finsLink.Close(); } catch { }
+            // ★M5 修复：与轮询读/写/重连共用 _ioSync 单锁——原实现直接 Close，
+            //   会与在途 I/O 抢同一 socket（读路径 815/828 也持该锁）。
+            lock (_ioSync) { try { _finsLink.Close(); } catch { } }
             button2.Enabled = false;
             button1.Enabled = true;
             panel2.Enabled = false;

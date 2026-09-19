@@ -65,7 +65,10 @@ namespace WindowsFormsApplication1
         // 无协议宿主：Form3 主窗单例（由 Form1 注入：连接 1 嵌入 + 整窗实例共享切型转发）
         private Form3 _noProtoHost;
         // 无协议连接 2~4 完整整窗实例池（阶段 8A：每实例 = 与连接 1 同构的 Form3 大窗，读写独立 test_noprotoN.ini，自持三通道运行时）
-        private Dictionary<int, Form3> _noProtoEditors = new Dictionary<int, Form3>();
+        // ★低风险加固：改 ConcurrentDictionary——检测线程经 GetNoProtoLink 无锁读、UI 线程增删（Show/Release/全部释放），
+        //   原 Dictionary 并发读写可能损坏内部结构（.NET Framework 下表现为死循环/索引异常）。
+        private System.Collections.Concurrent.ConcurrentDictionary<int, Form3> _noProtoEditors
+            = new System.Collections.Concurrent.ConcurrentDictionary<int, Form3>();
 
         public FormCommManager()
         {
@@ -610,7 +613,8 @@ namespace WindowsFormsApplication1
             if (_currentHost == host) RestoreFromHost();
             try { host.ReleaseInstance(); } catch { }
             try { host.Dispose(); } catch { }
-            _noProtoEditors.Remove(link);
+            Form3 removed;   // ★ConcurrentDictionary 无单参 Remove，用 TryRemove（返回值不使用）
+            _noProtoEditors.TryRemove(link, out removed);
         }
 
         /// <summary>按链路号取无协议连接整窗实例：link==1 返回主窗宿主，link&gt;=2 返回独立整窗。
