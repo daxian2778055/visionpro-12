@@ -152,6 +152,10 @@ namespace WindowsFormsApplication1
             if (body.Contains(";")) return true;
             string head = body.ToUpperInvariant();
             if (head.StartsWith("WITH")) return true;
+            // ★ 追加拦截：SELECT 前缀但实为高危文件读写的语句同样需要写确认，防止绕过——
+            //   SELECT ... INTO OUTFILE/DUMPFILE：向服务器磁盘任意路径写文件；
+            //   SELECT LOAD_FILE('/任意路径')：读服务器上任意文件。
+            if (head.Contains("INTO OUTFILE") || head.Contains("INTO DUMPFILE") || head.Contains("LOAD_FILE")) return true;
             return !(head.StartsWith("SELECT") || head.StartsWith("SHOW")
                 || head.StartsWith("DESC") || head.StartsWith("DESCRIBE")
                 || head.StartsWith("EXPLAIN"));

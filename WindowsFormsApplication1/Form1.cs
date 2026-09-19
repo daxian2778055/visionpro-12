@@ -136,7 +136,7 @@ namespace WindowsFormsApplication1
         // 替代 getrecord 里每帧 4 处无条件 Task.Run，避免 12 路 × 高帧率时线程池任务堆积；
         // 慢 PLC/慢操作只拖自己那一路，不影响其它路。队列线程为后台线程，进程退出自然回收；
         // SafeCleanupBeforeDispose 里主动 Dispose 保证退出路径无残留。
-        private CameraWorkQueue[] _cameraOutWork;
+        private volatile CameraWorkQueue[] _cameraOutWork;   // ★ volatile：惰性初始化发布后保证其它线程立即可见完整数组
         private static readonly object _camWorkLock = new object();
         // ★P2-2：丢帧数缓存 + 后台采样。GetLostFrame 的 P/Invoke（MV_CC_GetAllMatchInfo_NET + AllocHGlobal）
         // 原先在 UI 线程（SafeBeginInvoke 回调）每圈 12 次执行 → 界面卡顿。改为 UI_monitor 后台线程每 3 圈
@@ -150,10 +150,14 @@ namespace WindowsFormsApplication1
             lock (_camWorkLock)
             {
                 if (_cameraOutWork != null) return;
-                _cameraOutWork = new CameraWorkQueue[12];
+                // ★ 竞态修复：先在局部数组里填满元素，再一次性发布给 volatile 字段。
+                //   原实现先发布空数组、后逐个填元素——并发首帧可能在元素仍为 null 时读到数组，
+                //   该帧输出/统计/存图整体丢失。
+                var arr = new CameraWorkQueue[12];
                 for (int i = 0; i < 12; i++)
                     // ★fix③：注入日志落点（写 LoggingService），任务失败经 CameraWorkQueue.WorkerLoop 用 RateLimitedLog 限流记录，不再空 catch 吞
-                    _cameraOutWork[i] = new CameraWorkQueue("cam" + (i + 1), 4, m => _logger.WriteLog(m));
+                    arr[i] = new CameraWorkQueue("cam" + (i + 1), 4, m => _logger.WriteLog(m));
+                _cameraOutWork = arr;
             }
         }
         public double jiankongshijian;
@@ -6659,10 +6663,13 @@ namespace WindowsFormsApplication1
                         if (!anyAlive)
                         {
                             // ① 检测线程已全部退出：可安全完整恢复（线程可重启；定时器/通讯尚未被动过）
+                            // ★ 竞态修复：_disposingFlag 必须在 StartInspectWorkers() 之前复位。
+                            //   新 worker 线程入口判 while (!_inspectStop && !_disposingFlag)，
+                            //   若标志仍为 true，新线程会在启动瞬间立即退出 → 界面看似正常但该路永久无检测。
                             _inspectStop = false;
                             _inspectionLifecycle.Resume();
-                            StartInspectWorkers();
                             _disposingFlag = false;
+                            StartInspectWorkers();
                             _isFormClosing = false;
                             e.Cancel = true;
                             MessageBox.Show("已取消关闭：检测已恢复运行。", "关闭已取消");
@@ -7643,17 +7650,22 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void SendSchemeSwitchAck()
         {
+            // ★ 加固：proto 与 LinkId 同时快照、立即清零，回执只按本次快照发送。
+            //   原实现清 proto 与读 LinkId 分两步：并发切型时可能在两步之间被写入新连接号，
+            //   把新连接的 LinkId 用到旧回执上、回执发错连接。
             int proto = _schemeAckProto;
+            int ackLinkId = _schemeAckLinkId;
             _schemeAckProto = 0;
+            _schemeAckLinkId = 1;   // 消费即复位为默认连接1，避免残留旧连接号
             if (proto == 0) return;
             try
             {
                 if (proto == 1 && _comm.Omron != null)
-                    _comm.Omron.WriteSchemeSwitchAck(_schemeAckLinkId);
+                    _comm.Omron.WriteSchemeSwitchAck(ackLinkId);
                 else if (proto == 2 && _comm.Modbustcp != null)
-                    _comm.Modbustcp.WriteSchemeSwitchAck(_schemeAckLinkId);
+                    _comm.Modbustcp.WriteSchemeSwitchAck(ackLinkId);
                 else if (proto == 3 && _comm.ModbusRtu != null)
-                    _comm.ModbusRtu.WriteSchemeSwitchAck(_schemeAckLinkId);
+                    _comm.ModbusRtu.WriteSchemeSwitchAck(ackLinkId);
             }
             catch (Exception ex)
             {

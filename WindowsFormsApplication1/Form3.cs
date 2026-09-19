@@ -80,7 +80,7 @@ namespace WindowsFormsApplication1
         public string qiehuan_fangshi = "";
         private int xiangji = 1;
         string strReceive;
-        bool bAccpet = false;
+        volatile bool bAccpet = false;   // ★ 跨线程可见性：UI 线程置位/复位，fun() 接收线程判 while(bAccpet)
        // SerialPortmdcan.port = new SerialPort();
        public  Modbus mdcan = new Modbus();
         public int modbus_qufan = 0;
@@ -1993,7 +1993,9 @@ namespace WindowsFormsApplication1
                         {
                             byte[] buffer = BuildSendBuffer(aa, checkBox1.CheckState == CheckState.Checked);
                             socketClient.SendTimeout = 2000;   // 对端不读时不无限阻塞
-                            socketClient.Send(buffer);
+                            int sent = socketClient.Send(buffer);
+                            if (sent != buffer.Length)
+                                MsgErroeLog.WriteLog("[Form3-TCP客户机] 发送NG不完整: " + sent + "/" + buffer.Length + " " + aa);
                         }
                     }
                     catch (Exception ex)
@@ -2012,7 +2014,15 @@ namespace WindowsFormsApplication1
                         string ip = comboBox1.SelectedItem == null ? "" : comboBox1.SelectedItem.ToString();
                         Socket s;
                         if (ip.Length > 0 && serverSocket.TryGetValue(ip, out s) && s != null)
-                            s.Send(buffer);
+                        {
+                            // ★ 与 changeok 对齐：服务端发送设置超时 + 字节数检查。
+                            //   原裸 Send()：对端连接正常但停止读取时，发送缓冲耗尽会永久阻塞；
+                            //   该调用在相机顺序队列内，会连带拖住后续 PLC/IO 输出。
+                            try { s.SendTimeout = 2000; } catch { }
+                            int sent = s.Send(buffer);
+                            if (sent != buffer.Length)
+                                MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送NG不完整: " + sent + "/" + buffer.Length + " " + aa);
+                        }
                         else
                             MsgErroeLog.WriteLog("[Form3-TCP服务器] 发送NG失败: 无客户端连接 " + aa);
                     }
