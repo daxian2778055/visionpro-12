@@ -74,6 +74,11 @@ namespace WindowsFormsApplication1
         public IntPtr m_pBufForSaveImage11 = IntPtr.Zero;         // 用于保存图像的缓存
         public IntPtr m_pBufForSaveImage12 = IntPtr.Zero;         // 用于保存图像的缓存
         MyCamera.cbOutputExdelegate cbImage;
+        // ★P0 修复：SDK 异常回调委托必须由字段长期持有。
+        //   原实现以方法组直传（MV_CC_RegisterExceptionCallBack_NET(ExceptionCallBack, …)），
+        //   每次隐式 new 一个委托且注册后无任何托管引用 → 可被 GC 回收，原生回调 thunk 失效；
+        //   恰在掉线/带宽不足触发异常回调时进入已释放地址（AccessViolation 随机崩溃、极难复现）。
+        MyCamera.cbExceptiondelegate cbException;
         MyCamera.MV_CC_DEVICE_INFO_LIST m_pDeviceList = new MyCamera.MV_CC_DEVICE_INFO_LIST();
         MyCamera.MV_CC_DEVICE_INFO[] m_pDeviceInfo = new MyCamera.MV_CC_DEVICE_INFO[12];
         private readonly CameraController _cameraCtrl = AppHost.Services.Resolve<CameraController>();
@@ -238,6 +243,8 @@ namespace WindowsFormsApplication1
                 try { _logger.WriteLog("相机枚举失败（已跳过，不影响启动）: " + exCamEnum.Message); } catch { }
             }
             cbImage = new MyCamera.cbOutputExdelegate(ImageCallBack);
+            // ★P0：异常回调委托同样只创建一次并常驻（后续不再重建，避免已注册的旧委托失去引用被 GC）
+            cbException = new MyCamera.cbExceptiondelegate(ExceptionCallBack);
             for (int i = 0; i < 12; ++i)
             {
                 m_BufForSaveImageLock[i] = new Object();
@@ -6634,6 +6641,46 @@ namespace WindowsFormsApplication1
                     // ★ 立即设置释放标志，阻止 ImageCallBack、timer 等后台操作访问 UI
                     _disposingFlag = true;
 
+                    // 停止检测入队线程，避免关相机后仍消费旧帧
+                    if (!StopInspectWorkers())
+                    {
+                        _logger.WriteLog("关闭中止：检测事务仍在执行，未释放资源");
+                        // ★P0 修复：中止关闭必须回滚，否则系统被永久卡死——
+                        //   原实现把"停定时器 / 停通讯轮询 / 重置IO输出"放在本检查之前执行，
+                        //   一旦在此中止，这些不可逆副作用已经发生，且 _disposingFlag 未复位
+                        //   → 窗口还在但界面永久不再刷新、定时器与通讯全停，只能杀进程。
+                        //   现把所有不可逆步骤后移到本检查之后；中止时按"能否安全恢复"分两种处理：
+                        bool anyAlive = false;
+                        for (int i = 0; i < 12; i++)
+                        {
+                            if (_inspectThreads[i] != null && _inspectThreads[i].IsAlive) { anyAlive = true; break; }
+                        }
+
+                        if (!anyAlive)
+                        {
+                            // ① 检测线程已全部退出：可安全完整恢复（线程可重启；定时器/通讯尚未被动过）
+                            _inspectStop = false;
+                            _inspectionLifecycle.Resume();
+                            StartInspectWorkers();
+                            _disposingFlag = false;
+                            _isFormClosing = false;
+                            e.Cancel = true;
+                            MessageBox.Show("已取消关闭：检测已恢复运行。", "关闭已取消");
+                        }
+                        else
+                        {
+                            // ② 仍有线程卡在不可中断的检测中：不能重启（避免同槽位出现重复消费者），
+                            //    保持停检态；但必须复位 _disposingFlag 让界面恢复刷新，并明确告知需重启，
+                            //    避免"窗口看似正常、实则已停止检测"的欺骗状态。
+                            _disposingFlag = false;
+                            _isFormClosing = false;
+                            e.Cancel = true;
+                            MessageBox.Show("关闭已取消。注意：检测线程尚未结束，系统当前处于停止状态且无法自动恢复，请稍候再次关闭，或重启软件。", "关闭已取消");
+                        }
+                        return;
+                    }
+
+                    // ===== 以下为"确定关闭"的不可逆步骤（必须在停止检测成功之后执行）=====
                     // 先禁用所有计时器，停止后台任务
                     try { timer1.Enabled = false; } catch { }
                     try { timer2.Enabled = false; } catch { }
@@ -6646,16 +6693,6 @@ namespace WindowsFormsApplication1
                     try { button11_Click_1(null, null); } catch { }
                     Thread.Sleep(100);
                     ResetMyJobOutputs();
-
-                    // 停止检测入队线程，避免关相机后仍消费旧帧
-                    if (!StopInspectWorkers())
-                    {
-                        _logger.WriteLog("关闭中止：检测事务仍在执行，未释放资源");
-                        e.Cancel = true;
-                        _isFormClosing = false;
-                        MessageBox.Show("检测尚未结束，暂不能安全释放资源。请等待检测结束后再次关闭。", "关闭中止");
-                        return;
-                    }
 
                     // ★ 核心修复：按正确顺序释放相机资源（只做这一件事）
                     ReleaseAllCameras();
@@ -6695,6 +6732,7 @@ namespace WindowsFormsApplication1
 
             // ★ F24：注销回调委托引用，断开 SDK 与托管回调的连接，防止 GC 延迟回收委托导致回调进入已释放资源
             cbImage = null;
+            cbException = null;   // ★P0：异常回调委托同样注销（与 cbImage 对称）
             GC.Collect();
             GC.WaitForPendingFinalizers();
 
@@ -6960,7 +6998,7 @@ namespace WindowsFormsApplication1
                     if (nPacketSize > 0)
                         _cameraCtrl.Cameras[slot].MV_CC_SetIntValue_NET("GevSCPSPacketSize", (uint)nPacketSize);
                 }
-                _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(ExceptionCallBack, (IntPtr)slot);   // 2026-09-06：注册 SDK 异常回调
+                _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(cbException, (IntPtr)slot);   // 2026-09-06：注册 SDK 异常回调（★P0：传字段持有委托，防 GC）
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
                 return nRet == MyCamera.MV_OK;
             }
@@ -9545,6 +9583,22 @@ namespace WindowsFormsApplication1
         /// <summary>
         /// 方案切换：停止→丢帧→关相机→卸载旧方案→加载新方案→重开相机→恢复参数→自动运行
         /// </summary>
+        /// <summary>
+        /// ★P0：切型中止 / 提前退出时统一回滚切换门控。
+        ///   不回滚会永久卡死：_switchingScheme=true → EnqueueInspectFrame/InspectWorker 丢弃所有帧（全系统停检）；
+        ///   qiehuanzhong=1 → 后续切型被永久拒绝；_schemeAckProto 残留 → 误发"切换成功"回执给 PLC。
+        /// </summary>
+        private void RollbackSchemeSwitch()
+        {
+            _switchingScheme = false;
+            _inspectionLifecycle.Resume();
+            Interlocked.Exchange(ref qiehuanzhong, 0);
+            _schemeAckProto = 0;
+            // 恢复切换开始时被隐藏的按钮，否则中止后用户点不到【运行】、无法继续生产；
+            // 本方法可能在后台线程调用 → 走 SafeBeginInvoke（关闭流程中 _disposingFlag=true 时会被安全丢弃）
+            try { SafeBeginInvoke(new Action(() => { try { button1.Visible = true; } catch { } })); } catch { }
+        }
+
         private void xinghao_qiehuan(string a)
         {
             if (Interlocked.CompareExchange(ref qiehuanzhong, 1, 0) == 0)
@@ -9599,23 +9653,38 @@ namespace WindowsFormsApplication1
                         //   改为「中止本次切换」：不卸载方案、不并发 Shutdown，fail-stop 并提示用户重启，
                         //   避免把系统拖入不可恢复的卡死状态。
                         _logger.WriteLog("切方案中止：等待 10 秒后仍有检测帧未结束，已中止切换（未卸载方案、未并发 Shutdown），请检查方案单帧耗时或重启软件。");
+                        // ★P0 修复：中止路径必须回滚切换门控，否则系统被永久卡死：
+                        //   ① _switchingScheme 永久为 true → EnqueueInspectFrame/InspectWorker 丢弃所有帧（全系统停止检测）；
+                        //   ② qiehuanzhong 永久为 1 → 之后任何切型都被永久拒绝；
+                        //   ③ 明确取消回执（_schemeAckProto=0）→ 不发"切换成功"假回执，PLC 侧靠超时判 NG。
+                        RollbackSchemeSwitch();
                         try
                         {
                             SafeBeginInvoke(new Action(() =>
                             {
                                 try { if (Frm2 != null && !Frm2.IsDisposed) Frm2.Close(); } catch { }
-                                try { MessageBox.Show("方案切换已中止：检测线程长时间未结束，为避免与检测冲突，本次未卸载方案。请检查方案后重启软件重试。", "切换中止", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                                try { button1.Visible = true; } catch { }
+                                try { display(); } catch { }
+                                try { MessageBox.Show("方案切换已中止：检测线程长时间未结束，本次未卸载方案（仍在用原方案）。请点击【运行】继续生产，或重启软件后重试切换。", "切换中止", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
                             }));
                         }
                         catch { }
                         return;   // 不再执行 Shutdown / 加载新方案
                     }
                     // Callbacks are drained; the close handler also updates WinForms controls.
-                    if (_disposingFlag) return;
+                    // ★P0 修复：这两条提前退出路径同样必须回滚切换门控，否则 _switchingScheme 永久为 true
+                    //   → 全系统停止检测、后续切型被永久拒绝。关闭流程被取消时尤其致命：
+                    //   _disposingFlag 已被复位，而本方法早已 return，无人再复位这些标志。
+                    if (_disposingFlag)
+                    {
+                        RollbackSchemeSwitch();
+                        return;
+                    }
                     try { Invoke(new Action(() => bnClose_Click(null, null))); }
                     catch (Exception exClose)
                     {
                         _logger.WriteLog("切方案中止：关闭相机失败 " + exClose.Message);
+                        RollbackSchemeSwitch();
                         return;
                     }
                     UpdateSplashProgress(10, "正在停止检测...");
@@ -10780,7 +10849,7 @@ namespace WindowsFormsApplication1
                             }
                         }
 
-                        _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(ExceptionCallBack, (IntPtr)slot);   // 2026-09-06：注册 SDK 异常回调
+                        _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(cbException, (IntPtr)slot);   // 2026-09-06：注册 SDK 异常回调（★P0：传字段持有委托，防 GC）
                         nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
                         if (nRet != MyCamera.MV_OK)
                         {

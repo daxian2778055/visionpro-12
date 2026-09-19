@@ -1576,9 +1576,23 @@ namespace WindowsFormsApplication1
                                                         {
                                                             if (File.Exists(lujing.Replace("\0", "")))
                                                             {
-                                                                qiehuanzhong = 1;
-                                                                SelectionChangedEventArgs E = new SelectionChangedEventArgs(shuju_temp, pap.Key.ToString()) { SchemePath = lujing };
-                                                                getData(this, E);
+                                                                // ★P0 修复（连接 2~4 切型永久失效）：
+                                                                //   原实现 ① 未给事件设置 LinkId（默认 0）→ 主界面误当连接 1 的切型处理；
+                                                                //   ② 在此置本窗体锁 qiehuanzhong=1，而主界面 linkId>1 分支用 GetSwitchLock(linkId)
+                                                                //      读的正是同一个字段 → 条件永远不满足，且此路径无人复位 → 该子连接切型永久失效。
+                                                                //   修法：连接 1 保持原行为（门控仍走本窗体 qiehuanzhong，由主界面连接 1 分支复位）；
+                                                                //        连接 2~4 改走 RaiseSchemeSwitch 携带 LinkId，门控统一由主界面
+                                                                //        SetSwitchLock/GetSwitchLock 负责（切换中/同路径会被其拦截，不会重复切换）。
+                                                                if (_linkId <= 1)
+                                                                {
+                                                                    qiehuanzhong = 1;
+                                                                    SelectionChangedEventArgs E = new SelectionChangedEventArgs(shuju_temp, pap.Key.ToString()) { SchemePath = lujing };
+                                                                    getData(this, E);
+                                                                }
+                                                                else
+                                                                {
+                                                                    RaiseSchemeSwitch(shuju_temp, lujing, _linkId);
+                                                                }
                                                             }
                                                             else
                                                             {
