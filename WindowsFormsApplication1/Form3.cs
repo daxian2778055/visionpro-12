@@ -60,6 +60,7 @@ namespace WindowsFormsApplication1
         private readonly byte[] _tcpRecvBuffer = new byte[64 * 1024];   // TCP 接收缓冲（复用，避免每帧分配 3MB）
         private volatile bool _tcpClientNeedReconnect = false;           // TCP 客户机断线重连标志（独立，不依赖 monitor 字符串）
         private string _serialBuf = "";                                  // 串口无协议组帧缓冲
+        private string _tcpBuf = "";                                     // TCP 客户机无协议组帧缓冲（单连接用字段；服务器每连接用局部变量）
         // ★ P3.1：切型匹配串缓存。qiehuan() 由 TCP 客户机/服务器接收线程（后台）高频调用，
         // 直接读 textBox18~25.Text 在后台线程访问控件（Debug 开跨线程校验会抛异常）。
         // 改为后台读这份缓存；UI 线程在 InitializeForm 载入与 8 个框 TextChanged 时同步它（线程安全）。
@@ -491,33 +492,83 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void receiveClient()
         {
+            // ★ 句柄竞态修复：线程入口快照本次连接的 socket，全程只操作本快照。
+            // 原实现线程内直接用字段 socketClient，若 clientmonitor 已重建新 socket，
+            // 旧线程 Close() 会把新连接一起关掉，造成新老连接来回闪断。
+            Socket sk = socketClient;
+            if (sk == null) return;
+            _tcpBuf = "";   // 新连接从零开始组帧，避免上次连接残留的半包与新数据拼成错帧
             while (true)
             {
                 try
                 {
-                    int r = socketClient.Receive(_tcpRecvBuffer);
+                    int r = sk.Receive(_tcpRecvBuffer);
                     if (r == 0)
                     {
-                        // 服务端正常关闭连接：关闭 socket 并标记失败状态，触发 clientmonitor 自动重连
-                        try { if (socketClient != null) { socketClient.Close(); socketClient = null; } } catch { }
+                        // 服务端正常关闭连接：关闭本连接并标记失败状态，触发 clientmonitor 自动重连
+                        // ★ 仅当字段仍指向本连接时才 Close/置空，避免误关已重建的新连接
+                        try { if (socketClient == sk) { sk.Close(); socketClient = null; } } catch { }
+                        _tcpBuf = "";
                         _tcpClientNeedReconnect = true;
                         break;
                     }
                     string sss = System.Text.Encoding.Default.GetString(_tcpRecvBuffer, 0, r);
                     if (jinzhi == 1)
                         sss = sss.Replace('\0', '0');
-                    ShowMsgClient(socketClient.RemoteEndPoint + ":" + sss+"\r\n");
+                    ShowMsgClient(sk.RemoteEndPoint + ":" + sss+"\r\n");
                     if (qiehuan_fangshi == "Tcp_client")
                     {
-                        DispatchReceivedFrame(sss);
+                        DispatchTcpFrame(sss, ref _tcpBuf);
                     }
                 }
                 catch
                 {
-                    // 断线/异常：关闭旧 socket 并标记失败状态，让 clientmonitor 感知后自动重连
+                    // 断线/异常：关闭本连接并标记失败状态，让 clientmonitor 感知后自动重连
+                    // ★ 仅当字段仍指向本连接时才 Close/置空，避免误关已重建的新连接
                     _tcpClientNeedReconnect = true;
-                    try { if (socketClient != null) socketClient.Close(); } catch { }
+                    try { if (socketClient == sk) { sk.Close(); socketClient = null; } } catch { }
+                    _tcpBuf = "";
                     break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 无协议 TCP 组帧派发：修复"拆包漏触发 / 粘包误匹配"。
+        /// 规则与串口侧一致（串口用 _serialBuf + '\n' 分帧，本方法沿用同一约定）：
+        ///   ① 缓冲里已有半包，或本次数据含换行 → 累积到 buffer 后按行派发
+        ///      （半包留在 buffer 等下一段；超 512 字节强制成帧，与串口一致）；
+        ///   ② 缓冲为空且本次数据不含换行 → 按原有行为整段直接派发，兼容不使用换行分隔的协议，避免吞帧。
+        /// buffer 由调用方持有：客户机用实例字段 _tcpBuf（单连接）；服务器每连接用方法局部变量（多连接不串扰）。
+        /// </summary>
+        private void DispatchTcpFrame(string data, ref string buffer)
+        {
+            if (buffer.Length == 0 && data.IndexOf('\n') < 0)
+            {
+                DispatchReceivedFrame(data);   // 原有行为：整段直接派发
+                return;
+            }
+            buffer += data;
+            while (buffer.Length > 0)
+            {
+                int idx = buffer.IndexOf('\n');
+                string line;
+                if (idx >= 0)
+                {
+                    line = buffer.Substring(0, idx);
+                    buffer = buffer.Substring(idx + 1);
+                }
+                else if (buffer.Length >= 512)
+                {
+                    line = buffer;
+                    buffer = "";
+                }
+                else
+                    break;   // 半包，等待下一次数据
+                line = line.Trim().TrimEnd('\r', '\0');
+                if (line.Length > 0)
+                {
+                    DispatchReceivedFrame(line);
                 }
             }
         }
@@ -668,25 +719,10 @@ namespace WindowsFormsApplication1
             socketWatch = o as Socket;
             while (true)
             {
+                Socket accepted = null;
                 try
                 {
-                    Socket accepted = socketWatch.Accept();
-                    // 同地址客户端重连时先移除旧连接，避免字典残留旧 socket
-                    Socket old;
-                    serverSocket.TryRemove(accepted.RemoteEndPoint.ToString(), out old);
-                    if (old != null) { try { old.Close(); } catch { } }
-                    serverSocket.TryAdd(accepted.RemoteEndPoint.ToString(), accepted);
-                    //将远程连接的IP地址和端口号填入下拉菜单（★P3.1：Listen 线程后台改 comboBox1，包 SafeUi 走 BeginInvoke，
-                    // 避免 Debug 开跨线程校验时后台直接改控件抛异常被 catch 吞掉导致监听线程退出）
-                    SafeUi(() =>
-                    {
-                        comboBox1.Items.Add(accepted.RemoteEndPoint.ToString());
-                        comboBox1.Text = accepted.RemoteEndPoint.ToString();
-                    });
-                    ShowMsg(accepted.RemoteEndPoint.ToString() + "连接成功，我是服务器");
-                    Thread th1 = new Thread(Receive);
-                    th1.IsBackground = true;
-                    th1.Start(accepted);
+                    accepted = socketWatch.Accept();
                 }
                 catch (Exception ex)
                 {
@@ -711,6 +747,42 @@ namespace WindowsFormsApplication1
                     }
                     break;
                 }
+                // ★ 单连接后处理独立 try：登记/回显/起接收线程任一异常只丢弃该连接，绝不允许打死监听线程。
+                // 原实现与 Accept 共用一个 catch：扫码枪类客户端秒连秒断时 RemoteEndPoint 为 null 抛 NRE，
+                // 整个 Listen 直接 break —— 服务器永久停听，只能手工重启。
+                try
+                {
+                    // 取远端地址字符串（客户端秒连秒断时 RemoteEndPoint 可能失效，取不到即视为无效连接丢弃）
+                    string ep = null;
+                    try { ep = accepted.RemoteEndPoint == null ? null : accepted.RemoteEndPoint.ToString(); } catch { }
+                    if (string.IsNullOrEmpty(ep))
+                    {
+                        try { accepted.Close(); } catch { }
+                        continue;   // 丢弃该无效连接，监听继续
+                    }
+                    // 同地址客户端重连时先移除旧连接，避免字典残留旧 socket
+                    Socket old;
+                    serverSocket.TryRemove(ep, out old);
+                    if (old != null) { try { old.Close(); } catch { } }
+                    serverSocket.TryAdd(ep, accepted);
+                    //将远程连接的IP地址和端口号填入下拉菜单（★P3.1：Listen 线程后台改 comboBox1，包 SafeUi 走 BeginInvoke，
+                    // 避免 Debug 开跨线程校验时后台直接改控件抛异常被 catch 吞掉导致监听线程退出）
+                    SafeUi(() =>
+                    {
+                        comboBox1.Items.Add(ep);
+                        comboBox1.Text = ep;
+                    });
+                    ShowMsg(ep + "连接成功，我是服务器");
+                    Thread th1 = new Thread(Receive);
+                    th1.IsBackground = true;
+                    th1.Start(accepted);
+                }
+                catch (Exception exConn)
+                {
+                    // 单连接初始化失败：记录日志并关闭该连接，监听线程继续（不再因单个客户端异常而停听）
+                    try { accepted.Close(); } catch { }
+                    try { MsgErroeLog.WriteLog("TCP服务器单连接初始化异常(监听未受影响，继续监听)：" + exConn.GetType().Name + "，" + exConn.Message + "，来自Form3.TCP服务器"); } catch { }
+                }
             }
         }
         string rcv1;
@@ -721,6 +793,7 @@ namespace WindowsFormsApplication1
         {
             Socket sk = o as Socket;
             byte[] buf = new byte[64 * 1024];   // 每个连接独立缓冲，避免多连接共享字段竞态
+            string connBuf = "";                // ★ 本连接独立组帧缓冲（方法局部变量，多连接天然不串扰）
             while (true)
             {
                 try
@@ -743,7 +816,7 @@ namespace WindowsFormsApplication1
                     rcv1 = str;
                     if (qiehuan_fangshi == "Tcp_server")
                     {
-                        DispatchReceivedFrame(str);
+                        DispatchTcpFrame(str, ref connBuf);
                     }
                 }
                 catch

@@ -91,6 +91,7 @@ namespace WindowsFormsApplication1
             this.三菱Fx编程口ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.显示备注ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.mysqlToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.版本信息ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.数据库管理ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.textBox3 = new System.Windows.Forms.TextBox();
             this.label5 = new System.Windows.Forms.Label();
@@ -1685,7 +1686,8 @@ namespace WindowsFormsApplication1
             this.mesToolStripMenuItem,
             this.三菱Fx编程口ToolStripMenuItem,
             this.显示备注ToolStripMenuItem,
-            this.mysqlToolStripMenuItem});
+            this.mysqlToolStripMenuItem,
+            this.版本信息ToolStripMenuItem});
             this.查找ToolStripMenuItem.Image = ((System.Drawing.Image)(resources.GetObject("查找ToolStripMenuItem.Image")));
             this.查找ToolStripMenuItem.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft;
             this.查找ToolStripMenuItem.Name = "查找ToolStripMenuItem";
@@ -1740,6 +1742,13 @@ namespace WindowsFormsApplication1
             this.mysqlToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
             this.mysqlToolStripMenuItem.Text = "MySQL";
             this.mysqlToolStripMenuItem.Click += new System.EventHandler(this.mysqlToolStripMenuItem_Click);
+            // 
+            // 版本信息ToolStripMenuItem
+            // 
+            this.版本信息ToolStripMenuItem.Name = "版本信息ToolStripMenuItem";
+            this.版本信息ToolStripMenuItem.Size = new System.Drawing.Size(172, 22);
+            this.版本信息ToolStripMenuItem.Text = "版本信息";
+            this.版本信息ToolStripMenuItem.Click += new System.EventHandler(this.版本信息ToolStripMenuItem_Click);
             // 
             // 数据库管理ToolStripMenuItem
             // 
@@ -14044,6 +14053,7 @@ namespace WindowsFormsApplication1
         private System.Windows.Forms.ToolStripMenuItem 查找ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 打开日志界面ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 打开参数调整界面ToolStripMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem 版本信息ToolStripMenuItem;
         private System.Windows.Forms.CheckBox checkBox27;
         private System.Windows.Forms.CheckBox checkBox28;
         private System.Windows.Forms.CheckBox checkBox29;

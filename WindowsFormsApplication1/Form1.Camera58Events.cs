@@ -6191,6 +6191,31 @@ namespace WindowsFormsApplication1
             }
         }
 
+        /// <summary>
+        /// 【查找】→【版本信息】：显示程序版本号与编译时间，便于现场记录/追溯。
+        /// 菜单项为设计器原生项（Form1.Designer.cs 中"版本信息ToolStripMenuItem"），可直接在 VS 设计器中编辑。
+        /// </summary>
+        private void 版本信息ToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                string ver = Application.ProductVersion;
+                if (string.IsNullOrEmpty(ver) && asm.GetName().Version != null) ver = asm.GetName().Version.ToString();
+                DateTime buildTime;
+                try { buildTime = System.IO.File.GetLastWriteTime(asm.Location); }
+                catch { buildTime = DateTime.MinValue; }
+                string info = string.Format(
+                    "光眼视觉检测系统{0}版本：{1}{0}编译时间：{2:yyyy-MM-dd HH:mm:ss}{0}{0}（菜单【查找】→【版本信息】）",
+                    Environment.NewLine, ver ?? "未知", buildTime);
+                MessageBox.Show(info, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                try { MessageBox.Show("读取版本信息失败：" + ex.Message, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+            }
+        }
+
         private void cogRecordDisplay7_Enter(object sender, EventArgs e)
         {
 

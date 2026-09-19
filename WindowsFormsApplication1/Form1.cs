@@ -245,36 +245,6 @@ namespace WindowsFormsApplication1
             cbImage = new MyCamera.cbOutputExdelegate(ImageCallBack);
             // ★P0：异常回调委托同样只创建一次并常驻（后续不再重建，避免已注册的旧委托失去引用被 GC）
             cbException = new MyCamera.cbExceptiondelegate(ExceptionCallBack);
-            // ★ 版本信息：在【查找】菜单下挂一个"版本信息"子项，便于现场查询（含编译时间）
-            try
-            {
-                var verMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-                verMenuItem.Name = "版本信息ToolStripMenuItem";
-                verMenuItem.Size = new System.Drawing.Size(172, 22);
-                verMenuItem.Text = "版本信息";
-                verMenuItem.Click += (s, ev) =>
-                {
-                    try
-                    {
-                        var asm = System.Reflection.Assembly.GetExecutingAssembly();
-                        var ver = Application.ProductVersion;
-                        if (string.IsNullOrEmpty(ver) && asm.GetName().Version != null) ver = asm.GetName().Version.ToString();
-                        DateTime buildTime;
-                        try { buildTime = System.IO.File.GetLastWriteTime(asm.Location); }
-                        catch { buildTime = DateTime.MinValue; }
-                        var info = string.Format(
-                            "光眼视觉检测系统{0}版本：{1}{0}编译时间：{2:yyyy-MM-dd HH:mm:ss}{0}{0}（菜单【查找】→【版本信息】）",
-                            Environment.NewLine, ver ?? "未知", buildTime);
-                        MessageBox.Show(info, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                    catch (Exception exV)
-                    {
-                        try { MessageBox.Show("读取版本信息失败：" + exV.Message, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
-                    }
-                };
-                查找ToolStripMenuItem.DropDownItems.Add(verMenuItem);
-            }
-            catch { }
             for (int i = 0; i < 12; ++i)
             {
                 m_BufForSaveImageLock[i] = new Object();
