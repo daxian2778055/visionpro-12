@@ -4537,6 +4537,11 @@ namespace WindowsFormsApplication1
                             if (trigProto == NoProtoProto && trigLink > 1)
                                 nprotoTarget = frmCommManager.GetNoProtoLink(trigLink);
                             Form3 noProtoOut = nprotoTarget ?? frm3;
+                            // ★低风险加固：本帧来自无协议连接2~4但目标实例已释放（如该连接被删除）时，
+                            //   原实现静默回落到连接1端口发送——会污染连接1的数据且无任何提示。
+                            //   此处仅补告警日志（不改回落行为；是否改为"不发+靠PLC超时"待现场确认）。
+                            if (nprotoTarget == null && trigProto == NoProtoProto && trigLink > 1)
+                                _logger.WriteLog("无协议连接" + trigLink + "的实例已释放，本帧结果回落到连接1端口发送，请检查该连接是否被删除");
                             if (myjob.tcp)
                             {
                                 // 在检测线程上快照输出值，避免后台任务跨线程读 VisionPro COM(block.Outputs) 引发竞态
@@ -4998,11 +5003,11 @@ namespace WindowsFormsApplication1
                                                 }
                                                 catch (Exception ex)
                                                 {
-                                                    for (int _i = 0; _i < 12; _i++)
-                                                    {
-                                                        _jobs.Myjobs[_i].ng1 = 0;
-                                                        _jobs.Myjobs[_i].ok1 = 0;
-                                                    }
+                                                    // ★低风险修复：原实现跨通道清全部 12 路的 ok1/ng1——
+                                                    //   一台相机存图失败会误清其它 11 路尚未处理的输出标志。
+                                                    //   与上方 finally 一致，只清本路。
+                                                    myjob.ng1 = 0;
+                                                    myjob.ok1 = 0;
                                                     _logger.WriteLog(ex.Message + "相机" + myjob.path_number + "存图");
                                                 }
                                             }
@@ -6713,6 +6718,20 @@ namespace WindowsFormsApplication1
         #region 资源清理与程序退出
         private void SafeCleanupBeforeDispose()
         {
+            // ★低风险加固：释放原图显示（RawImageMode）各路最后一张位图——
+            //   ShowRawFrame 只 Dispose 被替换的旧图，退出时最后一张无人释放（进程兜底），此处收口。
+            for (int i = 0; i < 12; i++)
+            {
+                try
+                {
+                    var pb = _rawBox[i];
+                    if (pb == null) continue;
+                    var img = pb.Image as Bitmap;
+                    pb.Image = null;
+                    if (img != null) img.Dispose();
+                }
+                catch { }
+            }
             // ★P2-1：退出路径主动释放 12 路相机输出队列，避免残留后台线程
             try
             {
@@ -7093,7 +7112,7 @@ namespace WindowsFormsApplication1
             //}
         }
         string cameraState = "";
-        bool chonglianzhong = false;
+        volatile bool chonglianzhong = false;   // ★低风险加固：UI 线程(timer2_Tick)读写、Task.Run 后台 finally 复位，跨线程需 volatile 保证可见性
         /// <summary>运行或打开设备后启用，用于断线/热插拔重连。</summary>
         private bool _cameraReconnectEnabled = false;
 

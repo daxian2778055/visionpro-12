@@ -1902,6 +1902,12 @@ namespace WindowsFormsApplication1
                     }
                     return vbyte;
                 }
+                // ★低风险加固：勾选了 hex 但内容非法（长度为奇数）→ 原实现静默退回按文本发送，
+                //   现象是"发出去的为什么不是 hex"。补一条日志便于排查（发送行为不变）。
+                if (sHex.Length > 0)
+                {
+                    try { WindowsFormsApplication1.Core.Infrastructure.AppHost.Services.Resolve<LoggingService>().WriteLog("BuildSendBuffer：hex 模式内容长度为奇数(" + sHex.Length + ")，已按文本发送"); } catch { }
+                }
             }
             return System.Text.Encoding.Default.GetBytes(text ?? "");
         }

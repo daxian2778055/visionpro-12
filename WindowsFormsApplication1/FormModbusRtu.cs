@@ -3375,7 +3375,8 @@ namespace WindowsFormsApplication1
                         {
                             if (pat.Value[5] != par.Value[0]) continue;
                             int addr_start = int.Parse(par.Value[1]);
-                            string fmt = par.Value[4];
+                            // ★低风险加固：格式串归一化（大小写/空白不敏感）——原精确比较下 "INT" 走不进任何分支（静默什么都不写）
+                            string fmt = (par.Value[4] ?? "").Trim().ToLowerInvariant();
                             // ★H2：值非法不再抛——替换为失败值并保持原值个数（个数即现场约定的一块寄存器数）
                             string dataVal = EnsureWritableValue(pat.Value[4], fmt);
 
@@ -3492,6 +3493,8 @@ namespace WindowsFormsApplication1
             _lastXieRetryLogTick = now;
             try { Log("回写失败(不清槽，下次 xie 自动重试)： " + detail); } catch { }
         }
+        /// <summary>★当前全工程无调用点（死代码）：免握手的 Modbus-RTU 极速写。
+        /// 保留为功能储备；确认不再启用后可整体删除。</summary>
         public void xie_wu(string value)
         {
             lock (_ioSync)   // ★ I/O 串行：免握手极速写与普通写互斥，防同一串口客户端并发写

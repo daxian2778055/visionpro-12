@@ -9,9 +9,12 @@ namespace WindowsFormsApplication1
     public static class InspectionFailureOutput
     {
         // Site contract: acquisition/inspection faults use 999 in numeric registers.
+        // ★低风险加固：格式串归一化（大小写/空白不敏感）——原精确比较下 "INT" 被判成非数值格式返回 "Reject"，
+        //   而 xie 的 fmt 分支同样大小写敏感，表现为"什么都不写却清槽"。
         public static string ForFormat(string format)
         {
-            return format == "int" || format == "long" || format == "float" ? "999" : "Reject";
+            string f = (format ?? "").Trim().ToLowerInvariant();
+            return f == "int" || f == "long" || f == "float" ? "999" : "Reject";
         }
 
         // 失败帧整块填充（现场约定 2026-09-19）：一个相机可绑多个反馈寄存器（如 8 个判定结果 + 1 个完成位）。
@@ -24,13 +27,14 @@ namespace WindowsFormsApplication1
         //   多写一个会越过块尾踩相邻块；"批量+尾部单写"补齐方案待现场确认完成位语义后再定，当前仅告警一次。
         public static string RepeatForRegisters(string format, int registerCount)
         {
-            string v = ForFormat(format);
+            string fmt = (format ?? "").Trim().ToLowerInvariant();   // ★低风险加固：与 ForFormat 同口径归一化
+            string v = ForFormat(fmt);
             if (registerCount <= 1) return v;
-            if (format != "int" && format != "long" && format != "float")
+            if (fmt != "int" && fmt != "long" && fmt != "float")
                 return v;   // string 等非数值格式不适用整块重复（逐地址写语义）
-            if ((format == "long" || format == "float") && (registerCount % 2) != 0)
-                NotifyOddRegisters(format, registerCount);
-            int values = (format == "long" || format == "float")
+            if ((fmt == "long" || fmt == "float") && (registerCount % 2) != 0)
+                NotifyOddRegisters(fmt, registerCount);
+            int values = (fmt == "long" || fmt == "float")
                 ? Math.Max(1, registerCount / 2)
                 : registerCount;
             return string.Join(",", Enumerable.Repeat(v, values));
