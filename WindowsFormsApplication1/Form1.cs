@@ -9946,6 +9946,9 @@ namespace WindowsFormsApplication1
                     try { RollbackSchemeSwitch(); } catch { }
                     return;
                 }
+                // ★C1：旧路径快照——两段式切型在"新方案加载失败回退"时用它在还原 path_1/label，
+                //   避免把无效新路径写进配置与界面（加载成功时用新路径，本快照弃用）。
+                string oldPathSnapshot = path_1;
                 // ★C5 修复：前言移入 SchemeSwitchPreface 并整体包 try——失败即回滚门控并退出本次切换，
                 //   不再出现"切换死在半途导致切型永久拒绝 + 运行按钮永久隐藏 + 全系统停止检测"。
                 if (!SchemeSwitchPreface(a))
@@ -10014,55 +10017,112 @@ namespace WindowsFormsApplication1
                     {
                         listBox2.Visible = false;
                         listBox2.Items.Clear();
+                        // ★C1 修复：两段式切换——先独立加载新方案（旧 manager1 及其 job/block 引用在此期间保持可用），
+                        //   加载成功后【才】Shutdown 旧方案并替换。原实现"先 Shutdown 再加载"：加载失败时旧方案
+                        //   已被拆、新方案又没有（manager1=null）→ 相机已关、系统停在无方案状态，只能重启软件。
+                        //   加载失败现走完整回退：还原 path_1 + 重开相机 + 恢复运行，继续用原方案生产。
                         try
                         {
-                            UpdateSplashProgress(20, "正在卸载旧方案...");
-                            manager1.Shutdown();
-                            // ★ F14: Shutdown 后立即释放各相机持有的旧 block/job/newrecod 等 VisionPro 对象，
-                            // 强制 GC 回收 RCW，避免频繁切方案导致 COM 句柄/内存累积
-                            ReleaseAllMyjobVisionObjects();
-                            Thread.Sleep(500);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.WriteLog("关闭方案失败!--" + ex.Message);
-                        }
-                        try
-                        {
-                            // ★ 切换时方案加载同样是耗时点：期间进度条缓慢爬升（20%→40%）
-                            System.Threading.CancellationTokenSource switchCts = new System.Threading.CancellationTokenSource();
-                            System.Threading.Tasks.Task switchTask = System.Threading.Tasks.Task.Run(() =>
-                            {
-                                int v = 20;
-                                while (!switchCts.IsCancellationRequested && v < 40)
-                                {
-                                    System.Threading.Thread.Sleep(250);
-                                    v++;
-                                    UpdateSplashProgress(v, "正在加载新方案...");
-                                }
-                            });
-                            managerState = ManagerState.Loading; // ★ 切换方案时重置状态
+                            UpdateSplashProgress(20, "正在加载新方案...");
+                            CogJobManager newMgr = null;
+                            Exception loadEx = null;
                             try
                             {
-                                manager1 = (CogJobManager)CogSerializer.LoadObjectFromFile(path_1);
-                _jobs.JobManager = manager1;
-                                managerState = ManagerState.Loaded; // ★ 标记加载成功
-                                _config.WriteString("path", "path_1", path_1);
+                                // ★ 加载是耗时点：期间进度条缓慢爬升（20%→40%）
+                                System.Threading.CancellationTokenSource switchCts = new System.Threading.CancellationTokenSource();
+                                System.Threading.Tasks.Task switchTask = System.Threading.Tasks.Task.Run(() =>
+                                {
+                                    int v = 20;
+                                    while (!switchCts.IsCancellationRequested && v < 40)
+                                    {
+                                        System.Threading.Thread.Sleep(250);
+                                        v++;
+                                        UpdateSplashProgress(v, "正在加载新方案...");
+                                    }
+                                });
+                                managerState = ManagerState.Loading; // ★ 切换方案时重置状态
+                                try
+                                {
+                                    newMgr = (CogJobManager)CogSerializer.LoadObjectFromFile(path_1);
+                                }
+                                finally
+                                {
+                                    switchCts.Cancel();   // 停止爬升动画
+                                }
                             }
-                            finally
+                            catch (Exception exLoad)
                             {
-                                switchCts.Cancel();   // 停止爬升动画
+                                loadEx = exLoad;
                             }
+                            if (newMgr == null)
+                            {
+                                // ── 加载失败：旧方案从未被卸载 → 完整回退，重开相机继续用原方案 ──
+                                managerState = ManagerState.Loaded;   // 旧 manager1 仍是可用状态
+                                string _oldP = string.IsNullOrEmpty(oldPathSnapshot) ? path_1 : oldPathSnapshot;
+                                path_1 = _oldP;
+                                try { wenjianjia = Path.GetDirectoryName(path_1); } catch { }
+                                _logger.WriteLog("切方案失败（新方案加载异常），已回退继续使用原方案：" + (loadEx == null ? "加载返回空" : loadEx.Message));
+                                // 先复位门控（不阻塞）；回退不发"切换成功"回执（PLC 靠超时判 NG）
+                                _switchingScheme = false;
+                                _inspectionLifecycle.Resume();
+                                Interlocked.Exchange(ref qiehuanzhong, 0);
+                                this.Invoke(new Action(() =>
+                                {
+                                    try { label75.Text = _oldP.Split('\\').Last(); } catch { }
+                                    try { label173.Text = _oldP; } catch { }
+                                    try { label133.Text = "切方案失败，已继续使用原方案"; } catch { }
+                                    try { if (Frm2 != null && !Frm2.IsDisposed) Frm2.start = 1; } catch { }
+                                    try { button1.Visible = true; } catch { }
+                                    // 重开相机并恢复运行（复用成功收尾同一套动作；此时 block 引用仍是旧方案的）
+                                    try { bnOpen_Click(null, null); } catch (Exception exOp) { _logger.WriteLog("切方案回退重开相机失败：" + exOp.Message); }
+                                    try { display(); } catch { }
+                                    try { trriger_set(); } catch { }
+                                    try { bnSetParam_Click(null, null); bnGetParam_Click(null, null); } catch { }
+                                    try { comboBox38_TextChanged(null, null); } catch { }
+                                    try { button1_Click(null, null); } catch { }
+                                    try { MessageBox.Show("方案切换失败：新方案无法加载，已回退继续使用原方案（相机已重新打开、运行已恢复）。请检查方案文件后重试。\n\n" + (loadEx == null ? "" : loadEx.Message), "切换失败", MessageBoxButtons.OK, MessageBoxIcon.Warning); } catch { }
+                                }));
+                                return;   // 结束本次切换（不执行新方案绑定/收尾）
+                            }
+                            // ── 加载成功：现在才拆旧、换新 ──
+                            UpdateSplashProgress(35, "正在卸载旧方案...");
+                            try
+                            {
+                                try { manager1.Shutdown(); }
+                                catch (Exception exSh) { _logger.WriteLog("关闭旧方案失败!--" + exSh.Message); }
+                                // ★ F14: Shutdown 后立即释放各相机持有的旧 block/job/newrecod 等 VisionPro 对象，
+                                // 强制 GC 回收 RCW，避免频繁切方案导致 COM 句柄/内存累积
+                                ReleaseAllMyjobVisionObjects();
+                                Thread.Sleep(500);
+                            }
+                            catch (Exception exRc)
+                            {
+                                _logger.WriteLog("卸载旧方案收尾异常（已忽略，继续使用新方案）：" + exRc.Message);
+                            }
+                            manager1 = newMgr;
+                            try { _jobs.JobManager = manager1; } catch { }
+                            managerState = ManagerState.Loaded; // ★ 标记加载成功
+                            try { _config.WriteString("path", "path_1", path_1); }
+                            catch (Exception exCfg) { _logger.WriteLog("保存方案路径失败：" + exCfg.Message); }
                             UpdateSplashProgress(45, "方案加载完成，正在绑定作业...");
                         }
                         catch (Exception ex)
                         {
-                            managerState = ManagerState.Failed;
-                            manager1 = null;
-                _jobs.JobManager = null;
-                            label75.Text = label75.Text + "方案已损坏";
-                            label173.Text = path_1;
-                            _logger.WriteLog(ex.Message + "加载方案失败");
+                            // ★C1：守卫——若方案实际已可用（新方案已换上，或旧方案仍在用），收尾异常不应把
+                            //   系统判为"无方案"（置 Failed/null 会丢弃已加载的 manager，只能重启软件）。
+                            if (manager1 != null && managerState == ManagerState.Loaded)
+                            {
+                                _logger.WriteLog("切方案收尾异常（方案已可用，忽略不影响生产）：" + ex.Message);
+                            }
+                            else
+                            {
+                                managerState = ManagerState.Failed;
+                                manager1 = null;
+                                _jobs.JobManager = null;
+                                label75.Text = label75.Text + "方案已损坏";
+                                label173.Text = path_1;
+                                _logger.WriteLog(ex.Message + "加载方案失败");
+                            }
                         }
                         if (manager1 != null && managerState == ManagerState.Loaded)
                         {
