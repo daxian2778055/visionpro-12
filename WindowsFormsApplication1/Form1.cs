@@ -8495,6 +8495,10 @@ namespace WindowsFormsApplication1
         {
             label75.Text = sender.ToString().Split('\\').Last();
             label173.Text = sender.ToString();
+            // ★修复（2026-09-20）：path_1 必须先更新为本次选中的方案，再取 wenjianjia——
+            //   原顺序在 path_1 更新前取 Path.GetDirectoryName(path_1)（旧方案目录），
+            //   导致日志"方案文件夹:"与分流程 vpp 目录（wenjianjia\N\xxx.vpp）都指向旧方案目录。
+            path_1 = sender.ToString();
             try
             {
                 wenjianjia = Path.GetDirectoryName(path_1);
@@ -8504,7 +8508,6 @@ namespace WindowsFormsApplication1
             {
                 _logger.WriteLog(ex.Message);
             }
-            path_1 = sender.ToString();
             StreamReader sr = null;
             try
             {
@@ -11543,6 +11546,11 @@ namespace WindowsFormsApplication1
         // 设置指定相机的曝光/增益/帧率，并回写 Vision 流程输入（取代 12 段 bnSetParamN）
         private void SetParamFor(int index)
         {
+            // ★修复（2026-09-20）：未连接的相机（Cameras[index]==null，含 code.ini 中"屏蔽中"未接入的相机）
+            //   直接跳过——原实现继续走 _cameraCtrl.Cameras[index].MV_CC_SetXxx → NullReferenceException，
+            //   日志刷"设置参数异常/参数解析失败"误导现场（现场日志：相机1-4 设置参数异常、
+            //   相机5 参数解析失败，实为未连接/屏蔽中，非软件故障）。已连接相机参数框为空时仍会提示解析失败（保留）。
+            if (_cameraCtrl.Cameras[index] == null) return;
             TextBox tbExp = GetParamTextBox(ParamBoxName("tbExposure", index));
             TextBox tbGain = GetParamTextBox(ParamBoxName("tbGain", index));
             TextBox tbRate = GetParamTextBox(ParamBoxName("tbFrameRate", index));
