@@ -246,7 +246,8 @@ namespace WindowsFormsApplication1
                                         {
                                             if (pap.Value[0] == par.Value[0])
                                             {
-                                                if (pap.Key == 13)
+                                                // ★C4 修复：与主窗"使能"门控对称——未启用切型功能时轮询侧不置锁/不发事件
+                                                if (pap.Key == 13 && pap.Value.Length > 2 && pap.Value[2] == "true")
                                                 {
                                                     if (ctx.TrySchemeSwitch(shuju_temp.Replace("\0", "")))
                                                     {

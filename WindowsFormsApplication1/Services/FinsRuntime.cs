@@ -189,7 +189,8 @@ namespace WindowsFormsApplication1
                                         {
                                             if (pap.Value[0] == par.Value[0])
                                             {
-                                                if (pap.Key == 13)
+                                                // ★C4 修复：与主窗"使能"门控对称——未启用切型功能时轮询侧不置锁/不发事件
+                                                if (pap.Key == 13 && pap.Value.Length > 2 && pap.Value[2] == "true")
                                                 {
                                                     // TrySchemeSwitch 内部已通过 SchemeSwitchRaise 触发带 SchemePath 的切方案事件，
                                                     // 无需再 RaiseSelectionChanged（否则会多抛一次无 SchemePath 的空事件（无实际消费者））。

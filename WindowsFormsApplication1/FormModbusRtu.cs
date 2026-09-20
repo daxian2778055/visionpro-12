@@ -3169,7 +3169,9 @@ namespace WindowsFormsApplication1
                                             {
                                                 if (pap.Value[0] == par.Value[0])
                                                 {
-                                                    if (pap.Key == 13 && qiehuanzhong == 0)
+                                                    // ★C4 修复：与主窗"使能"门控对称——未启用切型功能时轮询侧不置锁/不发事件，
+                                                    //   避免"置了锁却因主窗使能条件不满足而不切换 → 该连接切型永久锁死"。
+                                                    if (pap.Key == 13 && qiehuanzhong == 0 && pap.Value.Length > 2 && pap.Value[2] == "true")
                                                     {
 
                                                         if (qiehuan(shuju_temp.Replace("\0", "")) == 1)

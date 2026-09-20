@@ -7983,6 +7983,13 @@ namespace WindowsFormsApplication1
                             }
                         });
                     }
+                    else
+                    {
+                        // ★C4 修复：轮询侧命中切型已置 qiehuanzhong=1 并发了事件，但"使能"非 true 时
+                        //   原实现既不建 Task 也不复位 → 该连接 qiehuanzhong 永久 1，TrySchemeSwitch 恒 false、
+                        //   该通道切型静默死。与使能门控对称：未启用切换功能就释放请求锁。
+                        _comm.Omron.qiehuanzhong = 0;
+                    }
                 }
                 else
                 {
@@ -8046,6 +8053,13 @@ namespace WindowsFormsApplication1
                             }
                         });
                     }
+                    else
+                    {
+                        // ★C4 修复：子实例轮询侧命中切型已置锁（qiehuanzhong=1），但主窗判定
+                        //   "路径已相同/无需切换"时不进入上方分支 → 该连接锁永不复位，
+                        //   TrySchemeSwitch 首行恒 false → 该通道切型静默死。此处补 else 复位本连接锁。
+                        _comm.Modbustcp.SetSwitchLock(e.LinkId, 0);
+                    }
                 }
                 else if (path_1 != _comm.Modbustcp.lujing.Replace("\0", "") && qiehuanzhong == 0)
                 {
@@ -8070,6 +8084,11 @@ namespace WindowsFormsApplication1
                                 _comm.Modbustcp.qiehuanzhong = 0;
                             }
                         });
+                    }
+                    else
+                    {
+                        // ★C4 修复（同 FINS）：使能非 true 时释放请求锁，防该通道 qiehuanzhong 永久 1
+                        _comm.Modbustcp.qiehuanzhong = 0;
                     }
                 }
                 else
@@ -8134,6 +8153,11 @@ namespace WindowsFormsApplication1
                             }
                         });
                     }
+                    else
+                    {
+                        // ★C4 修复（同 ModbusTCP）：已置锁但主窗判定无需切换时补复位，防该通道切型静默死
+                        _comm.ModbusRtu.SetSwitchLock(e.LinkId, 0);
+                    }
                 }
                 else if (path_1 != _comm.ModbusRtu.lujing.Replace("\0", "") && qiehuanzhong == 0)
                 {
@@ -8158,6 +8182,11 @@ namespace WindowsFormsApplication1
                                 _comm.ModbusRtu.qiehuanzhong = 0;
                             }
                         });
+                    }
+                    else
+                    {
+                        // ★C4 修复（同 FINS/ModbusTCP）：使能非 true 时释放请求锁
+                        _comm.ModbusRtu.qiehuanzhong = 0;
                     }
                 }
                 else
