@@ -921,6 +921,15 @@ namespace WindowsFormsApplication1
                 Thread.Sleep(_yanshiMs);
                 StreamReader sr = null;
                 // ★N6：菜单项增删属 UI 操作，整段收口到 UI 线程——原实现后台线程裸操作 DropDownItems（Debug 抛跨线程异常/Release 竞态；F1 围栏未覆盖此段）
+                // ★加固（2026-09-20）：本线程在构造函数里启动（jindu.Start()），此刻窗体句柄可能尚未创建
+                //   （Application.Run 在 ctor 之后）——裸 Invoke 会抛句柄未创建并被外层 catch("111") 吞掉，
+                //   连带其后的 12 路作业绑定整段跳过（偶发：方案加载快 + UI 构造慢的机器才撞）。故：句柄未创建则
+                //   跳过菜单清理（锦上添花），且整段就近 try，失败只记日志、绝不上抛。
+                if (!this.IsHandleCreated)
+                    _logger.WriteLog("菜单历史清理跳过（窗体句柄未创建，不影响作业绑定）");
+                else
+                try
+                {
                 this.Invoke(new Action(() =>
                 {
                     item_sum = this.设置ToolStripMenuItem.DropDownItems.Count;
@@ -960,6 +969,11 @@ namespace WindowsFormsApplication1
                     }
                     sr = null;
                 }));
+                }
+                catch (Exception exMenu)
+                {
+                    _logger.WriteLog("菜单历史清理跳过（" + exMenu.Message + "），不影响作业绑定");
+                }
                 try
                 {
                     sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
@@ -3438,6 +3452,16 @@ namespace WindowsFormsApplication1
                                         frm6[i].Close();
                                     }
                                     frm6.Clear();
+                                    // ★低危修复（2026-09-20）：同步关闭工具窗 Form9——切方案/重启运行时旧块已废弃，
+                                    //   原实现只关 Form6，旧 Form9 仍开着，写回会打到废弃块却提示已写回。
+                                    if (f9 != null)
+                                    {
+                                        for (int i = 0; i < f9.Length; i++)
+                                        {
+                                            try { if (f9[i] != null && !f9[i].IsDisposed) f9[i].Close(); } catch { }
+                                            f9[i] = null;   // 置空：下次打开会 new（Camera58Events 每次打开都重建）
+                                        }
+                                    }
                                 }));
                             }
                         });
@@ -4022,6 +4046,7 @@ namespace WindowsFormsApplication1
                 {
                     // ★N7：启动流程异常兜底——原实现只有 try/finally，异常被 Task 静默吞（后续步骤整段跳过）
                     _logger.WriteLog("启动运行流程异常: " + exStart.Message);
+                    try { EnableCameraReconnect(); } catch { }   // ★低危修复：异常路径也恢复相机重连（幂等，原会整段跳过）
                 }
                 finally
                 {
@@ -4678,7 +4703,7 @@ namespace WindowsFormsApplication1
                                 catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " TCP输出失败: " + ex.Message); tcpVal = "无"; }
                                 // ★ 2026-09-13：同样接入 per-相机 FIFO 队列，保证同一相机结果按帧序发送
                                 //   （Task.Run 逐帧并发不保证获取 changeok 锁的先后，A/B 可能乱序）。
-                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
+                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>   // ★低危修复（2026-09-20）：无协议结果输出改走 res(64) 队列，原走 out(4) 队列高峰可能丢帧
                                 {
                                     try
                                     {
@@ -4696,7 +4721,7 @@ namespace WindowsFormsApplication1
                                 try { serialVal = runOk ? myjob.block.Outputs["serial"].Value.ToString() : "Reject"; }
                                 catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 串口输出失败: " + ex.Message); serialVal = "无"; }
                                 // ★ 2026-09-13：同 TCP，接入 per-相机 FIFO 队列保证发送顺序。
-                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
+                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>   // ★低危修复（2026-09-20）：无协议结果输出改走 res(64) 队列，原走 out(4) 队列高峰可能丢帧
                                 {
                                     try
                                     {

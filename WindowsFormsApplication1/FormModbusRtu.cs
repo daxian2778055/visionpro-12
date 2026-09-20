@@ -3464,6 +3464,10 @@ namespace WindowsFormsApplication1
                 // ★N1 修复（2026-09-20）：写出改投后台线程——原来在 UI 线程 Timer.Tick 里同步写，
                 //   PLC 半死时（写阻塞数秒）叠加轮询线程持 _ioSync，主界面会反复冻结。
                 if (System.Threading.Interlocked.CompareExchange(ref _hbBusy, 1, 0) != 0) return;  // 上轮未写完则跳过本轮
+                // ★低危加固（2026-09-20）：入队也包 try——QueueUserWorkItem 极端失败（OOM/线程池拒绝）时
+                //   若不复位 _hbBusy，心跳会被进行中标志永久卡住、不再发送。
+                try
+                {
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
                     try
@@ -3478,6 +3482,11 @@ namespace WindowsFormsApplication1
                     catch { }
                     finally { System.Threading.Interlocked.Exchange(ref _hbBusy, 0); }
                 });
+                }
+                catch
+                {
+                    System.Threading.Interlocked.Exchange(ref _hbBusy, 0);   // 入队失败 → 复位进行中标志，防心跳永久停发
+                }
             }
             catch { }
         }
