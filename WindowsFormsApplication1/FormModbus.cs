@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -491,8 +491,12 @@ namespace WindowsFormsApplication1
             comboBox27.Items.Add(camera_dic[12][3]);
             comboBox27.Text = camera_dic[12][3];
 
-            textBox54.Text = camera_dic[13][1];
-            if (camera_dic[13][2] == "true")
+            // ★心跳独立存储：优先读独立键 xintiao/xintiaoen；键不存在时回填旧共用键（升级兼容：
+            //   旧版本“心跳值”与“切换返回值”共用 fanhuizhi、“心跳使能”与“切换使能”共用 fanhuien）。
+            _heartbeatValue = wdini.ReadString(ModbusTcpIniStore.CameraSection(_linkId, 13), "xintiao", camera_dic[13][1]);
+            _heartbeatEnabled = wdini.ReadString(ModbusTcpIniStore.CameraSection(_linkId, 13), "xintiaoen", camera_dic[13][2]) == "true";
+            textBox54.Text = _heartbeatValue;
+            if (_heartbeatEnabled)
                 checkBox18.CheckState = CheckState.Checked;
             comboBox29.Items.Add(camera_dic[13][3]);
             comboBox29.Text = camera_dic[13][3];
@@ -570,6 +574,8 @@ namespace WindowsFormsApplication1
             });
             // 初始化完成：使能开则锁定参数控件（运行期使能开不容许修改参数，杜绝热改冲突）
             SetParamControlsEnabled(!fins_en);
+            // ★心跳：UI 线程创建 1s 定时器（chushihua 在后台 Task 里置 true，故定时器在此处挂载）
+            StartHeartbeatTimer();
         }
 
 
@@ -1573,10 +1579,14 @@ namespace WindowsFormsApplication1
                     if (par.Value[0] != c13[0]) continue;
                     int xuanzhong_temp = 0;
                     string fins_temp = "";
-                    c13[4] = c13[1];
-                    c13[5] = c13[0];
-                    WriteTriggerFanhuizhi(par.Value, c13[1], ref xuanzhong_temp, ref fins_temp);
-                    c13[5] = "无"; // 写后清待写标记，避免后续 xie() 误写
+                    // ★与心跳/失败回执的“设[4][5]+写出”互斥：防两组槽值交叠后发错通道
+                    lock (_ioSync)
+                    {
+                        c13[4] = c13[1];
+                        c13[5] = c13[0];
+                        WriteTriggerFanhuizhi(par.Value, c13[1], ref xuanzhong_temp, ref fins_temp);
+                        c13[5] = "无"; // 写后清待写标记，避免后续 xie() 误写
+                    }
                     Log("方案切换成功，已回执切换通道 " + c13[0] + " = " + c13[1]);
                     return true;
                 }
@@ -1826,9 +1836,13 @@ namespace WindowsFormsApplication1
                                                                 //   更不置 [5] 待写槽，PLC 侧永远等不到这枚 NG 回执（死等超时）。
                                                                 if (camera_dic.ContainsKey(13) && !camera_dic[13][0].Contains("无"))
                                                                 {
-                                                                    camera_dic[13][4] = "999";
-                                                                    camera_dic[13][5] = camera_dic[13][0];
-                                                                    xie(camera_dic[13][4]);
+                                                                    // ★与心跳/成功回执的“设[4][5]+写出”互斥：防两组槽值交叠后发错通道
+                                                                    lock (_ioSync)
+                                                                    {
+                                                                        camera_dic[13][4] = "999";
+                                                                        camera_dic[13][5] = camera_dic[13][0];
+                                                                        xie(camera_dic[13][4]);
+                                                                    }
                                                                 }
                                                                 Log("方案路径:" + lujing + ":不存在!");
                                                             }
@@ -1994,6 +2008,49 @@ namespace WindowsFormsApplication1
                 }
                 xie(value);   // lock 可重入
             }
+        }
+
+        // ===================== ★心跳（相机13“心跳”行，2026-09-20 现场定）=====================
+        // 规则：心跳勾上 + 反馈通道已配置 + 心跳值已配置 → 每 1 秒把心跳值写到反馈通道
+        //   （camera_dic[13][3] 绑定的数据块）。
+        // 存储独立：心跳值/使能存 _heartbeatValue/_heartbeatEnabled + ini 键 xintiao/xintiaoen，
+        //   与“方案切换”的 camera_dic[13][1]/[2]（fanhuizhi/fanhuien）彻底分离——原实现两者共用槽位，
+        //   改任一处互相覆盖，且 [2] 兼作切型使能（主界面判 camera_dic[13][2]），取消心跳勾会连带禁用切型。
+        private string _heartbeatValue = "";
+        private bool _heartbeatEnabled = false;
+        private System.Windows.Forms.Timer _heartbeatTimer;
+
+        /// <summary>创建并启动心跳定时器（UI 线程调用；1s 周期）。</summary>
+        private void StartHeartbeatTimer()
+        {
+            if (_heartbeatTimer != null) return;
+            _heartbeatTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _heartbeatTimer.Tick += (s, ev) => HeartbeatTick();
+            _heartbeatTimer.Start();
+        }
+
+        /// <summary>心跳：勾上 + 未重连 + 反馈/心跳值已配置 → 把心跳值写入反馈通道。</summary>
+        private void HeartbeatTick()
+        {
+            try
+            {
+                if (!chushihua) return;
+                if (!_heartbeatEnabled) return;    // 心跳勾未勾
+                if (!fins_en) return;              // 通讯未使能
+                if (_reconnecting != 0) return;    // 重连中不发（xie 内亦会清槽兜底）
+                if (fins_dic.Count == 0) return;
+                string chan = camera_dic[13][3];
+                if (string.IsNullOrEmpty(chan) || chan.Contains("无")) return;   // 反馈未配置
+                string val = (_heartbeatValue ?? "").Trim();
+                if (val.Length == 0) return;                                     // 心跳值未配置
+                lock (_ioSync)   // ★与成功/失败回执的“设[4][5]+写出”互斥：防两组槽值交叠后发错通道
+                {
+                    camera_dic[13][4] = val;
+                    camera_dic[13][5] = chan;
+                    xie(val);
+                }
+            }
+            catch { }
         }
 
         public void xie(string value)
@@ -3616,29 +3673,26 @@ namespace WindowsFormsApplication1
             }
         }
 
+        // ★心跳独立存储（2026-09-20）：心跳值存 _heartbeatValue + ini 键 xintiao（不再写
+        //   camera_dic[13][1]/fanhuizhi，后者专用于“方案切换”返回值，两者原共用会互相覆盖）。
         private void textBox54_TextChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
-                camera_dic[13][1] = textBox54.Text;
-                wdini.WriteString(ModbusTcpIniStore.CameraSection(_linkId, 13), "fanhuizhi", textBox54.Text);
+                _heartbeatValue = textBox54.Text;
+                wdini.WriteString(ModbusTcpIniStore.CameraSection(_linkId, 13), "xintiao", textBox54.Text);
             }
         }
 
+        // ★心跳独立存储（2026-09-20）：心跳使能存 _heartbeatEnabled + ini 键 xintiaoen（不再写
+        //   camera_dic[13][2]/fanhuien，后者兼作切型使能——原共用导致取消心跳勾连切型一起禁用）。
         private void checkBox18_CheckedChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
-                if (checkBox18.CheckState == CheckState.Checked)
-                {
-                    camera_dic[13][2] = "true";
-                    wdini.WriteString(ModbusTcpIniStore.CameraSection(_linkId, 13), "fanhuien", "true");
-                }
-                else
-                {
-                    camera_dic[13][2] = "false";
-                    wdini.WriteString(ModbusTcpIniStore.CameraSection(_linkId, 13), "fanhuien", "false");
-                }
+                bool on = checkBox18.CheckState == CheckState.Checked;
+                _heartbeatEnabled = on;
+                wdini.WriteString(ModbusTcpIniStore.CameraSection(_linkId, 13), "xintiaoen", on ? "true" : "false");
             }
         }
 
