@@ -474,7 +474,13 @@ namespace WindowsFormsApplication1
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
                 if (nRet != MyCamera.MV_OK)
                 {
-                    _cameraCtrl.Cameras[slot] = null;   // ★B4：同上，交给按名重扫接管
+                    // ★B4 残留修复：到此设备已 Create+Open 成功，若仅置 null 不 Destroy，
+                    //   已打开的 GigE 句柄仍被 SDK 持有→后续按名重扫 CreateDevice/OpenDevice
+                    //   返回 0x80000007(资源占用)，相机换 IP/DHCP 回归后绑不回。
+                    //   照 OpenDevice 失败分支补 Close+Destroy 释放句柄，再交给按名重扫接管。
+                    try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
+                    try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                    _cameraCtrl.Cameras[slot] = null;
                     return false;
                 }
                 // ★M11 修复：原重连路径只注册图像回调、漏了异常回调——重连后该路 SDK 异常不再上报；

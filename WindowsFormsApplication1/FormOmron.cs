@@ -1603,10 +1603,10 @@ namespace WindowsFormsApplication1
                                                                 // ★C7 修复：原实现只把失败返回值写进 [4]（值），没有置 [5]（待写槽）——
                                                                 //   xie() 的遍历条件是 Value[5] != "无"，永不命中该槽 → 这枚"路径不存在"
                                                                 //   NG 回执永远发不出去，PLC 死等。补置待写槽并触发写出。
-                                                                if (!camera_dic[13][1].Contains("无"))
+                                                                if (!camera_dic[13][1].Contains("无") && !camera_dic[13][0].Contains("无"))
                                                                 {
                                                                     camera_dic[13][4] = camera_dic[13][1];
-                                                                    camera_dic[13][5] = camera_dic[13][3];
+                                                                    camera_dic[13][5] = camera_dic[13][0];
                                                                     xie(camera_dic[13][4]);
                                                                 }
                                                                 Log("方案路径:" + lujing + ":不存在!");
