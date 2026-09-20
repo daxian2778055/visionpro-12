@@ -76,21 +76,38 @@ namespace WindowsFormsApplication1
                     CrashMonitor.Initialize(false);
                     CrashMonitor.CleanupDumps();   // 2026-09-06：启动清理历史崩溃转储，仅保留最近 3 个
                     CrashMonitor.CheckPreviousCrash();
-                    // 若上次崩溃留下了"小白报告"或残留标记，启动即提醒用户把文件发出去
+                    // ★修复（2026-09-20）：原实现"只要历史上生成过 最近崩溃.txt 就每次启动都弹窗"，
+                    //   且"客户直接关电脑/断电/任务管理器强杀"残留标记也会弹——两类都是误报（现场明确反馈）。
+                    //   现统一由 HadPreviousCrash() 判定：标记残留 且 崩溃记录时间不早于上次启动时间
+                    //   （即上次运行期间确实发生过崩溃）。无崩溃记录的残留标记只记日志，不打扰用户。
                     try
                     {
-                        string reportPath = CrashMonitor.GetCrashReportPath();
-                        bool haveReport = !string.IsNullOrEmpty(reportPath) && System.IO.File.Exists(reportPath);
-                        if (haveReport || CrashMonitor.HadPreviousCrash())
+                        if (CrashMonitor.HadPreviousCrash())
                         {
+                            string reportPath = CrashMonitor.GetCrashReportPath();
+                            bool haveReport = !string.IsNullOrEmpty(reportPath) && System.IO.File.Exists(reportPath);
                             string msg = haveReport
                                 ? "检测到上次程序异常退出（闪退）。\n上次崩溃原因已记录到：\n" + reportPath +
                                   "\n\n请把该文件（及程序目录下的 Log 文件夹）发给开发者即可。"
                                 : "检测到上次程序异常退出（闪退）。\n未生成详细报告，但程序目录下的 Log 文件夹里仍有线索，\n请把 Log 文件夹发给开发者。";
                             MessageBox.Show(msg, "上次崩溃提醒", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         }
+                        else if (CrashMonitor.HasStaleMarker())
+                        {
+                            GetErrorLog().WriteLog("上次程序未正常关闭（断电/直接关机/强杀，无崩溃记录），本次不弹崩溃提醒。");
+                        }
                     }
                     catch { }
+                    // ★2026-09-20：Windows 正常关机/注销（SessionEnding）时提前清标记——
+                    //   否则"客户直接关电脑"会残留标记；有了崩溃证据判定兜底不会误报，但正常关机本不应残留。
+                    try
+                    {
+                        Microsoft.Win32.SystemEvents.SessionEnding += (s, se) =>
+                        {
+                            try { CrashMonitor.MarkExitedCleanly(); } catch { }
+                        };
+                    }
+                    catch (Exception exSe) { GetErrorLog().WriteLog("注册关机清标记异常" + exSe.Message); }
                     CrashMonitor.MarkStarted();
                 }
                 catch (Exception ex)

@@ -152,11 +152,75 @@ namespace WindowsFormsApplication1
             catch { return ""; }
         }
 
-        /// <summary>是否存在上次未正常退出的标记（用于启动提醒）。</summary>
-        public static bool HadPreviousCrash()
+        /// <summary>是否存在上次未正常退出的标记残留（断电/关机/强杀 都会残留，仅代表"未正常退出"）。</summary>
+        public static bool HasStaleMarker()
         {
             try { return File.Exists(MarkerPath); }
             catch { return false; }
+        }
+
+        /// <summary>
+        /// 是否存在"上次确实崩溃"的证据（用于启动提醒）。
+        /// ★修复（2026-09-20）：原实现只看标记文件是否存在——客户直接关电脑/断电/任务管理器结束进程时，
+        ///   进程被强杀来不及删除标记，导致"正常操作"被误报为"上次崩溃（闪退）"。
+        ///   现要求同时满足：① 标记残留（上次非正常结束）；② 存在崩溃现场记录（CrashDumps\最近崩溃.txt
+        ///   或 native_crash_log.txt），且其最后写入时间不早于标记文件记录的启动时间——即崩溃确实发生在
+        ///   上次运行期间（而非更早的历史崩溃）。断电/强杀不会产生任何崩溃记录 → 不再误报。
+        /// </summary>
+        public static bool HadPreviousCrash()
+        {
+            try
+            {
+                if (!File.Exists(MarkerPath)) return false;                 // 正常退出（标记已清）
+                DateTime markerStart;
+                if (!TryGetMarkerStartTime(out markerStart)) return false;  // 标记内容无效 → 不提示
+                DateTime evidence;
+                if (!TryGetLastCrashEvidenceTime(out evidence)) return false; // 无崩溃记录 → 视为断电/强杀
+                return evidence >= markerStart;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>读取标记文件中的上次启动时间（格式 "yyyy-MM-dd HH:mm:ss|PID=xx"）；失败返回 false。</summary>
+        private static bool TryGetMarkerStartTime(out DateTime startTime)
+        {
+            startTime = DateTime.MinValue;
+            try
+            {
+                string text;
+                try { text = File.ReadAllText(MarkerPath); } catch { return false; }
+                if (string.IsNullOrEmpty(text)) return false;
+                string first = text.Split('|')[0].Trim();
+                return DateTime.TryParse(first, out startTime);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>取崩溃现场记录的最后写入时间（最近崩溃.txt 与 native_crash_log.txt 取较晚者）；无则返回 false。</summary>
+        private static bool TryGetLastCrashEvidenceTime(out DateTime evidence)
+        {
+            evidence = DateTime.MinValue;
+            bool found = false;
+            try
+            {
+                string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "CrashDumps");
+                if (!Directory.Exists(dir)) return false;
+                string[] names = { "最近崩溃.txt", "native_crash_log.txt" };
+                foreach (string n in names)
+                {
+                    try
+                    {
+                        string p = Path.Combine(dir, n);
+                        if (!File.Exists(p)) continue;
+                        DateTime t = File.GetLastWriteTime(p);
+                        if (!found || t > evidence) evidence = t;
+                        found = true;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return found;
         }
 
         /// <summary>
