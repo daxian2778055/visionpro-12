@@ -9937,6 +9937,15 @@ namespace WindowsFormsApplication1
             if (Interlocked.CompareExchange(ref qiehuanzhong, 1, 0) == 0)
             {
                 qiehuanzhong = 1;
+                // ★C6 修复：入参校验——路径必须含 .vpp（VisionPro 方案文件）。
+                //   原实现把"设置 path_1"放在 if 里、不含 .vpp 时跳过设置却继续切换：
+                //   会完整卸载/重载旧方案（几十秒）并照样回执"切换成功"，PLC 以为换型完成实际没换（质量逃逸）。
+                if (string.IsNullOrWhiteSpace(a) || !a.Contains(".vpp"))
+                {
+                    _logger.WriteLog("切方案请求被拒绝：路径参数无效（不含 .vpp）：" + a);
+                    try { RollbackSchemeSwitch(); } catch { }
+                    return;
+                }
                 // ★C5 修复：前言移入 SchemeSwitchPreface 并整体包 try——失败即回滚门控并退出本次切换，
                 //   不再出现"切换死在半途导致切型永久拒绝 + 运行按钮永久隐藏 + 全系统停止检测"。
                 if (!SchemeSwitchPreface(a))

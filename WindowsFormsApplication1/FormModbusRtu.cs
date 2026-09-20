@@ -3184,6 +3184,14 @@ namespace WindowsFormsApplication1
                                                             }
                                                             else
                                                             {
+                                                                // ★C7 修复：路径不存在时补写失败回执——原实现连 [4] 都不写、
+                                                                //   更不置 [5] 待写槽，PLC 侧永远等不到这枚 NG 回执（死等超时）。
+                                                                if (camera_dic.ContainsKey(13) && !camera_dic[13][1].Contains("无"))
+                                                                {
+                                                                    camera_dic[13][4] = camera_dic[13][1];
+                                                                    camera_dic[13][5] = camera_dic[13][3];
+                                                                    xie(camera_dic[13][4]);
+                                                                }
                                                                 Log("方案路径:" + lujing + ":不存在!");
                                                             }
                                                         }
