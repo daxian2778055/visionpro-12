@@ -10843,6 +10843,23 @@ namespace WindowsFormsApplication1
                                 label133.Text = "方案加载失败，请检查方案文件";
                             }));
                         }
+                        // ★诊断（2026-09-20）：记录方案流程数与各相机流程块绑定情况——
+                        //   现场若出现"运行结果组数少于预期 / 点 Form6 为空 / Form9 枚举工具崩溃"，
+                        //   查这条日志即可区分是 JobCount 不足还是某相机 block 绑定失败
+                        //   （与现有"无流程N / 流程N初始化失败 / 分流程"日志配合定位）。
+                        try
+                        {
+                            int _diagJc = (manager1 != null) ? manager1.JobCount : -1;
+                            string _diagBind = "";
+                            for (int _bi = 0; _bi < 12; _bi++)
+                            {
+                                bool _okBind = _bi < _diagJc && _jobs.Myjobs[_bi] != null
+                                    && _jobs.Myjobs[_bi].job != null && _jobs.Myjobs[_bi].block != null;
+                                _diagBind += "相机" + (_bi + 1) + "=" + (_okBind ? "OK" : "null") + (_bi == 11 ? "" : " ");
+                            }
+                            _logger.WriteLog("方案绑定诊断: JobCount=" + _diagJc + " | block: " + _diagBind);
+                        }
+                        catch { }
                         listBox2.Visible = true;
                         UpdateSplashProgress(80, "正在恢复相机与参数...");
 
