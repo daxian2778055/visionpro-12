@@ -2964,30 +2964,40 @@ namespace WindowsFormsApplication1
         {
             // ★BUG1：重连进行中（_reconnecting!=0）串口正被 ConnectClose/ConnectServer 操作，
             //   此刻写会与重连抢同一串口 → 写脏数据/抛异常。与轮询读、手动读共用同一道 _reconnecting 门控。
-            if (_reconnecting != 0) return;
+            if (_reconnecting != 0)
+            {
+                // ★F7 修复（2026-09-20）：原实现静默 return——重连期间的触发回执写被无声丢弃，
+                //   现场只见"PLC 没收到回执"却无日志线索。补日志。
+                try { Log("重连中，触发回执写被跳过（PLC 侧靠超时判 NG）: " + fanhuizhi); } catch { }
+                return;
+            }
             lock (_ioSync)   // ★ I/O 串行：与 xie()/xie_wu()/回执写互斥，防同一串口客户端并发写
             {
+            // ★F7 修复（2026-09-20）：格式串归一化——原实现精确比较 == "int"/"string"/"long"/"float"，
+            //   配置成 "Int"/"INT"/带空格时全部不命中（静默不写）而调用方仍记"回执成功"；
+            //   xie() 早已用 ToLowerInvariant() 归一化，此处对齐同一标准。
+            string _fmt = (parValue[4] ?? "").Trim().ToLowerInvariant();
             for (int j = 0; j < int.Parse(parValue[2]); j++)
             {
-                if (parValue[4] == "int")
+                if (_fmt == "int")
                 {
                     xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
                     DemoUtils.WriteResultRender1(() => busRtuClient.Write((int.Parse(parValue[1]) + j).ToString(), short.Parse(fanhuizhi)), (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
                     CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                 }
-                else if (parValue[4] == "string")
+                else if (_fmt == "string")
                 {
                     xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
                     DemoUtils.WriteResultRender1(() => busRtuClient.Write((int.Parse(parValue[1]) + j).ToString(), fanhuizhi), (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
                     CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                 }
-                else if (parValue[4] == "long" && j % 2 == 0)
+                else if (_fmt == "long" && j % 2 == 0)
                 {
                     xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
                     DemoUtils.WriteResultRender1(() => busRtuClient.Write((int.Parse(parValue[1]) + j).ToString(), int.Parse(fanhuizhi)), (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
                     CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                 }
-                else if (parValue[4] == "float" && j % 2 == 0)
+                else if (_fmt == "float" && j % 2 == 0)
                 {
                     xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
                     DemoUtils.WriteResultRender1(() => busRtuClient.Write((int.Parse(parValue[1]) + j).ToString(), float.Parse(fanhuizhi)), (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
@@ -3367,7 +3377,15 @@ namespace WindowsFormsApplication1
             {
                 if (!chushihua || fins_dic.Count == 0) return;
                 // ★BUG1：重连进行中不写，避免与 ConnectClose/ConnectServer 抢同一串口（与轮询读/手动读共用 _reconnecting 门控）。
-                if (_reconnecting != 0) return;
+                if (_reconnecting != 0)
+                {
+                    // ★F8 修复（2026-09-20）：原实现直接 return 会"保留待写标记"——与 ebdfabc 的
+                    //   "写失败一律清槽不补发"语义矛盾（重连恢复后会把陈旧结果补发给 PLC）。
+                    //   现重连中同样视为"放弃本次回写"：清掉待写标记 + 记限流日志。
+                    ClearAllPendingSlots();
+                    LogXieRetry("重连中，本次回写已放弃（待写标记已清，不补发）");
+                    return;
+                }
 
                 string fins_temp = "";
                 // ★P1：xie 会被检测/回写路径调用，同样在遍历"活字典"；UI 清配置时会撞车导致本次回写丢失。
@@ -3497,14 +3515,34 @@ namespace WindowsFormsApplication1
             return sb.ToString();
         }
 
-        // ★H3：回写失败保留待写会随每次 xie() 重试，日志按 5 秒限流避免刷屏
+        // ★H3/F8：回写失败/重连跳过一律清槽、不补发（PLC 靠超时判 NG）；日志按 5 秒限流避免刷屏
         private int _lastXieRetryLogTick;
         private void LogXieRetry(string detail)
         {
             int now = Environment.TickCount;
             if (unchecked(now - _lastXieRetryLogTick) < 5000) return;
             _lastXieRetryLogTick = now;
-            try { Log("回写失败(不清槽，下次 xie 自动重试)： " + detail); } catch { }
+            try { Log("回写未发送(已清槽，不补发；PLC 靠超时判 NG)： " + detail); } catch { }
+        }
+
+        /// <summary>★F8：清空所有"待写标记"（重连中放弃本次回写时调用，与"一律清槽不补发"语义一致）。</summary>
+        private void ClearAllPendingSlots()
+        {
+            try
+            {
+                Dictionary<int, string[]> snap = CommGridHelper.SnapshotCameraDic(camera_dic);
+                if (snap == null) return;
+                foreach (var kv in snap)
+                {
+                    try
+                    {
+                        string[] v = kv.Value;
+                        if (v != null && v.Length > 5 && v[5] != "无") v[5] = "无";
+                    }
+                    catch { }
+                }
+            }
+            catch { }
         }
         /// <summary>★当前全工程无调用点（死代码）：免握手的 Modbus-RTU 极速写。
         /// 保留为功能储备；确认不再启用后可整体删除。</summary>

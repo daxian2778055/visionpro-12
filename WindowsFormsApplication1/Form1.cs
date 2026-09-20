@@ -137,6 +137,12 @@ namespace WindowsFormsApplication1
         // 慢 PLC/慢操作只拖自己那一路，不影响其它路。队列线程为后台线程，进程退出自然回收；
         // SafeCleanupBeforeDispose 里主动 Dispose 保证退出路径无残留。
         private volatile CameraWorkQueue[] _cameraOutWork;   // ★ volatile：惰性初始化发布后保证其它线程立即可见完整数组
+        // ★F9 修复（2026-09-20）：结果回写专用队列——原实现把"结果回写"与"可丢弃的 IO 脉冲/TCP串口输出"
+        //   混投同一个容量 4、满时丢旧的 _cameraOutWork（4668/4702 注释自称"不涉及可丢弃策略"，
+        //   但实际用的就是那条会丢的队列）；节拍较快时（每帧含 IO 脉冲 Sleep(timespace)≈100ms 的任务）
+        //   队列满 → PLC 结果回写被丢弃（统计计数不受影响，但 PLC 漏收该帧结果，可能误判）。
+        //   独立队列容量 64（任务仅通信写、耗时短，几乎不会满）；IO 脉冲仍走 _cameraOutWork（可丢弃语义不变）。
+        private volatile CameraWorkQueue[] _cameraResultWork;
         private static readonly object _camWorkLock = new object();
         // ★P2-2：丢帧数缓存 + 后台采样。GetLostFrame 的 P/Invoke（MV_CC_GetAllMatchInfo_NET + AllocHGlobal）
         // 原先在 UI 线程（SafeBeginInvoke 回调）每圈 12 次执行 → 界面卡顿。改为 UI_monitor 后台线程每 3 圈
@@ -154,10 +160,15 @@ namespace WindowsFormsApplication1
                 //   原实现先发布空数组、后逐个填元素——并发首帧可能在元素仍为 null 时读到数组，
                 //   该帧输出/统计/存图整体丢失。
                 var arr = new CameraWorkQueue[12];
+                var arrRes = new CameraWorkQueue[12];   // ★F9：结果回写专用（容量 64，不丢结果）
                 for (int i = 0; i < 12; i++)
+                {
                     // ★fix③：注入日志落点（写 LoggingService），任务失败经 CameraWorkQueue.WorkerLoop 用 RateLimitedLog 限流记录，不再空 catch 吞
                     arr[i] = new CameraWorkQueue("cam" + (i + 1), 4, m => _logger.WriteLog(m));
+                    arrRes[i] = new CameraWorkQueue("res" + (i + 1), 64, m => _logger.WriteLog(m));
+                }
                 _cameraOutWork = arr;
+                _cameraResultWork = arrRes;
             }
         }
         public double jiankongshijian;
@@ -880,7 +891,9 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        path_1 = path_1 + "方案已损坏";
+                        // ★F4 修复（2026-09-20）：原实现把提示文字拼进 path_1（"xxx.vpp方案已损坏"）——
+                        //   path_1 随后会写进 Menu.ini 历史（菜单留下可点必败的坏项）、显示到界面，
+                        //   并污染后续 Path.GetDirectoryName 等用途。现 path_1 保持纯净，提示走日志与界面。
                         managerState = ManagerState.Failed;
                         _logger.WriteLog(ex.Message + "方案加载失败!");
                     }
@@ -891,9 +904,8 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    path_1 = path_1 + "方案不存在";
                     managerState = ManagerState.Failed;
-                    _logger.WriteLog(path_1);
+                    _logger.WriteLog("方案文件不存在: " + path_1);
                 }
                 UpdateSplashProgress(18, "正在读取配置...");
                 // ★ 修复（2026-09-06）：yanshi 非数字时 int.Parse 会抛异常，被下方大 catch 吞掉，
@@ -978,12 +990,23 @@ namespace WindowsFormsApplication1
                     catch { }
 
                 };
-                if (this.设置ToolStripMenuItem.DropDownItems[this.设置ToolStripMenuItem.DropDownItems.Count - 1].Text != path_1)
+                // ★F1 修复（2026-09-20）：本段原为裸代码（无就近 try）——一旦抛异常（方案目录只读/无写权限、
+                //   DropDownItems 为空时 [Count-1] 越界等），异常会被外层 catch(1148) 吞掉并【跳过
+                //   999-1140 的 12 路作业绑定】→ block 全空（Form6 空白/Form9 崩溃/运行结果缺组），
+                //   与 95b73da 修的是同一类病。现单独包 try 只记日志，绝不让它阻断后续绑定。
+                try
                 {
-                    StreamWriter s = new StreamWriter(Path.GetDirectoryName(path_1) + "\\Menu.ini", true);
-                    s.WriteLine(path_1);
-                    s.Flush();
-                    s.Close();
+                    if (this.设置ToolStripMenuItem.DropDownItems[this.设置ToolStripMenuItem.DropDownItems.Count - 1].Text != path_1)
+                    {
+                        StreamWriter s = new StreamWriter(Path.GetDirectoryName(path_1) + "\\Menu.ini", true);
+                        s.WriteLine(path_1);
+                        s.Flush();
+                        s.Close();
+                    }
+                }
+                catch (Exception exMenu)
+                {
+                    _logger.WriteLog("Menu.ini 历史记录写入失败（已忽略，不影响后续作业绑定）: " + exMenu.Message);
                 }
                 // ★修复（2026-09-20 · 启动初始化被打断的根因）：
                 //   本方法由独立后台线程启动（Form1.cs:297 new Thread(InitializeJobManager)），
@@ -998,7 +1021,15 @@ namespace WindowsFormsApplication1
                 {
                     SafeBeginInvoke(new Action(() =>
                     {
-                        try { label75.Text = _p1ForUi.Split('\\').Last(); label173.Text = _p1ForUi; } catch { }
+                        try
+                        {
+                            label75.Text = _p1ForUi.Split('\\').Last();
+                            label173.Text = _p1ForUi;
+                            // ★F4：加载失败时在界面提示（不改动 path_1 本身，保持路径纯净可写回历史）
+                            if (managerState == ManagerState.Failed)
+                                label75.Text = label75.Text + "（方案已损坏或不存在）";
+                        }
+                        catch { }
                     }));
                 }
                 catch { }
@@ -4665,7 +4696,8 @@ namespace WindowsFormsApplication1
                                 // ★ 2026-09-13 修复：原来每帧独立 Task.Run 发送，A/B 两帧不保证获得发送锁的先后，
                                 //   可能 B 先写、A 后写覆盖寄存器（结果顺序颠倒）。改为投递到既有 per-相机 FIFO 队列，
                                 //   保证同一相机的结果严格按帧序发送（不涉及"可丢弃"策略）。
-                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
+                                // ★F9：结果回写走专用队列（不丢），IO 脉冲仍走 _cameraOutWork（可丢弃语义不变）
+                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                                 {
                                     try
                                     {
@@ -4679,7 +4711,8 @@ namespace WindowsFormsApplication1
                             else
                             {
                                 // ★ 三协议输出合并为单个后台任务顺序写（行为等价），减少线程池任务数
-                                _cameraOutWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
+                                // ★F9：结果回写走专用队列（不丢）
+                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                                 {
                                     try { _comm.Omron.WriteCameraOutput(camIdx, fins, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " OMRON输出失败: " + ex.Message); }
                                     try { _comm.Modbustcp.WriteCameraOutput(camIdx, modbustcps, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusTCP输出失败: " + ex.Message); }
@@ -6784,7 +6817,15 @@ namespace WindowsFormsApplication1
                     }
                         // ★fix②：不置 null。Dispose 后每个 Enqueue 因 _disposed=true 自动 no-op，
                         // 保留数组引用，检测线程若有残留 _cameraOutWork[i].Enqueue 调用也不会 NRE。
-                }
+                        }
+                        // ★F9：结果回写专用队列同样释放（不置 null，理由同上）
+                        if (_cameraResultWork != null)
+                        {
+                        for (int i = 0; i < 12; i++)
+                        {
+                            if (_cameraResultWork[i] != null) _cameraResultWork[i].Dispose();
+                        }
+                        }
             }
             catch { }
             _disposingFlag = true;
