@@ -167,8 +167,10 @@ namespace WindowsFormsApplication1
                     arr[i] = new CameraWorkQueue("cam" + (i + 1), 4, m => _logger.WriteLog(m));
                     arrRes[i] = new CameraWorkQueue("res" + (i + 1), 64, m => _logger.WriteLog(m));
                 }
-                _cameraOutWork = arr;
+                // ★N8：先发布结果队列、再发布哨兵 _cameraOutWork——锁外快判（EnsureCameraOutWork 首行）只看
+                //   _cameraOutWork，原顺序下并发线程可能在其已非空、_cameraResultWork 仍为 null 时直接 return → 首帧 NRE。
                 _cameraResultWork = arrRes;
+                _cameraOutWork = arr;
             }
         }
         public double jiankongshijian;
@@ -917,43 +919,47 @@ namespace WindowsFormsApplication1
                 if (!int.TryParse(_config.ReadString("camera", "yanshi", "5"), out _yanshiMs))
                     _yanshiMs = 5;
                 Thread.Sleep(_yanshiMs);
-                item_sum = this.设置ToolStripMenuItem.DropDownItems.Count;
                 StreamReader sr = null;
-                try
+                // ★N6：菜单项增删属 UI 操作，整段收口到 UI 线程——原实现后台线程裸操作 DropDownItems（Debug 抛跨线程异常/Release 竞态；F1 围栏未覆盖此段）
+                this.Invoke(new Action(() =>
                 {
-                    int i = this.设置ToolStripMenuItem.DropDownItems.Count;
-                    if (i > item_sum)
-                    {
-                        for (int j = 0; j < i; j++)
-                        {
-                            if (j >= item_sum)
-                            {
-                                this.设置ToolStripMenuItem.DropDownItems.RemoveAt(item_sum);
-                            }
-                        }
-                    }
-                    sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
-                    i = item_sum;
-                    while (sr.Peek() >= 0)
-                    {
-                        menuitem = new ToolStripMenuItem(sr.ReadLine());
-                        this.设置ToolStripMenuItem.DropDownItems.Insert(i, menuitem);
-                        i++;
-                        menuitem.Click += new EventHandler(menuitem_Click);
-                    }
-                    sr.Dispose();
-                    sr.Close();
-                }
-                catch
-                {
+                    item_sum = this.设置ToolStripMenuItem.DropDownItems.Count;
                     try
                     {
+                        int i = this.设置ToolStripMenuItem.DropDownItems.Count;
+                        if (i > item_sum)
+                        {
+                            for (int j = 0; j < i; j++)
+                            {
+                                if (j >= item_sum)
+                                {
+                                    this.设置ToolStripMenuItem.DropDownItems.RemoveAt(item_sum);
+                                }
+                            }
+                        }
+                        sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
+                        i = item_sum;
+                        while (sr.Peek() >= 0)
+                        {
+                            menuitem = new ToolStripMenuItem(sr.ReadLine());
+                            this.设置ToolStripMenuItem.DropDownItems.Insert(i, menuitem);
+                            i++;
+                            menuitem.Click += new EventHandler(menuitem_Click);
+                        }
                         sr.Dispose();
                         sr.Close();
                     }
-                    catch { }
-                }
-                sr = null;
+                    catch
+                    {
+                        try
+                        {
+                            sr.Dispose();
+                            sr.Close();
+                        }
+                        catch { }
+                    }
+                    sr = null;
+                }));
                 try
                 {
                     sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
@@ -1052,11 +1058,15 @@ namespace WindowsFormsApplication1
                     {
                         manager1.UserQueueFlush();
                         manager1.FailureQueueFlush();
-                        _jobs.myjob1.job = manager1.Job(0);
-                        myIndependentJob = _jobs.myjob1.job.OwnedIndependent;
-                        _jobs.myjob1.job.ImageQueueFlush();
-                        _jobs.myjob1.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob.RealTimeQueueFlush();
+                        try
+                        {
+                            _jobs.myjob1.job = manager1.Job(0);
+                            myIndependentJob = _jobs.myjob1.job.OwnedIndependent;
+                            _jobs.myjob1.job.ImageQueueFlush();
+                            _jobs.myjob1.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex1) { _logger.WriteLog("相机1 作业绑定失败: " + ex1.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(20, "正在加载作业 (1/12)...");
 
                         // path_1 = @".\test.vpp";
@@ -1067,122 +1077,166 @@ namespace WindowsFormsApplication1
                     {
 
 
-                        _jobs.myjob2.job = manager1.Job(1);
-                        myIndependentJob2 = _jobs.myjob2.job.OwnedIndependent;
-                        _jobs.myjob2.job.ImageQueueFlush();
-                        _jobs.myjob2.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob2.RealTimeQueueFlush();
+                        try
+                        {
+                            _jobs.myjob2.job = manager1.Job(1);
+                            myIndependentJob2 = _jobs.myjob2.job.OwnedIndependent;
+                            _jobs.myjob2.job.ImageQueueFlush();
+                            _jobs.myjob2.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob2.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex2) { _logger.WriteLog("相机2 作业绑定失败: " + ex2.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(21, "正在加载作业 (2/12)...");
 
                     }
                     if (manager1.JobCount > 2)
                     {
 
-                        _jobs.myjob3.job = manager1.Job(2);
-                        myIndependentJob3 = _jobs.myjob3.job.OwnedIndependent;
-                        _jobs.myjob3.job.ImageQueueFlush();
-                        _jobs.myjob3.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob3.RealTimeQueueFlush();
+                        try
+                        {
+                            _jobs.myjob3.job = manager1.Job(2);
+                            myIndependentJob3 = _jobs.myjob3.job.OwnedIndependent;
+                            _jobs.myjob3.job.ImageQueueFlush();
+                            _jobs.myjob3.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob3.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex3) { _logger.WriteLog("相机3 作业绑定失败: " + ex3.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(22, "正在加载作业 (3/12)...");
 
                     }
 
                     if (manager1.JobCount > 3)
                     {
-                        _jobs.myjob4.job = manager1.Job(3);
+                        try
+                        {
+                            _jobs.myjob4.job = manager1.Job(3);
 
-                        myIndependentJob4 = _jobs.myjob4.job.OwnedIndependent;
-                        _jobs.myjob4.job.ImageQueueFlush();
-                        _jobs.myjob4.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob4.RealTimeQueueFlush();
+                            myIndependentJob4 = _jobs.myjob4.job.OwnedIndependent;
+                            _jobs.myjob4.job.ImageQueueFlush();
+                            _jobs.myjob4.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob4.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex4) { _logger.WriteLog("相机4 作业绑定失败: " + ex4.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(23, "正在加载作业 (4/12)...");
 
                     }
                     if (manager1.JobCount > 4)
                     {
-                        _jobs.myjob5.job = manager1.Job(4);
+                        try
+                        {
+                            _jobs.myjob5.job = manager1.Job(4);
 
-                        myIndependentJob5 = _jobs.myjob5.job.OwnedIndependent;
-                        _jobs.myjob5.job.ImageQueueFlush();
-                        _jobs.myjob5.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob5.RealTimeQueueFlush();
+                            myIndependentJob5 = _jobs.myjob5.job.OwnedIndependent;
+                            _jobs.myjob5.job.ImageQueueFlush();
+                            _jobs.myjob5.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob5.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex5) { _logger.WriteLog("相机5 作业绑定失败: " + ex5.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(24, "正在加载作业 (5/12)...");
 
                     }
                     if (manager1.JobCount > 5)
                     {
-                        _jobs.myjob6.job = manager1.Job(5);
+                        try
+                        {
+                            _jobs.myjob6.job = manager1.Job(5);
 
-                        myIndependentJob6 = _jobs.myjob6.job.OwnedIndependent;
-                        _jobs.myjob6.job.ImageQueueFlush();
-                        _jobs.myjob6.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob6.RealTimeQueueFlush();
+                            myIndependentJob6 = _jobs.myjob6.job.OwnedIndependent;
+                            _jobs.myjob6.job.ImageQueueFlush();
+                            _jobs.myjob6.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob6.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex6) { _logger.WriteLog("相机6 作业绑定失败: " + ex6.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(25, "正在加载作业 (6/12)...");
 
                     }
                     if (manager1.JobCount > 6)
                     {
-                        _jobs.myjob7.job = manager1.Job(6);
+                        try
+                        {
+                            _jobs.myjob7.job = manager1.Job(6);
 
-                        myIndependentJob7 = _jobs.myjob7.job.OwnedIndependent;
-                        _jobs.myjob7.job.ImageQueueFlush();
-                        _jobs.myjob7.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob7.RealTimeQueueFlush();
+                            myIndependentJob7 = _jobs.myjob7.job.OwnedIndependent;
+                            _jobs.myjob7.job.ImageQueueFlush();
+                            _jobs.myjob7.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob7.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex7) { _logger.WriteLog("相机7 作业绑定失败: " + ex7.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(26, "正在加载作业 (7/12)...");
 
                     }
                     if (manager1.JobCount > 7)
                     {
-                        _jobs.myjob8.job = manager1.Job(7);
+                        try
+                        {
+                            _jobs.myjob8.job = manager1.Job(7);
 
-                        myIndependentJob8 = _jobs.myjob8.job.OwnedIndependent;
-                        _jobs.myjob8.job.ImageQueueFlush();
-                        _jobs.myjob8.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob8.RealTimeQueueFlush();
+                            myIndependentJob8 = _jobs.myjob8.job.OwnedIndependent;
+                            _jobs.myjob8.job.ImageQueueFlush();
+                            _jobs.myjob8.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob8.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex8) { _logger.WriteLog("相机8 作业绑定失败: " + ex8.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(27, "正在加载作业 (8/12)...");
 
                     }
                     if (manager1.JobCount > 8)
                     {
-                        _jobs.myjob9.job = manager1.Job(8);
+                        try
+                        {
+                            _jobs.myjob9.job = manager1.Job(8);
 
-                        myIndependentJob9 = _jobs.myjob9.job.OwnedIndependent;
-                        _jobs.myjob9.job.ImageQueueFlush();
-                        _jobs.myjob9.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob9.RealTimeQueueFlush();
+                            myIndependentJob9 = _jobs.myjob9.job.OwnedIndependent;
+                            _jobs.myjob9.job.ImageQueueFlush();
+                            _jobs.myjob9.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob9.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex9) { _logger.WriteLog("相机9 作业绑定失败: " + ex9.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(28, "正在加载作业 (9/12)...");
 
                     }
                     if (manager1.JobCount > 9)
                     {
-                        _jobs.myjob10.job = manager1.Job(9);
+                        try
+                        {
+                            _jobs.myjob10.job = manager1.Job(9);
 
-                        myIndependentJob10 = _jobs.myjob10.job.OwnedIndependent;
-                        _jobs.myjob10.job.ImageQueueFlush();
-                        _jobs.myjob10.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob10.RealTimeQueueFlush();
+                            myIndependentJob10 = _jobs.myjob10.job.OwnedIndependent;
+                            _jobs.myjob10.job.ImageQueueFlush();
+                            _jobs.myjob10.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob10.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex10) { _logger.WriteLog("相机10 作业绑定失败: " + ex10.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(29, "正在加载作业 (10/12)...");
 
                     }
                     if (manager1.JobCount > 10)
                     {
-                        _jobs.myjob11.job = manager1.Job(10);
+                        try
+                        {
+                            _jobs.myjob11.job = manager1.Job(10);
 
-                        myIndependentJob11 = _jobs.myjob11.job.OwnedIndependent;
-                        _jobs.myjob11.job.ImageQueueFlush();
-                        _jobs.myjob11.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob11.RealTimeQueueFlush();
+                            myIndependentJob11 = _jobs.myjob11.job.OwnedIndependent;
+                            _jobs.myjob11.job.ImageQueueFlush();
+                            _jobs.myjob11.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob11.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex11) { _logger.WriteLog("相机11 作业绑定失败: " + ex11.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(30, "正在加载作业 (11/12)...");
 
                     }
                     if (manager1.JobCount > 11)
                     {
-                        _jobs.myjob12.job = manager1.Job(11);
+                        try
+                        {
+                            _jobs.myjob12.job = manager1.Job(11);
 
-                        myIndependentJob12 = _jobs.myjob12.job.OwnedIndependent;
-                        _jobs.myjob12.job.ImageQueueFlush();
-                        _jobs.myjob12.Cogbmp = new CogImageFileBMP();
-                        myIndependentJob12.RealTimeQueueFlush();
+                            myIndependentJob12 = _jobs.myjob12.job.OwnedIndependent;
+                            _jobs.myjob12.job.ImageQueueFlush();
+                            _jobs.myjob12.Cogbmp = new CogImageFileBMP();
+                            myIndependentJob12.RealTimeQueueFlush();
+                        }
+                        catch (Exception ex12) { _logger.WriteLog("相机12 作业绑定失败: " + ex12.Message); }   // ★N6：逐路独立 try，单路失败不再带走后续各路
                         UpdateSplashProgress(31, "正在加载作业 (12/12)...");
 
                     }
@@ -3940,7 +3994,11 @@ namespace WindowsFormsApplication1
                             // 存图测试1ToolStripMenuItem.Checked = true;
                         }));
 
-                        if (checkedListBox1.SelectedIndices.Count == 0)
+                        // ★N7：原实现在 Task 线程裸读控件——Debug 下抛跨线程异常且被 Task 静默吞，
+                        //   其后的 EnableCameraReconnect 被整段跳过（相机掉线不再自动重连）。改 UI 线程读取。
+                        bool _noneChecked = false;
+                        this.Invoke(new Action(() => { _noneChecked = checkedListBox1.SelectedIndices.Count == 0; }));
+                        if (_noneChecked)
                             _logger.WriteLog("请选择要开启的相机");
                     }
                     else
@@ -3965,11 +4023,16 @@ namespace WindowsFormsApplication1
                     EnableCameraReconnect();
                 }
                 }
+                catch (Exception exStart)
+                {
+                    // ★N7：启动流程异常兜底——原实现只有 try/finally，异常被 Task 静默吞（后续步骤整段跳过）
+                    _logger.WriteLog("启动运行流程异常: " + exStart.Message);
+                }
                 finally
                 {
                     Interlocked.Exchange(ref _startFlowRunning, 0);
                 }
-             });
+            });
         }
         public static int Diaohuan(int cc)
         {

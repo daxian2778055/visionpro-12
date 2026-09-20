@@ -291,6 +291,8 @@ namespace WindowsFormsApplication1
                     if (!string.IsNullOrEmpty(xwarn))
                         System.Windows.Forms.MessageBox.Show(this, xwarn, "跨协议相机绑定提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
+                // ★N4：反馈通道同块告警（两行写同一块会互相覆盖；心跳与相机反馈同块时会被每秒覆盖）
+                if (slot == 3) WarnSameFeedbackBlock(cameraNo, newVal);
                 return true;
             }
             string old = camera_dic[cameraNo][slot];
@@ -408,7 +410,7 @@ namespace WindowsFormsApplication1
                     fins_length = decimal.Parse(wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "changdu", "0"));
                     ABCD = wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "gaodiwei", "触发").Replace("\0", "");
                     fins_style = wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "geshi", "int").Replace("\0", "");
-                    fins_dic.Add(fins_mingcheng, new string[] { fins_mingcheng, fins_qishi.ToString(), fins_length.ToString(), ABCD, fins_style });
+                    fins_dic.Add(fins_mingcheng, new string[] { fins_mingcheng, fins_qishi.ToString(), fins_length.ToString(), ABCD, (fins_style ?? "").Trim().ToLowerInvariant() });   // ★N5：格式列归一化（读侧裸比较 == "int"，配成 "Int" 时读回恒空→每圈误触发回写）
                     for (int j = 0; j < fins_length; j++)
                     {
                         xuanzhong_temp = fins_qishi - address_qishi + j;
@@ -559,10 +561,13 @@ namespace WindowsFormsApplication1
                 c15.CheckState = CheckState.Checked;
 
             // Camera 13 (Heartbeat)
-            // ★心跳独立存储：优先读独立键 xintiao/xintiaoen；键不存在时回填旧共用键（升级兼容：
-            //   旧版本“心跳值”与“切换返回值”共用 fanhuizhi、“心跳使能”与“切换使能”共用 fanhuien）。
+            // ★心跳独立存储：读独立键 xintiao/xintiaoen；旧版本两者与“切换”共用 fanhuizhi/fanhuien。
+            //   ★N3 修复（2026-09-20）：读到旧值后立即幂等落盘固化——此后彻底脱钩，避免
+            //   “操作员改切换返回值/使能 → 重启后心跳跟着漂移或静默停用”。使能比较大小写不敏感。
             _heartbeatValue = wdini.ReadString(ModbusRtuIniStore.CameraSection(_linkId, 13), "xintiao", camera_dic[13][1]);
-            _heartbeatEnabled = wdini.ReadString(ModbusRtuIniStore.CameraSection(_linkId, 13), "xintiaoen", camera_dic[13][2]) == "true";
+            _heartbeatEnabled = string.Equals(wdini.ReadString(ModbusRtuIniStore.CameraSection(_linkId, 13), "xintiaoen", camera_dic[13][2]), "true", StringComparison.OrdinalIgnoreCase);
+            wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 13), "xintiao", _heartbeatValue);
+            wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 13), "xintiaoen", _heartbeatEnabled ? "true" : "false");
             t39.Text = _heartbeatValue;
             if (_heartbeatEnabled)
                 c16.CheckState = CheckState.Checked;
@@ -809,6 +814,7 @@ namespace WindowsFormsApplication1
                     panel2.Enabled = true;
 
                     userControlCurve1.ReadWriteNet = busRtuClient;
+                    try { StartHeartbeatTimer(); } catch { }   // ★N2：连接成功恢复心跳（断开时已停）
                 }
                 else
                 {
@@ -1298,6 +1304,7 @@ namespace WindowsFormsApplication1
             // ★M5 修复：与轮询读/写/重连共用 _ioSync 单锁——原实现直接 Close，
             //   会与在途 I/O 抢同一串口/socket。
             lock (_ioSync) { try { if (_rtuLink.Client != null) _rtuLink.Close(); } catch { } }
+            try { StopHeartbeatTimer(); } catch { }   // ★N2：断开连接即停心跳（防对已关链路每秒空写/触发重连）
             button2.Enabled = false;
             button1.Enabled = true;
             panel2.Enabled = false;
@@ -1414,7 +1421,7 @@ namespace WindowsFormsApplication1
                                     }
                                     else
                                     {
-                                        fins_dic.Add(t1.Text, new string[] { t1.Text, numericUpDown5.Value.ToString(), numericUpDown4.Value.ToString(), cb2.Text, cb3.Text });
+                                        fins_dic.Add(t1.Text, new string[] { t1.Text, numericUpDown5.Value.ToString(), numericUpDown4.Value.ToString(), cb2.Text, (cb3.Text ?? "").Trim().ToLowerInvariant() });   // ★N5：格式列归一化（同 ini 加载路径）
                                         for (int i = 0; i < numericUpDown4.Value; i++)
                                         {
                                             xuanzhong_temp = numericUpDown5.Value - numericUpDown1.Value + i;
@@ -2309,6 +2316,7 @@ namespace WindowsFormsApplication1
             {
                 camera_dic[13][3] = cb29.Text;
                 wdini.WriteString(ModbusRtuIniStore.CameraSection(_linkId, 13), "fankui", cb29.Text);
+                WarnSameFeedbackBlock(13, cb29.Text);   // ★N4：心跳与相机反馈同块告警
             }
         }
 
@@ -3039,6 +3047,7 @@ namespace WindowsFormsApplication1
         public void ReleaseInstance()
         {
             try { StopPolling(); } catch { }
+            try { StopHeartbeatTimer(); } catch { }   // ★N2：释放实例即停心跳定时器（防窗体被 Tick 闭包钉住泄漏）
             foreach (var rt in _runtimes.Values)
                 try { if (rt != null) rt.Close(); } catch { }
             try
@@ -3389,17 +3398,56 @@ namespace WindowsFormsApplication1
         private string _heartbeatValue = "";
         private bool _heartbeatEnabled = false;
         private System.Windows.Forms.Timer _heartbeatTimer;
+        private int _hbBusy = 0;   // ★N1：心跳写出进行中标志（0=空闲 1=进行中），PLC 慢时防任务堆积
 
         /// <summary>创建并启动心跳定时器（UI 线程调用；1s 周期）。</summary>
         private void StartHeartbeatTimer()
         {
-            if (_heartbeatTimer != null) return;
+            // ★N2：断开连接停表后，重新连上可再次启动（Timer 已 Dispose 时重建）
+            if (_heartbeatTimer != null) { _heartbeatTimer.Start(); return; }
             _heartbeatTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _heartbeatTimer.Tick += (s, ev) => HeartbeatTick();
             _heartbeatTimer.Start();
         }
 
-        /// <summary>心跳：勾上 + 未重连 + 反馈/心跳值已配置 → 把心跳值写入反馈通道。</summary>
+        /// <summary>★N2：停止并释放心跳定时器（释放实例/断开连接时调用，防窗体被 Tick 闭包钉住泄漏、防对已关链路空写）。</summary>
+        private void StopHeartbeatTimer()
+        {
+            try
+            {
+                if (_heartbeatTimer != null)
+                {
+                    _heartbeatTimer.Stop();
+                    _heartbeatTimer.Dispose();
+                    _heartbeatTimer = null;
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>★N4：反馈通道同块告警——本连接内 [3] 与其它行（含相机13 心跳）绑同一数据块时软提示（不拦截）。</summary>
+        private void WarnSameFeedbackBlock(int cam, string val)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(val) || val.Contains("无")) return;
+                for (int c = 1; c <= 13; c++)
+                {
+                    if (c == cam || !camera_dic.ContainsKey(c)) continue;
+                    if (camera_dic[c].Length > 3 && camera_dic[c][3] == val)
+                    {
+                        MessageBox.Show(this,
+                            "本连接内已有行绑定同一反馈数据块“" + val + "”（相机 " + c + "）。" + Environment.NewLine +
+                            "两路结果会写入同一寄存器互相覆盖" + ((c == 13 || cam == 13) ? "；心跳每秒写该块，会持续覆盖相机结果值" : "") + "。" + Environment.NewLine +
+                            "建议改用其它数据块。", "反馈通道重复绑定", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        break;
+                    }
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>心跳：勾上 + 未重连 + 反馈/心跳值已配置 → 把心跳值写入反馈通道（后台线程）。</summary>
         private void HeartbeatTick()
         {
             try
@@ -3413,12 +3461,23 @@ namespace WindowsFormsApplication1
                 if (string.IsNullOrEmpty(chan) || chan.Contains("无")) return;   // 反馈未配置
                 string val = (_heartbeatValue ?? "").Trim();
                 if (val.Length == 0) return;                                     // 心跳值未配置
-                lock (_ioSync)   // ★与成功/失败回执的“设[4][5]+写出”互斥：防两组槽值交叠后发错通道
+                // ★N1 修复（2026-09-20）：写出改投后台线程——原来在 UI 线程 Timer.Tick 里同步写，
+                //   PLC 半死时（写阻塞数秒）叠加轮询线程持 _ioSync，主界面会反复冻结。
+                if (System.Threading.Interlocked.CompareExchange(ref _hbBusy, 1, 0) != 0) return;  // 上轮未写完则跳过本轮
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
-                    camera_dic[13][4] = val;
-                    camera_dic[13][5] = chan;
-                    xie(val);
-                }
+                    try
+                    {
+                        lock (_ioSync)   // ★与成功/失败回执的“设[4][5]+写出”互斥：防两组槽值交叠后发错通道
+                        {
+                            camera_dic[13][4] = val;
+                            camera_dic[13][5] = chan;
+                            xie(val);
+                        }
+                    }
+                    catch { }
+                    finally { System.Threading.Interlocked.Exchange(ref _hbBusy, 0); }
+                });
             }
             catch { }
         }

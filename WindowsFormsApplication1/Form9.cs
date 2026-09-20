@@ -103,6 +103,8 @@ namespace WindowsFormsApplication1
         {
             combox.Items.Clear();
             toolName1.Clear();
+            toolParent1.Clear();   // ★N9：清空“父块+原工具”映射（原只增不清，切方案/多次枚举会残留旧块引用）
+            toolOld1.Clear();
             // ★ 防崩溃（2026-09-20）：流程块未加载时（blk 为 null）原实现直接 blk.Tools → NullReferenceException
             //   （崩溃日志定位：Form9.cs:106 / comboBox27_DropDown）。此处给出提示项并返回，不再枚举。
             if (blk == null)
@@ -228,6 +230,9 @@ namespace WindowsFormsApplication1
                         && toolOld1.TryGetValue(comboBox27.Text, out _oldTool) && _oldTool != null
                         && !string.IsNullOrEmpty(_oldTool.Name))
                     {
+                        // ★N9 修复（2026-09-20）：新加载工具改名为原工具名——原实现只按 _oldTool.Name 替换字典项，
+                        //   而 Inspect1.Name 仍是模板内旧名；第二次写回时 toolOld1 已存新实例、按其 Name 查不到 → 落"未找到"。
+                        Inspect1.Name = _oldTool.Name;
                         _parentBlk.Tools[_oldTool.Name] = Inspect1;   // 替换流程内的原工具
                         toolOld1[comboBox27.Text] = Inspect1;         // 之后再次加载时以新实例为准
                         tishi = "加载模板成功（已写回流程工具）";
