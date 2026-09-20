@@ -1194,34 +1194,26 @@ namespace WindowsFormsApplication1
                         }
                     }
             }
-            try
+            // ★C8 修复：原实现 12 路共用一个 try + 空 catch——任一路（如某路 block 缺 triggerZifu
+            //   输入口）抛异常会让其后所有路都不再执行、静默沿用旧触发字符，通讯触发整链无声失配。
+            //   改为逐路独立 try + 日志，单路异常不影响其它路；并先用 Inputs.Contains 做存在性检查。
             {
-                if (_jobs.myjob1.triggerMode == "通讯触发")
-                    _jobs.myjob1.triggerZifu = _jobs.myjob1.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob2.triggerMode == "通讯触发")
-                    _jobs.myjob2.triggerZifu = _jobs.myjob2.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob3.triggerMode == "通讯触发")
-                    _jobs.myjob3.triggerZifu = _jobs.myjob3.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob4.triggerMode == "通讯触发")
-                    _jobs.myjob4.triggerZifu = _jobs.myjob4.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob5.triggerMode == "通讯触发")
-                    _jobs.myjob5.triggerZifu = _jobs.myjob5.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob6.triggerMode == "通讯触发")
-                    _jobs.myjob6.triggerZifu = _jobs.myjob6.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob7.triggerMode == "通讯触发")
-                    _jobs.myjob7.triggerZifu = _jobs.myjob7.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob8.triggerMode == "通讯触发")
-                    _jobs.myjob8.triggerZifu = _jobs.myjob8.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob9.triggerMode == "通讯触发")
-                    _jobs.myjob9.triggerZifu = _jobs.myjob9.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob10.triggerMode == "通讯触发")
-                    _jobs.myjob10.triggerZifu = _jobs.myjob10.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob11.triggerMode == "通讯触发")
-                    _jobs.myjob11.triggerZifu = _jobs.myjob11.block.Inputs["triggerZifu"].Value.ToString();
-                if (_jobs.myjob12.triggerMode == "通讯触发")
-                    _jobs.myjob12.triggerZifu = _jobs.myjob12.block.Inputs["triggerZifu"].Value.ToString();
+                var _mjArrTz = new Myjob[] { _jobs.myjob1, _jobs.myjob2, _jobs.myjob3, _jobs.myjob4, _jobs.myjob5, _jobs.myjob6, _jobs.myjob7, _jobs.myjob8, _jobs.myjob9, _jobs.myjob10, _jobs.myjob11, _jobs.myjob12 };
+                for (int _ti = 0; _ti < _mjArrTz.Length; _ti++)
+                {
+                    var _mjTz = _mjArrTz[_ti];
+                    if (_mjTz == null) continue;
+                    try
+                    {
+                        if (_mjTz.triggerMode == "通讯触发" && _mjTz.block != null && _mjTz.block.Inputs.Contains("triggerZifu"))
+                            _mjTz.triggerZifu = _mjTz.block.Inputs["triggerZifu"].Value.ToString();
+                    }
+                    catch (Exception exTz)
+                    {
+                        _logger.WriteLog("相机" + (_ti + 1) + " triggerZifu 同步失败(不影响其它路): " + exTz.Message);
+                    }
+                }
             }
-            catch { }
 
 
         }

@@ -9879,11 +9879,15 @@ namespace WindowsFormsApplication1
             try { SafeBeginInvoke(new Action(() => { try { button1.Visible = true; } catch { } })); } catch { }
         }
 
-        private void xinghao_qiehuan(string a)
+        /// <summary>★C5：切方案前言——隐藏运行按钮 →（停运行）→ 停检测/解触发/排空帧 → 弹切换进度窗。
+        /// 原实现直接在 xinghao_qiehuan 里裸执行且无 try：任一处抛异常（控件访问/事件回调/Show 窗体）
+        /// 会让本次切换死在半途——qiehuanzhong 永久 1（后续切型被永久拒绝）+ button1 永久隐藏
+        /// + _switchingScheme 永久 true（全系统停止检测）。返回 false 表示前言失败、调用方须回滚。
+        /// （本方法由 UI 线程调用，可安全访问控件。）</summary>
+        private bool SchemeSwitchPreface(string a)
         {
-            if (Interlocked.CompareExchange(ref qiehuanzhong, 1, 0) == 0)
+            try
             {
-                qiehuanzhong = 1;
                 button1.Visible = false;
                 if (a.Contains(".vpp"))
                 {
@@ -9910,7 +9914,6 @@ namespace WindowsFormsApplication1
                 DisarmCommTrigger();
                 DrainPendingFrames();
 
-
                 if (_comm.Omron.qiehuanzhong == 0)
                 {
                     Frm2 = new Frm2();
@@ -9918,8 +9921,29 @@ namespace WindowsFormsApplication1
                     Frm2.start = 0;
                     UpdateSplashProgress(5, "正在准备切换方案...");
                 }
-               // DeviceListAcq();
-               // bnClose_Click(null, null);
+                // DeviceListAcq();
+                // bnClose_Click(null, null);
+                return true;
+            }
+            catch (Exception exPre)
+            {
+                _logger.WriteLog("切方案前言异常，将回滚切换门控（未卸载方案）：" + exPre.Message);
+                return false;
+            }
+        }
+
+        private void xinghao_qiehuan(string a)
+        {
+            if (Interlocked.CompareExchange(ref qiehuanzhong, 1, 0) == 0)
+            {
+                qiehuanzhong = 1;
+                // ★C5 修复：前言移入 SchemeSwitchPreface 并整体包 try——失败即回滚门控并退出本次切换，
+                //   不再出现"切换死在半途导致切型永久拒绝 + 运行按钮永久隐藏 + 全系统停止检测"。
+                if (!SchemeSwitchPreface(a))
+                {
+                    try { RollbackSchemeSwitch(); } catch { }
+                    return;
+                }
                 Task.Run(() =>
                 {
                     // ★ 排空：等待正在执行的检测帧结束（最长 10 秒）。
