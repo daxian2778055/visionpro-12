@@ -7479,6 +7479,16 @@ namespace WindowsFormsApplication1
                                     // ★B1 修复：每路执行前复查中止标志——本 Task 可能在关闭/切型/开机中才跑到这里，
                                     //   原实现只在 timer2_Tick 入口判一次，Task 体内不再复查。
                                     if (!_cameraReconnectEnabled || _disposingFlag || _switchingScheme || dakaizhong) return;
+                                    // ★B3 修复：per-slot 异常隔离——原实现任一路抛异常会中断本轮其余路，
+                                    //   且被外层空 catch 吞掉（无日志）。包一层保证单路异常只影响该路。
+                                    try { CheckAndReconnectCameraCore(slot); }
+                                    catch (Exception exSlot)
+                                    {
+                                        try { _logger.WriteLog("相机" + (slot + 1) + "重连处理异常(不影响其它路): " + exSlot.Message); } catch { }
+                                    }
+                                }
+                                void CheckAndReconnectCameraCore(int slot)
+                                {
                                     var job = _jobs.Myjobs[slot];
                                     if (_cameraCtrl.Cameras[slot] == null)
                                     {
@@ -7528,7 +7538,11 @@ namespace WindowsFormsApplication1
                                 }
                         }
                         }
-                    catch { }
+                    catch (Exception exTick)
+                    {
+                        // ★B3 修复：原空 catch——本轮重连异常被完全吞掉，无任何日志可查
+                        try { _logger.WriteLog("自动重连本轮异常: " + exTick.Message); } catch { }
+                    }
 
                     if (!cameraState.Contains("相"))
                         cameraState = "";
@@ -10769,31 +10783,47 @@ namespace WindowsFormsApplication1
                         comboBox38_TextChanged(null, null);
 
                         button1_Click(null, null);
-                        _switchingScheme = false;
-                                _inspectionLifecycle.Resume();
-                        Interlocked.Exchange(ref qiehuanzhong, 0);
-                        button1.Visible = true;
-                        display();
-                        // ★C2 修复：ACK 前逐路校验 job/block 绑定完整性——12 路重建共用一个 try，
-                        //   某路异常（如缺 CogToolBlock1）时该路及后续路 block 为 null，但原实现
-                        //   照发"切换完成"回执 → PLC 开始触发而后段相机静默不检测（质量逃逸）。
-                        //   任一应加载路未绑定成功即抑制回执（PLC 靠超时判 NG）。
+                        // ★C3 修复：放门控与"切换完成"回执下移到检测真正 Arm（_jobs.CommTriggerArmed=true）之后——
+                        //   原实现 button1_Click 只是把 run 排成 Task 就立即发 ACK：PLC 收到"完成"后立刻发的
+                        //   第一件产品触发会被 CommTriggerArmed 门控静默丢弃（SendSoftwareTrigger 直接 return -1）。
+                        //   此处异步等待（不阻塞 UI 线程），Arm 完成或超时后再放门控+回执。
+                        Task.Run(() =>
                         {
-                            bool flowBindOk = true;
-                            int _jc = (manager1 != null) ? manager1.JobCount : 0;
-                            for (int _bi = 0; _bi < _jc && _bi < 12; _bi++)
+                            for (int _w = 0; _w < 100 && !_jobs.CommTriggerArmed; _w++) Thread.Sleep(100);   // 最多等 10 秒
+                            bool _armed = _jobs.CommTriggerArmed;
+                            try
                             {
-                                if (_jobs.Myjobs[_bi] == null || _jobs.Myjobs[_bi].job == null || _jobs.Myjobs[_bi].block == null)
+                                this.Invoke(new Action(() =>
                                 {
-                                    flowBindOk = false;
-                                    _logger.WriteLog("切换方案: 相机" + (_bi + 1) + " 流程/block 绑定不完整，本次切换判失败");
-                                }
+                                    _switchingScheme = false;
+                                    _inspectionLifecycle.Resume();
+                                    Interlocked.Exchange(ref qiehuanzhong, 0);
+                                    button1.Visible = true;
+                                    display();
+                                    // ★C2 修复：ACK 前逐路校验 job/block 绑定完整性——12 路重建共用一个 try，
+                                    //   某路异常（如缺 CogToolBlock1）时该路及后续路 block 为 null，但原实现
+                                    //   照发"切换完成"回执 → PLC 开始触发而后段相机静默不检测（质量逃逸）。
+                                    //   任一应加载路未绑定成功即抑制回执（PLC 靠超时判 NG）。
+                                    bool flowBindOk = true;
+                                    int _jc = (manager1 != null) ? manager1.JobCount : 0;
+                                    for (int _bi = 0; _bi < _jc && _bi < 12; _bi++)
+                                    {
+                                        if (_jobs.Myjobs[_bi] == null || _jobs.Myjobs[_bi].job == null || _jobs.Myjobs[_bi].block == null)
+                                        {
+                                            flowBindOk = false;
+                                            _logger.WriteLog("切换方案: 相机" + (_bi + 1) + " 流程/block 绑定不完整，本次切换判失败");
+                                        }
+                                    }
+                                    if (!_armed)
+                                        _logger.WriteLog("切换方案: 等待检测 Arm 超时(10s)，回执已抑制（PLC 靠超时判 NG）");
+                                    else if (flowBindOk)
+                                        SendSchemeSwitchAck();   // ★ 切换成功回执：把相机13 配置的“返回值”写回 PLC 切换通道（若已配置）
+                                    else
+                                        _logger.WriteLog("切换方案: 回执已抑制（流程绑定不完整），PLC 靠超时判 NG");
+                                }));
                             }
-                            if (flowBindOk)
-                                SendSchemeSwitchAck();   // ★ 切换成功回执：把相机13 配置的“返回值”写回 PLC 切换通道（若已配置）
-                            else
-                                _logger.WriteLog("切换方案: 回执已抑制（流程绑定不完整），PLC 靠超时判 NG");
-                        }
+                            catch { }
+                        });
                         }));
                         }
                     }

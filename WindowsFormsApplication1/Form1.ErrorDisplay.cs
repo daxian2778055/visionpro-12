@@ -455,17 +455,28 @@ namespace WindowsFormsApplication1
                 try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
                 try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_CreateDevice_NET(ref device1[deviceArrayIndex]);
-                if (nRet != MyCamera.MV_OK) return false;
+                if (nRet != MyCamera.MV_OK)
+                {
+                    // ★B4 修复：失败置 null，让主窗"存在 null 槽才重扫"分支接管——
+                    //   原实现只销毁句柄不清元素，12 路全非空时名称重扫永不触发，相机换 IP（DHCP）回归绑不回。
+                    _cameraCtrl.Cameras[slot] = null;
+                    return false;
+                }
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_OpenDevice_NET();
                 if (nRet != MyCamera.MV_OK)
                 {
                     // 打开失败时销毁已创建的设备句柄，防止句柄泄漏
                     try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                    _cameraCtrl.Cameras[slot] = null;   // ★B4：同上，交给按名重扫接管
                     return false;
                 }
                 ApplyGigePacketSizeAfterOpen(slot, deviceArrayIndex);
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
-                if (nRet != MyCamera.MV_OK) return false;
+                if (nRet != MyCamera.MV_OK)
+                {
+                    _cameraCtrl.Cameras[slot] = null;   // ★B4：同上，交给按名重扫接管
+                    return false;
+                }
                 // ★M11 修复：原重连路径只注册图像回调、漏了异常回调——重连后该路 SDK 异常不再上报；
                 //   与首次打开路径（Form1.cs:7179/11044）保持一致注册异常回调
                 //   （cbException 为常驻字段，已防 GC）。
