@@ -7500,19 +7500,8 @@ namespace WindowsFormsApplication1
                                                 if (TryReconnectDeviceLikeBnOpen(devInfo, i_temp, out boundSlot, out nRet, out nameMatched))
                                                 {
                                                     int capturedSlot = boundSlot;
-                                                    // ★B6 修复：重连恢复运行只看"操作员勾选"——取该槽勾选快照；
-                                                    //   被操作员主动排除（取消勾选）的工位不能在掉线重连后被拉回生产发 OK/NG。
-                                                    bool slotChecked = false;
-                                                    try
-                                                    {
-                                                        this.Invoke(new Action(() =>
-                                                        {
-                                                            try { slotChecked = checkedListBox1.GetItemChecked(capturedSlot); } catch { }
-                                                            ApplyCameraUiAfterConnect(capturedSlot);
-                                                        }));
-                                                    }
-                                                    catch { }
-                                                    if (_jobs.yunxing && slotChecked)
+                                                    this.Invoke(new Action(() => ApplyCameraUiAfterConnect(capturedSlot)));
+                                                    if (_jobs.yunxing)
                                                     {
                                                         _jobs.Myjobs[capturedSlot].yun = 1;
                                                         int grabRet;
@@ -7606,19 +7595,8 @@ namespace WindowsFormsApplication1
                                         _logger.WriteLog(camName + "重连成功");
                                         reconnectedThisTick = true;
                                         job.state = camName + "断线\r\n";
-                                        // ★B6 修复：重连恢复运行只看"操作员勾选"——取该槽勾选快照；
-                                        //   被操作员主动排除（取消勾选）的工位不能在掉线重连后被拉回生产发 OK/NG。
-                                        bool slotChecked = false;
-                                        try
-                                        {
-                                            this.Invoke(new Action(() =>
-                                            {
-                                                try { slotChecked = checkedListBox1.GetItemChecked(slot); } catch { }
-                                                ApplyCameraUiAfterConnect(slot);
-                                            }));
-                                        }
-                                        catch { }
-                                        if (_jobs.yunxing && slotChecked)
+                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(slot)));
+                                        if (_jobs.yunxing)
                                         {
                                             job.yun = 1;
                                             int grabRet;
