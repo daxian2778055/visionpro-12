@@ -3246,6 +3246,14 @@ namespace WindowsFormsApplication1
         // ★ 相机SDK对象串行化锁：保护 _cameraCtrl.Cameras[i] 的 Create/Open/Stop/Close/Destroy 操作
         // 原则：锁内绝不 Invoke、绝不弹 MessageBox（避免与UI线程互等死锁）
         private readonly object _cameraLock = new object();
+        // ★B7：相机 SDK 异常回调置位的"待重连"标志（元素一律用 Volatile 读写；SDK 线程回调只置位、不碰句柄/控件）
+        private readonly int[] _cameraSdkFault = new int[12];
+        // ★B7：连续运行回帧看门狗采样（上次帧计数 / 计数变化时刻 TickCount；0=未初始化，首次只建基线不判定）
+        private readonly int[] _contFrameLast = new int[12];
+        private readonly int[] _contFrameLastMs = new int[12];
+        // ★B7：连续运行模式"无新帧"判定阈值（毫秒）。取 15 秒：正常连续运行路帧率远高于此；
+        //   极低帧率(≤0.5fps)或长曝光(数秒)场景也不会误判。
+        private const int ContFrameStallTimeoutMs = 15000;
         /// <summary>
         /// 运行/启动检测主流程（防重入，启动前全量复位 IO 输出）
         /// </summary>
@@ -7288,9 +7296,23 @@ namespace WindowsFormsApplication1
             try
             {
                 m_nCanOpenDeviceNum = CountOpenedCameras();
-                DeviceListAcq();
+                // ★B8 修复：不再调用 DeviceListAcq()——它内含 GC.Collect()（全停顿）与全网设备枚举
+                //   （数十~数百 ms），本方法是重连收尾在 UI 线程执行的，每次重连成功都会卡一次界面。
+                //   设备下拉列表留给用户手动打开相机时枚举；这里只做轻量计数与按钮态刷新。
                 tbUseNum.Text = m_nCanOpenDeviceNum.ToString("d");
                 EnableAllConnectedCameraControls();
+                // ★B8：同步各路"开始/停止采集"按钮态，避免重连恢复采流后 UI 仍显示"开始采集"，
+                //   用户误点触发 StartGrabFor 对已采集相机重复 StartGrabbing（已知误清标志缺陷）。
+                int _jc = (manager1 != null) ? manager1.JobCount : 0;
+                for (int _gi = 0; _gi < 12 && _gi < _jc; _gi++)
+                {
+                    try
+                    {
+                        if (_cameraCtrl.Cameras[_gi] != null && IsCameraGrabbing(_gi))
+                            SetStartGrabButtonState(_gi, false);
+                    }
+                    catch { }
+                }
             }
             catch { }
         }
@@ -7310,6 +7332,51 @@ namespace WindowsFormsApplication1
             for (int i = 0; i < 12; i++)
             {
                 if (_switchingScheme || _disposingFlag) return;
+                // ★B7 修复：连续运行(相机自由跑帧)回帧看门狗——触发模式已有 pending 超时看门狗，但"连续运行"
+                //   模式没有任何 pending 记录：取流静默停摆(帧不再回调)时无任何检测，且 IsDeviceConnected 仍为
+                //   true 时设备级重连也不触发（与 TriggerFrameTimeoutMs 注释所述盲区同源）。
+                //   判据：软件认为在采集(IsCameraGrabbing=true) + 该槽启用(yun=1) + 模式为"连续运行"
+                //         + 相机在线 + 非恢复中 + SDK 未报断连 + 帧计数 ContFrameStallTimeoutMs 内无增长 → 重建取流。
+                if (_jobs.Myjobs[i] != null && _jobs.Myjobs[i].yun == 1 && _jobs.Myjobs[i].triggerMode == "连续运行"
+                    && IsCameraGrabbing(i)
+                    && System.Threading.Volatile.Read(ref _grabRecoveryPending[i]) == 0
+                    && System.Threading.Volatile.Read(ref _cameraSdkFault[i]) == 0
+                    && _cameraCtrl.Cameras[i] != null)
+                {
+                    int _cfNow = System.Threading.Volatile.Read(ref m_nFrames[i]);
+                    int _tickNow = Environment.TickCount;
+                    int _cfLast = System.Threading.Volatile.Read(ref _contFrameLast[i]);
+                    if (_cfNow != _cfLast)
+                    {
+                        // 有新帧：刷新基线
+                        System.Threading.Volatile.Write(ref _contFrameLast[i], _cfNow);
+                        System.Threading.Volatile.Write(ref _contFrameLastMs[i], _tickNow);
+                    }
+                    else
+                    {
+                        int _cfLastMs = System.Threading.Volatile.Read(ref _contFrameLastMs[i]);
+                        if (_cfLastMs != 0 && (uint)(_tickNow - _cfLastMs) > (uint)ContFrameStallTimeoutMs)
+                        {
+                            if (System.Threading.Interlocked.CompareExchange(ref _triggerRecovering[i], 1, 0) == 0)
+                            {
+                                try
+                                {
+                                    _logger.WriteLog("相机" + (i + 1) + " 连续运行 " + (ContFrameStallTimeoutMs / 1000) + " 秒无新帧，判定取流停摆：停采重建取流");
+                                    System.Threading.Volatile.Write(ref _grabRecoveryPending[i], 1);
+                                    RebuildGrabFor(i, "连续停摆");
+                                    // 重置基线，避免下一轮立即重复触发（重建失败则由 _grabRecoveryPending 接力重试）
+                                    System.Threading.Volatile.Write(ref _contFrameLast[i], System.Threading.Volatile.Read(ref m_nFrames[i]));
+                                    System.Threading.Volatile.Write(ref _contFrameLastMs[i], Environment.TickCount);
+                                }
+                                finally
+                                {
+                                    System.Threading.Volatile.Write(ref _triggerRecovering[i], 0);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
                 // ★ 优先重试「上次恢复未完成」的相机：不依赖 pending（已被清空），也独立于设备在线状态。
                 if (System.Threading.Volatile.Read(ref _grabRecoveryPending[i]) != 0)
                 {
@@ -7433,8 +7500,19 @@ namespace WindowsFormsApplication1
                                                 if (TryReconnectDeviceLikeBnOpen(devInfo, i_temp, out boundSlot, out nRet, out nameMatched))
                                                 {
                                                     int capturedSlot = boundSlot;
-                                                    this.Invoke(new Action(() => ApplyCameraUiAfterConnect(capturedSlot)));
-                                                    if (_jobs.yunxing)
+                                                    // ★B6 修复：重连恢复运行只看"操作员勾选"——取该槽勾选快照；
+                                                    //   被操作员主动排除（取消勾选）的工位不能在掉线重连后被拉回生产发 OK/NG。
+                                                    bool slotChecked = false;
+                                                    try
+                                                    {
+                                                        this.Invoke(new Action(() =>
+                                                        {
+                                                            try { slotChecked = checkedListBox1.GetItemChecked(capturedSlot); } catch { }
+                                                            ApplyCameraUiAfterConnect(capturedSlot);
+                                                        }));
+                                                    }
+                                                    catch { }
+                                                    if (_jobs.yunxing && slotChecked)
                                                     {
                                                         _jobs.Myjobs[capturedSlot].yun = 1;
                                                         int grabRet;
@@ -7455,6 +7533,12 @@ namespace WindowsFormsApplication1
                                                             }
                                                             _logger.WriteLog("相机" + (capturedSlot + 1) + "重连后启动取流失败(nRet=" + grabRet + ")，已销毁句柄待按名重扫");
                                                             cameraState += "相机" + (capturedSlot + 1) + "重连后启动取流失败\r\n";
+                                                        }
+                                                        else
+                                                        {
+                                                            // ★B8 修复：重连恢复采流后同步"开始/停止采集"按钮态，
+                                                            //   否则 UI 仍显示"开始采集"，用户再点会触发 StartGrabFor 已知误清标志缺陷。
+                                                            try { this.Invoke(new Action(() => { try { SetStartGrabButtonState(capturedSlot, false); } catch { } })); } catch { }
                                                         }
                                                     }
                                                     cameraState += "相机" + (capturedSlot + 1) + "已重连\r\n";
@@ -7497,8 +7581,18 @@ namespace WindowsFormsApplication1
                                     }
                                     if (_cameraCtrl.Cameras[slot].MV_CC_IsDeviceConnected_NET())
                                     {
-                                        cameraState += "\r\n";
-                                        return;
+                                        // ★B7：SDK 异常回调报过"设备断连"的槽，即使 IsDeviceConnected 仍报 true 也按断线处理
+                                        //   （回调是权威信号；否则该路会因判据失真静默停摆，且 RecoverStaleTriggers 也不覆盖连续模式）。
+                                        if (System.Threading.Volatile.Read(ref _cameraSdkFault[slot]) == 1)
+                                        {
+                                            System.Threading.Volatile.Write(ref _cameraSdkFault[slot], 0);
+                                            _logger.WriteLog("相机" + (slot + 1) + " SDK 断连标志置位（IsDeviceConnected 仍为 true），强制走重连流程");
+                                        }
+                                        else
+                                        {
+                                            cameraState += "\r\n";
+                                            return;
+                                        }
                                     }
                                     string camName = "相机" + (slot + 1);
                                     _logger.WriteLog(camName + "断线，开始重连...");
@@ -7512,8 +7606,19 @@ namespace WindowsFormsApplication1
                                         _logger.WriteLog(camName + "重连成功");
                                         reconnectedThisTick = true;
                                         job.state = camName + "断线\r\n";
-                                        this.Invoke(new Action(() => ApplyCameraUiAfterConnect(slot)));
-                                        if (_jobs.yunxing)
+                                        // ★B6 修复：重连恢复运行只看"操作员勾选"——取该槽勾选快照；
+                                        //   被操作员主动排除（取消勾选）的工位不能在掉线重连后被拉回生产发 OK/NG。
+                                        bool slotChecked = false;
+                                        try
+                                        {
+                                            this.Invoke(new Action(() =>
+                                            {
+                                                try { slotChecked = checkedListBox1.GetItemChecked(slot); } catch { }
+                                                ApplyCameraUiAfterConnect(slot);
+                                            }));
+                                        }
+                                        catch { }
+                                        if (_jobs.yunxing && slotChecked)
                                         {
                                             job.yun = 1;
                                             int grabRet;
@@ -7531,6 +7636,12 @@ namespace WindowsFormsApplication1
                                                 }
                                                 _logger.WriteLog("相机" + (slot + 1) + "重连后启动取流失败(nRet=" + grabRet + ")，已销毁句柄待按名重扫");
                                                 cameraState += "相机" + (slot + 1) + "重连后启动取流失败\r\n";
+                                            }
+                                            else
+                                            {
+                                                // ★B8 修复：重连恢复采流后同步"开始/停止采集"按钮态，
+                                                //   否则 UI 仍显示"开始采集"，用户再点会触发 StartGrabFor 已知误清标志缺陷。
+                                                try { this.Invoke(new Action(() => { try { SetStartGrabButtonState(slot, false); } catch { } })); } catch { }
                                             }
                                         }
                                         job.state = "";
@@ -11548,7 +11659,19 @@ namespace WindowsFormsApplication1
             int camIndex = (int)pUser;
             if (camIndex < 0 || camIndex >= 12) return;
             _logger.WriteLog(String.Format("相机{0} SDK 异常：0x{1:X8}", camIndex + 1, nMsgType));
-            // 可扩展：掉线时置位相机状态，触发重连提示
+            // ★B7 修复：设备断连异常主动置"待重连"标志——原实现只记日志。
+            //   盲区：某些断连场景 IsDeviceConnected_NET() 仍返回 true（SDK 未及时更新），
+            //   设备级重连（CheckAndReconnectCameraCore 以其为判据）永不触发，该路静默停摆。
+            //   本回调在 SDK 线程：只置 volatile 标志（不碰句柄/控件），由 timer2 重连线程消费。
+            try
+            {
+                if ((int)nMsgType == MyCamera.MV_EXCEPTION_DEV_DISCONNECT)
+                {
+                    System.Threading.Volatile.Write(ref _cameraSdkFault[camIndex], 1);
+                    _logger.WriteLog("相机" + (camIndex + 1) + " SDK 报告设备断连，已标记待重连");
+                }
+            }
+            catch { }
         }
 
         // ch:取流回调函数 | en:Aquisition Callback Function
