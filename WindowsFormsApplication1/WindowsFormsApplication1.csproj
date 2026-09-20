@@ -472,6 +472,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="BuildInfo.g.cs" />
     <Compile Include="Datas.cs" />
     <Compile Include="Core\Logging\ILogger.cs" />
     <Compile Include="Core\Logging\AsyncFileLogger.cs" />
@@ -805,4 +806,9 @@
   <Target Name="AfterBuild">
   </Target>
   -->
+  <!-- ★版本规则（2026-09-20）：编译前自动生成 BuildInfo.g.cs（版本=构建日期+推送号/git短哈希），
+       "版本信息"对话框读取它；脚本失败不阻断编译（IgnoreExitCode）。 -->
+  <Target Name="GenerateBuildInfo" BeforeTargets="CoreCompile">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\tools\gen-buildinfo.ps1&quot; &quot;$(MSBuildProjectDirectory)&quot;" IgnoreExitCode="true" />
+  </Target>
 </Project>

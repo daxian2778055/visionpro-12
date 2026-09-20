@@ -6200,14 +6200,24 @@ namespace WindowsFormsApplication1
             try
             {
                 var asm = System.Reflection.Assembly.GetExecutingAssembly();
-                string ver = Application.ProductVersion;
-                if (string.IsNullOrEmpty(ver) && asm.GetName().Version != null) ver = asm.GetName().Version.ToString();
-                DateTime buildTime;
-                try { buildTime = System.IO.File.GetLastWriteTime(asm.Location); }
-                catch { buildTime = DateTime.MinValue; }
+                // ★版本规则（现场定，2026-09-20）：版本号 = 构建日期 + 推送号（git 短哈希），
+                //   由构建时自动写入 BuildInfo（tools/gen-buildinfo.ps1，csproj GenerateBuildInfo 目标）。
+                //   正常构建后形如 "2026.09.20+18f0607"；BuildInfo 缺失（非常规构建）时回退程序集版本。
+                string ver = BuildInfo.Version;
+                if (string.IsNullOrEmpty(ver))
+                {
+                    ver = Application.ProductVersion;
+                    if (string.IsNullOrEmpty(ver) && asm.GetName().Version != null) ver = asm.GetName().Version.ToString();
+                }
+                string bt = BuildInfo.BuildTime;
+                if (string.IsNullOrEmpty(bt))
+                {
+                    try { bt = System.IO.File.GetLastWriteTime(asm.Location).ToString("yyyy-MM-dd HH:mm:ss"); }
+                    catch { bt = "未知"; }
+                }
                 string info = string.Format(
-                    "光眼视觉检测系统{0}版本：{1}{0}编译时间：{2:yyyy-MM-dd HH:mm:ss}{0}{0}（菜单【查找】→【版本信息】）",
-                    Environment.NewLine, ver ?? "未知", buildTime);
+                    "光眼视觉检测系统{0}版本：{1}{0}编译时间：{2}{0}{0}（菜单【查找】→【版本信息】）",
+                    Environment.NewLine, ver ?? "未知", bt);
                 MessageBox.Show(info, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
