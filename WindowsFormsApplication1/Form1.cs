@@ -1,4 +1,4 @@
-﻿using Cognex.VisionPro;
+using Cognex.VisionPro;
 using Cognex.VisionPro.ImageFile;
 using Cognex.VisionPro.QuickBuild;
 using Cognex.VisionPro.ToolBlock;
@@ -3242,6 +3242,8 @@ namespace WindowsFormsApplication1
             return result;
         }
         private static readonly object _locker_open = new object();
+        // ★M12：运行按钮启动流程哨兵——连点/重入时直接忽略，防两次启动流程排队重复执行
+        private static int _startFlowRunning = 0;
         private static readonly object _close = new object();
         // ★ 相机SDK对象串行化锁：保护 _cameraCtrl.Cameras[i] 的 Create/Open/Stop/Close/Destroy 操作
         // 原则：锁内绝不 Invoke、绝不弹 MessageBox（避免与UI线程互等死锁）
@@ -3266,11 +3268,19 @@ namespace WindowsFormsApplication1
                 this.Invoke(new Action(() => { label133.Text = "未加载方案，请先在配置窗加载方案"; }));
                 return;
             }
+            // ★M12：启动流程哨兵——上一次启动流程未结束时忽略本次点击（防连点排队重复启动）
+            if (Interlocked.CompareExchange(ref _startFlowRunning, 1, 0) != 0)
+            {
+                _logger.WriteLog("运行请求被忽略：上一次启动流程仍在进行");
+                return;
+            }
             // ★ 在 UI 线程预缓存 checkedListBox 状态，避免后台线程直接访问 UI 控件
             bool[] checkedCameras = new bool[12];
             try { for (int __i = 0; __i < 12; __i++) checkedCameras[__i] = checkedListBox1.GetItemChecked(__i); } catch { }
             Task.Run(() =>
             {
+                try
+                {
                 lock (_locker_open)
                 {
                     DisarmCommTrigger();
@@ -3907,6 +3917,11 @@ namespace WindowsFormsApplication1
 
                     }
                     EnableCameraReconnect();
+                }
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _startFlowRunning, 0);
                 }
              });
         }
@@ -7976,23 +7991,19 @@ namespace WindowsFormsApplication1
         /// 由触发切换的协议把“相机13 返回值”写回“切换”通道；未配置/未启用则不写。
         /// 手动切换与失败路径不会走到这里（proto 已被清零）。
         /// </summary>
-        private void SendSchemeSwitchAck()
+        private void SendSchemeSwitchAck(int ackProto, int ackLinkId)
         {
-            // ★ 加固：proto 与 LinkId 同时快照、立即清零，回执只按本次快照发送。
-            //   原实现清 proto 与读 LinkId 分两步：并发切型时可能在两步之间被写入新连接号，
-            //   把新连接的 LinkId 用到旧回执上、回执发错连接。
-            int proto = _schemeAckProto;
-            int ackLinkId = _schemeAckLinkId;
-            _schemeAckProto = 0;
-            _schemeAckLinkId = 1;   // 消费即复位为默认连接1，避免残留旧连接号
-            if (proto == 0) return;
+            // ★M4 修复：来源（proto/linkId）由本次切型随参数传入，不再读写全局单槽——
+            //   原全局单槽 _schemeAckProto/_schemeAckLinkId 在两条连接几乎同时切型时后写覆盖先写：
+            //   一条连接的回执会被另一条连接的收尾提前发出/发到另一条连接（ModbusTCP+RTU 混用时存在）。
+            if (ackProto == 0) return;
             try
             {
-                if (proto == 1 && _comm.Omron != null)
+                if (ackProto == 1 && _comm.Omron != null)
                     _comm.Omron.WriteSchemeSwitchAck(ackLinkId);
-                else if (proto == 2 && _comm.Modbustcp != null)
+                else if (ackProto == 2 && _comm.Modbustcp != null)
                     _comm.Modbustcp.WriteSchemeSwitchAck(ackLinkId);
-                else if (proto == 3 && _comm.ModbusRtu != null)
+                else if (ackProto == 3 && _comm.ModbusRtu != null)
                     _comm.ModbusRtu.WriteSchemeSwitchAck(ackLinkId);
             }
             catch (Exception ex)
@@ -8041,18 +8052,18 @@ namespace WindowsFormsApplication1
                     if (linkPath.Length > 0 && path_1 != linkPath && _comm.Omron.GetSwitchLock(e.LinkId) == 0)
                     {
                         _comm.Omron.SetSwitchLock(e.LinkId, 1);
-                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
-                        _schemeAckProto = 1;
-                        _schemeAckLinkId = e.LinkId;
+                        // ★M4：回执来源随调用参数传递（连接 1=FINS）
+                        int ackProto = 1;
+                        int ackLinkId = e.LinkId;
                         Task.Run(() =>
                         {
                             try
                             {
                                 // 方案切换涉及大量 UI 操作，收口到 UI 线程执行
                                 if (InvokeRequired)
-                                    Invoke(new Action(() => xinghao_qiehuan(linkPath)));
+                                    Invoke(new Action(() => xinghao_qiehuan(linkPath, ackProto, ackLinkId)));
                                 else
-                                    xinghao_qiehuan(linkPath);
+                                    xinghao_qiehuan(linkPath, ackProto, ackLinkId);
                             }
                             finally
                             {
@@ -8066,18 +8077,18 @@ namespace WindowsFormsApplication1
                 {
                     if (_comm.Omron.camera_dic[13][2] == "true")
                     {
-                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
-                        _schemeAckProto = 1;
-                        _schemeAckLinkId = e.LinkId;
+                        // ★M4：回执来源随调用参数传递（连接 1=FINS）
+                        int ackProto = 1;
+                        int ackLinkId = e.LinkId;
                         Task.Run(() =>
                         {
                             try
                             {
                                 // 方案切换涉及大量 UI 操作，收口到 UI 线程执行（原在后台线程直接操作控件）
                                 if (InvokeRequired)
-                                    Invoke(new Action(() => xinghao_qiehuan(_comm.Omron.lujing.Replace("\0", ""))));
+                                    Invoke(new Action(() => xinghao_qiehuan(_comm.Omron.lujing.Replace("\0", ""), ackProto, ackLinkId)));
                                 else
-                                    xinghao_qiehuan(_comm.Omron.lujing.Replace("\0", ""));
+                                    xinghao_qiehuan(_comm.Omron.lujing.Replace("\0", ""), ackProto, ackLinkId);
                             }
                             finally
                             {
@@ -8136,18 +8147,18 @@ namespace WindowsFormsApplication1
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
                     if (linkPath.Length > 0 && path_1 != linkPath && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
                     {
-                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
-                        _schemeAckProto = 2;
-                        _schemeAckLinkId = e.LinkId;
+                        // ★M4：回执来源随调用参数传递（连接 1=ModbusTCP）
+                        int ackProto = 2;
+                        int ackLinkId = e.LinkId;
                         Task.Run(() =>
                         {
                             try
                             {
                                 // 方案切换涉及大量 UI 操作，收口到 UI 线程执行
                                 if (InvokeRequired)
-                                    Invoke(new Action(() => xinghao_qiehuan(linkPath)));
+                                    Invoke(new Action(() => xinghao_qiehuan(linkPath, ackProto, ackLinkId)));
                                 else
-                                    xinghao_qiehuan(linkPath);
+                                    xinghao_qiehuan(linkPath, ackProto, ackLinkId);
                             }
                             finally
                             {
@@ -8168,18 +8179,18 @@ namespace WindowsFormsApplication1
                 {
                     if (_comm.Modbustcp.camera_dic[13][2] == "true")
                     {
-                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
-                        _schemeAckProto = 2;
-                        _schemeAckLinkId = e.LinkId;
+                        // ★M4：回执来源随调用参数传递（连接 1=ModbusTCP）
+                        int ackProto = 2;
+                        int ackLinkId = e.LinkId;
                         Task.Run(() =>
                         {
                             try
                             {
                                 // 方案切换涉及大量 UI 操作，收口到 UI 线程执行（原在后台线程直接操作控件）
                                 if (InvokeRequired)
-                                    Invoke(new Action(() => xinghao_qiehuan(_comm.Modbustcp.lujing.Replace("\0", ""))));
+                                    Invoke(new Action(() => xinghao_qiehuan(_comm.Modbustcp.lujing.Replace("\0", ""), ackProto, ackLinkId)));
                                 else
-                                    xinghao_qiehuan(_comm.Modbustcp.lujing.Replace("\0", ""));
+                                    xinghao_qiehuan(_comm.Modbustcp.lujing.Replace("\0", ""), ackProto, ackLinkId);
                             }
                             finally
                             {
@@ -8236,18 +8247,18 @@ namespace WindowsFormsApplication1
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
                     if (linkPath.Length > 0 && path_1 != linkPath && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
                     {
-                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
-                        _schemeAckProto = 3;
-                        _schemeAckLinkId = e.LinkId;
+                        // ★M4：回执来源随调用参数传递（连接 1=ModbusRTU）
+                        int ackProto = 3;
+                        int ackLinkId = e.LinkId;
                         Task.Run(() =>
                         {
                             try
                             {
                                 // 方案切换涉及大量 UI 操作，收口到 UI 线程执行
                                 if (InvokeRequired)
-                                    Invoke(new Action(() => xinghao_qiehuan(linkPath)));
+                                    Invoke(new Action(() => xinghao_qiehuan(linkPath, ackProto, ackLinkId)));
                                 else
-                                    xinghao_qiehuan(linkPath);
+                                    xinghao_qiehuan(linkPath, ackProto, ackLinkId);
                             }
                             finally
                             {
@@ -8266,18 +8277,18 @@ namespace WindowsFormsApplication1
                 {
                     if (_comm.ModbusRtu.camera_dic[13][2] == "true")
                     {
-                        // 记录回执来源：切换成功后由 xinghao_qiehuan 统一把“返回值”写回切换通道
-                        _schemeAckProto = 3;
-                        _schemeAckLinkId = e.LinkId;
+                        // ★M4：回执来源随调用参数传递（连接 1=ModbusRTU）
+                        int ackProto = 3;
+                        int ackLinkId = e.LinkId;
                         Task.Run(() =>
                         {
                             try
                             {
                                 // 方案切换涉及大量 UI 操作，收口到 UI 线程执行（原在后台线程直接操作控件）
                                 if (InvokeRequired)
-                                    Invoke(new Action(() => xinghao_qiehuan(_comm.ModbusRtu.lujing.Replace("\0", ""))));
+                                    Invoke(new Action(() => xinghao_qiehuan(_comm.ModbusRtu.lujing.Replace("\0", ""), ackProto, ackLinkId)));
                                 else
-                                    xinghao_qiehuan(_comm.ModbusRtu.lujing.Replace("\0", ""));
+                                    xinghao_qiehuan(_comm.ModbusRtu.lujing.Replace("\0", ""), ackProto, ackLinkId);
                             }
                             finally
                             {
@@ -8524,7 +8535,7 @@ namespace WindowsFormsApplication1
                 s.Flush();
                 s.Close();
             }
-            _schemeAckProto = 0; // 手动切换不产生通讯回执
+            // ★M4：手动切换不产生通讯回执（来源参数默认 0，无全局状态需清零）
             xinghao_qiehuan("");
         }
         ToolStripMenuItem menuitem;
@@ -9940,13 +9951,13 @@ namespace WindowsFormsApplication1
                 s.Flush();
                 s.Close();
             }
-            _schemeAckProto = 0; // 手动切换不产生通讯回执
+            // ★M4：手动切换不产生通讯回执（来源参数默认 0，无全局状态需清零）
             xinghao_qiehuan("");
         }
         private volatile int qiehuanzhong = 1;
-        // ===== 方案切换回执（相机13）：记录本次切换由哪条通讯链路发起，成功结束后把“返回值”写回“切换”通道 =====
-        private volatile int _schemeAckProto = 0; // 0=无, 1=FINS, 2=ModbusTCP, 3=ModbusRTU
-        private volatile int _schemeAckLinkId = 1;
+        // ===== 方案切换回执（相机13）：由哪条通讯链路发起 → 随 xinghao_qiehuan/SendSchemeSwitchAck
+        //   参数显式传递（★M4：原全局单槽 回执协议号/连接号 在两条连接同时切型时后写覆盖先写，
+        //   会丢回执/把回执发到另一条连接；传参后每条切型自带来源，互不覆盖、无残留）=====
         #endregion
         #region 方案加载与切换
         /// <summary>
@@ -9955,14 +9966,14 @@ namespace WindowsFormsApplication1
         /// <summary>
         /// ★P0：切型中止 / 提前退出时统一回滚切换门控。
         ///   不回滚会永久卡死：_switchingScheme=true → EnqueueInspectFrame/InspectWorker 丢弃所有帧（全系统停检）；
-        ///   qiehuanzhong=1 → 后续切型被永久拒绝；_schemeAckProto 残留 → 误发"切换成功"回执给 PLC。
+        ///   qiehuanzhong=1 → 后续切型被永久拒绝。
         /// </summary>
         private void RollbackSchemeSwitch()
         {
             _switchingScheme = false;
             _inspectionLifecycle.Resume();
             Interlocked.Exchange(ref qiehuanzhong, 0);
-            _schemeAckProto = 0;
+            // ★M4：来源随参数传递，无全局状态需清零
             // 恢复切换开始时被隐藏的按钮，否则中止后用户点不到【运行】、无法继续生产；
             // 本方法可能在后台线程调用 → 走 SafeBeginInvoke（关闭流程中 _disposingFlag=true 时会被安全丢弃）
             try { SafeBeginInvoke(new Action(() => { try { button1.Visible = true; } catch { } })); } catch { }
@@ -10021,7 +10032,7 @@ namespace WindowsFormsApplication1
             }
         }
 
-        private void xinghao_qiehuan(string a)
+        private void xinghao_qiehuan(string a, int ackProto = 0, int ackLinkId = 1)
         {
             if (Interlocked.CompareExchange(ref qiehuanzhong, 1, 0) == 0)
             {
@@ -10042,6 +10053,18 @@ namespace WindowsFormsApplication1
                 //   不再出现"切换死在半途导致切型永久拒绝 + 运行按钮永久隐藏 + 全系统停止检测"。
                 if (!SchemeSwitchPreface(a))
                 {
+                    // ★③修复：SchemeSwitchPreface 已把 label75/label173/path_1 改成新方案，
+                    //   前言失败回滚时必须恢复为切型前的旧方案，否则界面方案名与实际不符（纯显示，重启自愈）。
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(oldPathSnapshot))
+                        {
+                            label75.Text = oldPathSnapshot.Split('\\').Last();
+                            label173.Text = oldPathSnapshot;
+                            path_1 = oldPathSnapshot;
+                        }
+                    }
+                    catch { }
                     try { RollbackSchemeSwitch(); } catch { }
                     return;
                 }
@@ -10061,7 +10084,7 @@ namespace WindowsFormsApplication1
                         // ★P0 修复：中止路径必须回滚切换门控，否则系统被永久卡死：
                         //   ① _switchingScheme 永久为 true → EnqueueInspectFrame/InspectWorker 丢弃所有帧（全系统停止检测）；
                         //   ② qiehuanzhong 永久为 1 → 之后任何切型都被永久拒绝；
-                        //   ③ 明确取消回执（_schemeAckProto=0）→ 不发"切换成功"假回执，PLC 侧靠超时判 NG。
+                        //   ③ 不发"切换成功"假回执（中止路径不调用 SendSchemeSwitchAck），PLC 侧靠超时判 NG。
                         RollbackSchemeSwitch();
                         try
                         {
@@ -10999,7 +11022,7 @@ namespace WindowsFormsApplication1
                                     if (!_armed)
                                         _logger.WriteLog("切换方案: 等待检测 Arm 超时(10s)，回执已抑制（PLC 靠超时判 NG）");
                                     else if (flowBindOk)
-                                        SendSchemeSwitchAck();   // ★ 切换成功回执：把相机13 配置的“返回值”写回 PLC 切换通道（若已配置）
+                                        SendSchemeSwitchAck(ackProto, ackLinkId);   // ★ 切换成功回执：把相机13 配置的“返回值”写回 PLC 切换通道（若已配置）
                                     else
                                         _logger.WriteLog("切换方案: 回执已抑制（流程绑定不完整），PLC 靠超时判 NG");
                                 }));
@@ -11021,7 +11044,7 @@ namespace WindowsFormsApplication1
                             _switchingScheme = false;
                                 _inspectionLifecycle.Resume();
                             Interlocked.Exchange(ref qiehuanzhong, 0);
-                            _schemeAckProto = 0; // 切换失败：取消本次通讯回执（不写回 PLC）
+                            // ★M4：切换失败不发回执（仅成功收尾调用 SendSchemeSwitchAck，来源参数默认 0）
                             button1.Visible = true;
                             display();
                         }));
@@ -11205,7 +11228,7 @@ namespace WindowsFormsApplication1
             {
                 if (frm3.lujing.Length >= 3)
                 {
-                    _schemeAckProto = 0; // Form3（无协议串口/TCP）切换不产生通讯回执
+                    // ★M4：Form3（无协议串口/TCP）切换不产生通讯回执（来源参数默认 0）
                     xinghao_qiehuan(frm3.lujing);
                     frm3.lujing = "";
                     frm3.zifu = "";
@@ -11546,6 +11569,14 @@ namespace WindowsFormsApplication1
         {
             try
             {
+                // ★M12 修复：幂等——对已采集的相机误点"开始采集"时，原实现仍会再 StartGrabbing：
+                //   设备已采集会返回失败，随后 SetCameraGrabbing(false) 把"正在采集"标志误清
+                //   （实际仍在采集）→ 触发/停采/重连判定错乱。已在采集则只同步按钮态后返回。
+                if (IsCameraGrabbing(index))
+                {
+                    SetStartGrabButtonState(index, false);
+                    return;
+                }
                 SetCameraGrabbing(index, true);
                 m_stFrameInfo[index].nFrameLen = 0;
                 m_stFrameInfo[index].enPixelType = MyCamera.MvGvspPixelType.PixelType_Gvsp_Undefined;
@@ -11561,7 +11592,7 @@ namespace WindowsFormsApplication1
             catch
             {
                 SetCameraGrabbing(index, false);
-                _logger.WriteLog("相机" + (index + 1) + "开始采集");
+                _logger.WriteLog("相机" + (index + 1) + "开始采集异常");
             }
         }
 
