@@ -10745,8 +10745,26 @@ namespace WindowsFormsApplication1
                         Interlocked.Exchange(ref qiehuanzhong, 0);
                         button1.Visible = true;
                         display();
-                        // ★ 切换成功回执：把相机13 配置的“返回值”写回 PLC 切换通道（若已配置）
-                        SendSchemeSwitchAck();
+                        // ★C2 修复：ACK 前逐路校验 job/block 绑定完整性——12 路重建共用一个 try，
+                        //   某路异常（如缺 CogToolBlock1）时该路及后续路 block 为 null，但原实现
+                        //   照发"切换完成"回执 → PLC 开始触发而后段相机静默不检测（质量逃逸）。
+                        //   任一应加载路未绑定成功即抑制回执（PLC 靠超时判 NG）。
+                        {
+                            bool flowBindOk = true;
+                            int _jc = (manager1 != null) ? manager1.JobCount : 0;
+                            for (int _bi = 0; _bi < _jc && _bi < 12; _bi++)
+                            {
+                                if (_jobs.Myjobs[_bi] == null || _jobs.Myjobs[_bi].job == null || _jobs.Myjobs[_bi].block == null)
+                                {
+                                    flowBindOk = false;
+                                    _logger.WriteLog("切换方案: 相机" + (_bi + 1) + " 流程/block 绑定不完整，本次切换判失败");
+                                }
+                            }
+                            if (flowBindOk)
+                                SendSchemeSwitchAck();   // ★ 切换成功回执：把相机13 配置的“返回值”写回 PLC 切换通道（若已配置）
+                            else
+                                _logger.WriteLog("切换方案: 回执已抑制（流程绑定不完整），PLC 靠超时判 NG");
+                        }
                         }));
                         }
                     }
@@ -11040,6 +11058,7 @@ namespace WindowsFormsApplication1
             int[] temp = new int[12];
             int deviceArrayIndex = 0;
             int nRet = -1;
+            int packetSizeFailed = 0;   // ★A3：包大小设置失败计数（锁内不弹窗，收尾汇总一次）
 
             lock (_cameraLock)
             {
@@ -11098,11 +11117,11 @@ namespace WindowsFormsApplication1
                             {
                                 nRet = _cameraCtrl.Cameras[slot].MV_CC_SetIntValue_NET("GevSCPSPacketSize", (uint)nPacketSize);
                                 if (nRet != MyCamera.MV_OK)
-                                    ShowErrorMsg("Set Packet Size failed!", nRet);
+                                    packetSizeFailed++;   // ★A3：锁内禁弹 modal（会泵消息让排队中的重连 Invoke 插进半开状态执行），改计数+收尾汇总
                             }
                             else
                             {
-                                ShowErrorMsg("Get Packet Size failed!", nPacketSize);
+                                packetSizeFailed++;
                             }
                         }
 
@@ -11119,6 +11138,7 @@ namespace WindowsFormsApplication1
                     {
                         _logger.WriteLog("相机" + (slot + 1) + "打开异常:" + ex.Message);
                         ClearCameraSlotOnOpenFailed(slot.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
+                        continue;   // ★A5：原异常分支缺 continue——会误执行下方 deviceArrayIndex++ 造成后续槽编号错位（与其它失败路径语义不一致）
                     }
 
                     _logger.WriteLog("相机" + deviceArrayIndex + "名称:" + devInfo.UserDefinedName + " 槽位=" + slot + " 打开中=" + dakaizhong.ToString());
@@ -11138,8 +11158,21 @@ namespace WindowsFormsApplication1
                 }
             }
 
-            bnOpen.Enabled = false;
-            bnClose.Enabled = true;
+            // ★A4 修复：按实际打开成功数决定按钮态——原实现无条件禁用"打开设备"（Designer 默认也是 false）：
+            //   相机上电慢导致 0 台成功时，用户连"打开设备"都点不了，只能重启软件。
+            //   与既有 EnableAllConnectedCameraControls 同口径（在线数 > 0 才切换按钮态）。
+            if (CountOpenedCameras() > 0)
+            {
+                bnOpen.Enabled = false;
+                bnClose.Enabled = true;
+            }
+            else
+            {
+                bnOpen.Enabled = true;     // 保持可点，允许直接重试
+                bnClose.Enabled = false;
+                _logger.WriteLog("本次未打开任何相机（可能上电慢/被占用），保持“打开设备”可点以便重试");
+                try { label133.Text = "未打开任何相机，请检查相机上电后重试"; } catch { }
+            }
             for (int i = 0; i < 12; i++)
             {
                 // ★ 2026-09-11：修复相机1启停按钮名。Designer 中 12 个按钮均为 bnStartGrab1..12，
@@ -11152,7 +11185,12 @@ namespace WindowsFormsApplication1
 
             ApplyTriggerModesForOpenedCameras();
             dakaizhong = false;
-            EnableCameraReconnect();
+            // ★A4 修复：0 台在线不启用自动重连（否则 timer2 每 400ms 全网 GigE 广播枚举）
+            if (CountOpenedCameras() > 0)
+                EnableCameraReconnect();
+            // ★A3：包大小设置失败收尾汇总（锁内不再弹 modal，避免让排队中的重连 Invoke 插进半开状态）
+            if (packetSizeFailed > 0)
+                _logger.WriteLog("有 " + packetSizeFailed + " 台相机包大小设置失败（不影响继续运行，请检查网卡巨帧/网络设置）");
         }
 
 
