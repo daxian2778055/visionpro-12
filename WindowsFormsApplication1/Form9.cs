@@ -89,6 +89,11 @@ namespace WindowsFormsApplication1
         }
         Dictionary<string, ICogTool> tools1 = new Dictionary<string, ICogTool>();
         Dictionary<string, string> toolName1 = new Dictionary<string, string>();
+        // ★清单① 修复（2026-09-20）：下拉项 → "父工具块 + 原工具实例"映射——
+        //   原"加载模板"(button3) 只把新对象放进 tools1，未写回 blk.Tools：之后训练/阈值/保存作用于
+        //   新对象，而运行检测仍用 blk 里的旧工具（调参白调）。写回时用这两张表定位并替换。
+        Dictionary<string, CogToolBlock> toolParent1 = new Dictionary<string, CogToolBlock>();
+        Dictionary<string, ICogTool> toolOld1 = new Dictionary<string, ICogTool>();
         public CogToolBlock block_11;
         private void comboBox27_DropDown(object sender, EventArgs e)
         {
@@ -118,6 +123,9 @@ namespace WindowsFormsApplication1
                     {
                         dic.Add(tool.Name, tool);
                         combox.Items.Add(tool.Name);
+                        // ★清单①：记录父块+原工具实例（供"加载模板"写回 blk.Tools）
+                        toolParent1[tool.Name] = blk;
+                        toolOld1[tool.Name] = tool;
                     }
                 }
                 if (tool is CogToolBlock)
@@ -129,8 +137,12 @@ namespace WindowsFormsApplication1
                     {
                         if (!(tool1 is CogToolBlock) && tool1 is CogPatInspectTool)
                         {
-                            dic.Add("工具块" + i + "-" + tool1.Name, tool1);
-                            combox.Items.Add(dic.Keys.Last());
+                            string _k1 = "工具块" + i + "-" + tool1.Name;
+                            dic.Add(_k1, tool1);
+                            combox.Items.Add(_k1);
+                            // ★清单①：记录父块+原工具实例（供"加载模板"写回 blk.Tools）
+                            toolParent1[_k1] = tool as CogToolBlock;
+                            toolOld1[_k1] = tool1;
                         }
                         if (tool1 is CogToolBlock)
                         {
@@ -141,8 +153,12 @@ namespace WindowsFormsApplication1
                             {
                                 if (!(tool2 is CogToolBlock) && tool2 is CogPatInspectTool)
                                 {
-                                    dic.Add("工具块" + i + "-" + "工具块" + j + "-" + tool2.Name, tool2);
-                                    combox.Items.Add(dic.Keys.Last());
+                                    string _k2 = "工具块" + i + "-" + "工具块" + j + "-" + tool2.Name;
+                                    dic.Add(_k2, tool2);
+                                    combox.Items.Add(_k2);
+                                    // ★清单①：记录父块+原工具实例（供"加载模板"写回 blk.Tools）
+                                    toolParent1[_k2] = tool1 as CogToolBlock;
+                                    toolOld1[_k2] = tool2;
                                 }
                                 if (tool2 is CogToolBlock)
                                 {
@@ -152,8 +168,12 @@ namespace WindowsFormsApplication1
                                     {
                                         if (tool12 is CogPatInspectTool)
                                         {
-                                            dic.Add("工具块" + i + "-" + "工具块" + j + "-" + "工具块" + k + "-" + tool12.Name, tool12);
-                                            combox.Items.Add(dic.Keys.Last());
+                                            string _k3 = "工具块" + i + "-" + "工具块" + j + "-" + "工具块" + k + "-" + tool12.Name;
+                                            dic.Add(_k3, tool12);
+                                            combox.Items.Add(_k3);
+                                            // ★清单①：记录父块+原工具实例（供"加载模板"写回 blk.Tools）
+                                            toolParent1[_k3] = tool2 as CogToolBlock;
+                                            toolOld1[_k3] = tool12;
                                         }
                                     }
                                 }
@@ -197,7 +217,30 @@ namespace WindowsFormsApplication1
                 numericUpDown1.Value = (decimal)Inspect1.Pattern.ThresholdScale;
                 numericUpDown2.Value = (decimal)Inspect1.Pattern.ThresholdOffset;
                 tools1[comboBox27.Text] = Inspect1;
-                tishi = "加载模板成功";
+                // ★清单① 修复（2026-09-20）：把加载的工具写回 blk.Tools（替换原工具实例）——
+                //   原实现只更新 tools1 字典，blk 里仍是旧工具 → 后续训练/阈值/保存都作用于新对象，
+                //   而运行检测用旧工具（调参白调）。用 combdrop 记录的"父块 + 原工具名"做替换。
+                try
+                {
+                    CogToolBlock _parentBlk;
+                    ICogTool _oldTool;
+                    if (toolParent1.TryGetValue(comboBox27.Text, out _parentBlk) && _parentBlk != null
+                        && toolOld1.TryGetValue(comboBox27.Text, out _oldTool) && _oldTool != null
+                        && !string.IsNullOrEmpty(_oldTool.Name))
+                    {
+                        _parentBlk.Tools[_oldTool.Name] = Inspect1;   // 替换流程内的原工具
+                        toolOld1[comboBox27.Text] = Inspect1;         // 之后再次加载时以新实例为准
+                        tishi = "加载模板成功（已写回流程工具）";
+                    }
+                    else
+                    {
+                        tishi = "加载模板成功（未找到流程内原工具，未写回：运行仍用旧工具！）";
+                    }
+                }
+                catch (Exception exWb)
+                {
+                    tishi = "加载模板成功，但写回流程失败: " + exWb.Message;
+                }
             }
             catch
             {

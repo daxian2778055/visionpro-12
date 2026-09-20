@@ -1118,6 +1118,15 @@ namespace WindowsFormsApplication1
             _jobs.myjob2.runcishu = 0;
             _jobs.myjob3.runcishu = 0;
             _jobs.myjob4.runcishu = 0;
+            // ★清单②修复（2026-09-20）：原只清 1~4 路——5~12 路"运行次数"漏清
+            _jobs.myjob5.runcishu = 0;
+            _jobs.myjob6.runcishu = 0;
+            _jobs.myjob7.runcishu = 0;
+            _jobs.myjob8.runcishu = 0;
+            _jobs.myjob9.runcishu = 0;
+            _jobs.myjob10.runcishu = 0;
+            _jobs.myjob11.runcishu = 0;
+            _jobs.myjob12.runcishu = 0;
             //  label140.Text = cogRecordDisplay1.BackColor.ToString();
         }
 
@@ -1160,6 +1169,23 @@ namespace WindowsFormsApplication1
             _jobs.myjob8.oksum = 0;
             _jobs.myjob8.ngsum = 0;
             _jobs.myjob8.rate = 0;
+            // ★清单②修复（2026-09-20）：原实现只清到 myjob8——9~12 路统计漏清（点"清零"后 9-12 仍显示旧值）
+            _jobs.myjob9.sum = 0;
+            _jobs.myjob9.oksum = 0;
+            _jobs.myjob9.ngsum = 0;
+            _jobs.myjob9.rate = 0;
+            _jobs.myjob10.sum = 0;
+            _jobs.myjob10.oksum = 0;
+            _jobs.myjob10.ngsum = 0;
+            _jobs.myjob10.rate = 0;
+            _jobs.myjob11.sum = 0;
+            _jobs.myjob11.oksum = 0;
+            _jobs.myjob11.ngsum = 0;
+            _jobs.myjob11.rate = 0;
+            _jobs.myjob12.sum = 0;
+            _jobs.myjob12.oksum = 0;
+            _jobs.myjob12.ngsum = 0;
+            _jobs.myjob12.rate = 0;
             for (int i = 0; i < 12; ++i)
             {
                 m_nFrames[i] = 0;
