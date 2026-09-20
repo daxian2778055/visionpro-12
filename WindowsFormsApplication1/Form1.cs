@@ -985,8 +985,23 @@ namespace WindowsFormsApplication1
                     s.Flush();
                     s.Close();
                 }
-                label75.Text = path_1.ToString().Split('\\').Last();
-                label173.Text = path_1;
+                // ★修复（2026-09-20 · 启动初始化被打断的根因）：
+                //   本方法由独立后台线程启动（Form1.cs:297 new Thread(InitializeJobManager)），
+                //   且 Debug 构建显式开启 Control.CheckForIllegalCrossThreadCalls=true（Form1.cs:227 S3 守卫）——
+                //   后台线程直接设置界面控件 label75/label173 会抛"线程间操作无效"（日志中 ...111），
+                //   该异常被下方外层 catch(1148) 吞掉后会【跳过 999-1140 的 12 路作业绑定】，
+                //   最终 initialize_FormSet 里 myjobN.job 全为 null → block 全空：
+                //   表现为 Form6 空白 / Form9 枚举崩溃 / 运行结果缺组 / 画面无流程数据。
+                //   改为线程安全投递（SafeBeginInvoke 内部已 try/catch，句柄销毁时静默）。
+                string _p1ForUi = path_1;
+                try
+                {
+                    SafeBeginInvoke(new Action(() =>
+                    {
+                        try { label75.Text = _p1ForUi.Split('\\').Last(); label173.Text = _p1ForUi; } catch { }
+                    }));
+                }
+                catch { }
                 try
                 {
                     wenjianjia = Path.GetDirectoryName(path_1);
@@ -1173,7 +1188,9 @@ namespace WindowsFormsApplication1
                 ui.IsBackground = true;
                 ui.Start();
                 // comboBox8_SelectedIndexChanged(null, null);
-                bnClose.Enabled = true;
+                // ★修复（2026-09-20）：同 988——本方法在后台线程且 Debug 开启跨线程校验，
+                //   直接设置控件属性会抛"线程间操作无效"，抛出后将跳过本 try 剩余步骤（打开相机等）。改线程安全投递。
+                try { SafeBeginInvoke(new Action(() => { try { bnClose.Enabled = true; } catch { } })); } catch { }
                 UpdateSplashProgress(45, "正在打开相机...");
             }
 
@@ -10040,6 +10057,10 @@ namespace WindowsFormsApplication1
                 // ★C6 修复：入参校验——路径必须含 .vpp（VisionPro 方案文件）。
                 //   原实现把"设置 path_1"放在 if 里、不含 .vpp 时跳过设置却继续切换：
                 //   会完整卸载/重载旧方案（几十秒）并照样回执"切换成功"，PLC 以为换型完成实际没换（质量逃逸）。
+                // ★修复（2026-09-20）：手动切换入口（menuitem_Click 8494/9972 等）在调用前已把目标路径写入 path_1，
+                //   并以空参数调用本方法；而 C6 校验会直接拒绝空参数 → 手动切换整体失效
+                //   （现场日志："切方案请求被拒绝：路径参数无效（不含 .vpp）："）。此处把空参数归一化为 path_1 再校验。
+                if (string.IsNullOrWhiteSpace(a)) a = path_1;
                 if (string.IsNullOrWhiteSpace(a) || !a.Contains(".vpp"))
                 {
                     _logger.WriteLog("切方案请求被拒绝：路径参数无效（不含 .vpp）：" + a);
