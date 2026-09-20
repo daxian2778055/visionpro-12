@@ -2715,7 +2715,10 @@ namespace WindowsFormsApplication1
                 {
                     foreach (var par in fins_dic)
                     {
-                        if (par.Value[3].Contains("心跳"))
+                        // ★对齐修复：相机9 触发列原过滤“心跳”类型数据块（与相机1-8 的“触发”过滤及
+                        //   ModbusRTU 版 cb12 不一致），导致相机9 触发下拉列出的是心跳类块。
+                        //   现场确认相机9-12 必须与相机1-8 对齐：触发列只列“触发”类型。
+                        if (par.Value[3].Contains("触发"))
                         {
                             comboBox4.Items.Add(par.Value[0]);
 
