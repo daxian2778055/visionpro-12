@@ -422,7 +422,7 @@ namespace WindowsFormsApplication1
             {
                 string camSec = ModbusRtuIniStore.CameraSection(_linkId, i + 1);
                 string temp_jian = wdini.ReadString(camSec, "chufa", " ").Replace("\0", "");
-                camera_dic.Add(i + 1, new string[] { temp_jian, wdini.ReadString(camSec, "fanhuizhi", "0").Replace("\0", ""), wdini.ReadString(camSec, "fanhuien", "false").Replace("\0", ""), wdini.ReadString(camSec, "fankui", "0").Replace("\0", ""), "无", "无", wdini.ReadString(camSec, "chukufangshi", "相等").Replace("\0", ""), wdini.ReadString(camSec, "chufazhi1", "").Replace("\0", ""), wdini.ReadString(camSec, "chufazhi2", "").Replace("\0", "") });
+                camera_dic.Add(i + 1, new string[] { temp_jian, wdini.ReadString(camSec, "fanhuizhi", "0").Replace("\0", ""), wdini.ReadString(camSec, "fanhuien", "false").Replace("\0", "").Trim().ToLowerInvariant(), wdini.ReadString(camSec, "fankui", "0").Replace("\0", ""), "无", "无", wdini.ReadString(camSec, "chukufangshi", "相等").Replace("\0", ""), wdini.ReadString(camSec, "chufazhi1", "").Replace("\0", ""), wdini.ReadString(camSec, "chufazhi2", "").Replace("\0", "") });
 
                 if (!fins_zuhe.ContainsKey(temp_jian))
                 {

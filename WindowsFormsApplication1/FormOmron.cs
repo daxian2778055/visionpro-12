@@ -403,7 +403,7 @@ namespace WindowsFormsApplication1
             }
             for(int i=0;i<13;i++)
             {
-                camera_dic.Add(i+1,new string[] { wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chufa", " ").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "fanhuizhi", "0").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "fanhuien", "false").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "fankui", "0").Replace("\0", ""),"无","无", wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chukufangshi", "相等").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chufazhi1", "").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chufazhi2", "").Replace("\0", "") });
+                camera_dic.Add(i+1,new string[] { wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chufa", " ").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "fanhuizhi", "0").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "fanhuien", "false").Replace("\0", "").Trim().ToLowerInvariant(), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "fankui", "0").Replace("\0", ""),"无","无", wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chukufangshi", "相等").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chufazhi1", "").Replace("\0", ""), wdini.ReadString(FinsIniStore.CameraSection(_linkId, i + 1), "chufazhi2", "").Replace("\0", "") });
             }
             comboBox5.Items.Add(camera_dic[1][0]);
             comboBox5.Text = camera_dic[1][0];

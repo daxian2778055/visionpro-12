@@ -210,7 +210,7 @@ namespace WindowsFormsApplication1
         //   操作员看屏时画面跟手；无人交互时按 RenderMinIntervalMs 正常节流省 CPU。
         //   初值回拨 1 秒，避免启动瞬间被误判为"正在交互"。
         private volatile int _lastUserTick = Environment.TickCount - 1000;
-        private int _renderInteractiveIntervalMs = 20;
+        private int _renderInteractiveIntervalMs = 0;   // ★F6：默认 0=交互时不限速（原 20 与 RenderMinIntervalMs 默认 16 组合下"放宽"条件恒假，交互节流成摆设）
         private UserActivityFilter _userActivityFilter;
         private volatile bool _inspectStop;
         private Cognex.VisionPro.CogRecordDisplay[] _cogDisplay;
@@ -266,9 +266,12 @@ namespace WindowsFormsApplication1
             _displayRawImage = _config.ReadString("Display", "RawImageMode", "0") == "1";
             // 交互期间渲染间隔（ms）：只在用户活动时生效，比 RenderMinIntervalMs 小才有意义
             //（弱机把常规间隔调大省 CPU 时，操作员一动鼠标就临时放宽到本值保流畅）；坏值回退默认
-            if (!int.TryParse(_config.ReadString("Display", "RenderInteractiveIntervalMs", "20"), out _renderInteractiveIntervalMs)
+            // ★F6 修复（2026-09-20）：原默认 20 与 RenderMinIntervalMs 默认 16 组合下，
+            //   使用条件（_renderInteractiveIntervalMs < interval）恒假 → 交互节流永不生效（摆设）。
+            //   默认改为 0（交互时不限速）：弱机把常规间隔调大（如 33）后，用户活动即放宽到不限速保流畅。
+            if (!int.TryParse(_config.ReadString("Display", "RenderInteractiveIntervalMs", "0"), out _renderInteractiveIntervalMs)
                 || _renderInteractiveIntervalMs < 0 || _renderInteractiveIntervalMs > 1000)
-                _renderInteractiveIntervalMs = 20;
+                _renderInteractiveIntervalMs = 0;
             comboBoxLayoutMode.SelectedIndexChanged -= comboBoxLayoutMode_SelectedIndexChanged;
             comboBoxLayoutMode.Items.Clear();
             comboBoxLayoutMode.Items.AddRange(new object[] { "方格布局", "行布局" });
@@ -1184,9 +1187,11 @@ namespace WindowsFormsApplication1
 
                     }
                 }
-                catch
+                catch (Exception exBind)
                 {
-                    _logger.WriteLog("无流程");
+                    // ★F5 修复（2026-09-20）：原实现只记"无流程"——无法知道是哪一路/什么异常导致
+                    //   12 路作业绑定中断（其后各路被整段跳过，且现场看不出）。补异常详情便于定位。
+                    _logger.WriteLog("启动作业绑定中断（其后各相机路未绑定）: " + exBind.Message);
                 }
             }
             catch (Exception ex)
@@ -1229,6 +1234,23 @@ namespace WindowsFormsApplication1
             {
                 _logger.WriteLog(ex.Message + "222");
             };
+            // ★F5 修复（2026-09-20）：启动侧补"方案绑定诊断"日志（与切型侧同款）——
+            //   原启动侧无绑定诊断，出现"Form6 空白/Form9 崩溃/运行结果缺组"时无法从日志判断
+            //   是 JobCount 不足还是某路 block 绑定失败。此处位于方法末（initialize_FormSet 已执行完
+            //   或已超时兜底），无条件记录一次。
+            try
+            {
+                int _diagJc0 = (manager1 != null) ? manager1.JobCount : -1;
+                string _diagBind0 = "";
+                for (int _bi0 = 0; _bi0 < 12; _bi0++)
+                {
+                    bool _okBind0 = _bi0 < _diagJc0 && _jobs.Myjobs[_bi0] != null
+                        && _jobs.Myjobs[_bi0].job != null && _jobs.Myjobs[_bi0].block != null;
+                    _diagBind0 += "相机" + (_bi0 + 1) + "=" + (_okBind0 ? "OK" : "null") + (_bi0 == 11 ? "" : " ");
+                }
+                _logger.WriteLog("启动方案绑定诊断: JobCount=" + _diagJc0 + " | block: " + _diagBind0);
+            }
+            catch { }
         }
         private void initialize_FormSet()
         {
@@ -3416,11 +3438,9 @@ namespace WindowsFormsApplication1
 
                                 this.Invoke(new Action(() =>
                                 {
-                                    bnGetLineSel1.Enabled = true;
-                                    bnSetLineSel1.Enabled = true;
-                                    bnGetLineMode1.Enabled = true;
-                                    bnSetLineMode1.Enabled = true;
-                                    checkBox4.Enabled = true;
+                                    // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                                    //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                                    try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel1.Enabled = true; bnSetLineSel1.Enabled = true; bnGetLineMode1.Enabled = true; bnSetLineMode1.Enabled = true; checkBox4.Enabled = true; } catch { } })); } catch { }
                                 }));
                             // cbSoftTrigger1.Enabled = true;
                         }
@@ -3460,11 +3480,9 @@ namespace WindowsFormsApplication1
                             }
                             this.Invoke(new Action(() =>
                             {
-                                bnGetLineSel2.Enabled = true;
-                                bnSetLineSel2.Enabled = true;
-                                bnGetLineMode2.Enabled = true;
-                                bnSetLineMode2.Enabled = true;
-                                checkBox10.Enabled = true;
+                                // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                                //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                                try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel2.Enabled = true; bnSetLineSel2.Enabled = true; bnGetLineMode2.Enabled = true; bnSetLineMode2.Enabled = true; checkBox10.Enabled = true; } catch { } })); } catch { }
                             }));
                             // cbSoftTrigger2.Enabled = true;
                         }
@@ -3505,11 +3523,9 @@ namespace WindowsFormsApplication1
                             }
                             this.Invoke(new Action(() =>
                             {
-                                bnGetLineSel3.Enabled = true;
-                                bnSetLineSel3.Enabled = true;
-                                bnGetLineMode3.Enabled = true;
-                                bnSetLineMode3.Enabled = true;
-                                checkBox16.Enabled = true;
+                                // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                                //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                                try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel3.Enabled = true; bnSetLineSel3.Enabled = true; bnGetLineMode3.Enabled = true; bnSetLineMode3.Enabled = true; checkBox16.Enabled = true; } catch { } })); } catch { }
                             }));
                             //  cbSoftTrigger3.Enabled = true;
                         }
@@ -3549,11 +3565,9 @@ namespace WindowsFormsApplication1
                             }
                             this.Invoke(new Action(() =>
                             {
-                                bnGetLineSel4.Enabled = true;
-                                bnSetLineSel4.Enabled = true;
-                                bnGetLineMode4.Enabled = true;
-                                bnSetLineMode4.Enabled = true;
-                                checkBox20.Enabled = true;
+                                // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                                //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                                try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel4.Enabled = true; bnSetLineSel4.Enabled = true; bnGetLineMode4.Enabled = true; bnSetLineMode4.Enabled = true; checkBox20.Enabled = true; } catch { } })); } catch { }
                             }));
                             //  cbSoftTrigger4.Enabled = true;
                         }
@@ -3594,11 +3608,9 @@ namespace WindowsFormsApplication1
 
                             this.Invoke(new Action(() =>
                             {
-                                bnGetLineSel5.Enabled = true;
-                                bnSetLineSel5.Enabled = true;
-                                bnGetLineMode5.Enabled = true;
-                                bnSetLineMode5.Enabled = true;
-                                checkBox34.Enabled = true;
+                                // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                                //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                                try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel5.Enabled = true; bnSetLineSel5.Enabled = true; bnGetLineMode5.Enabled = true; bnSetLineMode5.Enabled = true; checkBox34.Enabled = true; } catch { } })); } catch { }
                             }));
                             // cbSoftTrigger1.Enabled = true;
                         }
@@ -3638,11 +3650,9 @@ namespace WindowsFormsApplication1
                             }
                             this.Invoke(new Action(() =>
                             {
-                                bnGetLineSel6.Enabled = true;
-                                bnSetLineSel6.Enabled = true;
-                                bnGetLineMode6.Enabled = true;
-                                bnSetLineMode6.Enabled = true;
-                                checkBox40.Enabled = true;
+                                // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                                //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                                try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel6.Enabled = true; bnSetLineSel6.Enabled = true; bnGetLineMode6.Enabled = true; bnSetLineMode6.Enabled = true; checkBox40.Enabled = true; } catch { } })); } catch { }
                             }));
                             // cbSoftTrigger2.Enabled = true;
                         }
@@ -3682,11 +3692,9 @@ namespace WindowsFormsApplication1
                             }
                             this.Invoke(new Action(() =>
                             {
-                                bnGetLineSel7.Enabled = true;
-                                bnSetLineSel7.Enabled = true;
-                                bnGetLineMode7.Enabled = true;
-                                bnSetLineMode7.Enabled = true;
-                                checkBox46.Enabled = true;
+                                // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                                //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                                try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel7.Enabled = true; bnSetLineSel7.Enabled = true; bnGetLineMode7.Enabled = true; bnSetLineMode7.Enabled = true; checkBox46.Enabled = true; } catch { } })); } catch { }
                             }));
                             //  cbSoftTrigger3.Enabled = true;
                         }
@@ -3724,11 +3732,9 @@ namespace WindowsFormsApplication1
                                     this.Invoke(new Action(() => { bnStartGrab8.Enabled = false; bnStopGrab8.Enabled = true; }));
                                 }
                             }
-                            bnGetLineSel8.Enabled = true;
-                            bnSetLineSel8.Enabled = true;
-                            bnGetLineMode8.Enabled = true;
-                            bnSetLineMode8.Enabled = true;
-                            checkBox52.Enabled = true;
+                            // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                            //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                            try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel8.Enabled = true; bnSetLineSel8.Enabled = true; bnGetLineMode8.Enabled = true; bnSetLineMode8.Enabled = true; checkBox52.Enabled = true; } catch { } })); } catch { }
                             //  cbSoftTrigger4.Enabled = true;
                         }
                         catch (Exception ex)
@@ -3765,11 +3771,9 @@ namespace WindowsFormsApplication1
                                     this.Invoke(new Action(() => { bnStartGrab9.Enabled = false; bnStopGrab9.Enabled = true; }));
                                 }
                             }
-                            bnGetLineSel9.Enabled = true;
-                            bnSetLineSel9.Enabled = true;
-                            bnGetLineMode9.Enabled = true;
-                            bnSetLineMode9.Enabled = true;
-                            checkBox76.Enabled = true;
+                            // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                            //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                            try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel9.Enabled = true; bnSetLineSel9.Enabled = true; bnGetLineMode9.Enabled = true; bnSetLineMode9.Enabled = true; checkBox76.Enabled = true; } catch { } })); } catch { }
                             //  cbSoftTrigger4.Enabled = true;
                         }
                         catch (Exception ex)
@@ -3806,11 +3810,9 @@ namespace WindowsFormsApplication1
                                     this.Invoke(new Action(() => { bnStartGrab10.Enabled = false; bnStopGrab10.Enabled = true; }));
                                 }
                             }
-                            bnGetLineSel10.Enabled = true;
-                            bnSetLineSel10.Enabled = true;
-                            bnGetLineMode10.Enabled = true;
-                            bnSetLineMode10.Enabled = true;
-                            checkBox82.Enabled = true;
+                            // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                            //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                            try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel10.Enabled = true; bnSetLineSel10.Enabled = true; bnGetLineMode10.Enabled = true; bnSetLineMode10.Enabled = true; checkBox82.Enabled = true; } catch { } })); } catch { }
                             //  cbSoftTrigger4.Enabled = true;
                         }
                         catch (Exception ex)
@@ -3847,11 +3849,9 @@ namespace WindowsFormsApplication1
                                     this.Invoke(new Action(() => { bnStartGrab11.Enabled = false; bnStopGrab11.Enabled = true; }));
                                 }
                             }
-                            bnGetLineSel11.Enabled = true;
-                            bnSetLineSel11.Enabled = true;
-                            bnGetLineMode11.Enabled = true;
-                            bnSetLineMode11.Enabled = true;
-                            checkBox88.Enabled = true;
+                            // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                            //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                            try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel11.Enabled = true; bnSetLineSel11.Enabled = true; bnGetLineMode11.Enabled = true; bnSetLineMode11.Enabled = true; checkBox88.Enabled = true; } catch { } })); } catch { }
                             //  cbSoftTrigger4.Enabled = true;
                         }
                         catch (Exception ex)
@@ -3888,11 +3888,9 @@ namespace WindowsFormsApplication1
                                     this.Invoke(new Action(() => { bnStartGrab12.Enabled = false; bnStopGrab12.Enabled = true; }));
                                 }
                             }
-                            bnGetLineSel12.Enabled = true;
-                            bnSetLineSel12.Enabled = true;
-                            bnGetLineMode12.Enabled = true;
-                            bnSetLineMode12.Enabled = true;
-                            checkBox94.Enabled = true;
+                            // ★F2 修复（2026-09-20）：原为裸写——后台线程直接设置控件属性，Debug 跨线程校验(Form1.cs:227)下
+                            //   一旦抛『线程间操作无效』会被 per-slot catch 吞掉并置该路 yun=0（静默不检测）。改线程安全投递。
+                            try { SafeBeginInvoke(new Action(() => { try { bnGetLineSel12.Enabled = true; bnSetLineSel12.Enabled = true; bnGetLineMode12.Enabled = true; bnSetLineMode12.Enabled = true; checkBox94.Enabled = true; } catch { } })); } catch { }
                             //  cbSoftTrigger4.Enabled = true;
                         }
                         catch (Exception ex)
