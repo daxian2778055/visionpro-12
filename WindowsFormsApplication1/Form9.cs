@@ -98,6 +98,13 @@ namespace WindowsFormsApplication1
         {
             combox.Items.Clear();
             toolName1.Clear();
+            // ★ 防崩溃（2026-09-20）：流程块未加载时（blk 为 null）原实现直接 blk.Tools → NullReferenceException
+            //   （崩溃日志定位：Form9.cs:106 / comboBox27_DropDown）。此处给出提示项并返回，不再枚举。
+            if (blk == null)
+            {
+                combox.Items.Add("（该相机流程未加载，无法枚举工具）");
+                return;
+            }
             dic.Clear();
             block_11 = null;
             int i = 0;
