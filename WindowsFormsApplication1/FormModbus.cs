@@ -2089,11 +2089,12 @@ namespace WindowsFormsApplication1
                             }
                             break;
                         }
-                        // ★H3 修复：写成功才清槽；失败保留"待写"，下次 xie() 自动重试。
-                        if (writeAllOk)
-                            pat.Value[5] = "无";
-                        else
-                            LogXieRetry("槽 " + pat.Value[5] + " → " + fins_temp);
+                        // ★H3 决策（2026-09-20 现场定）：写失败不再补发——无论成败一律清槽，PLC 靠超时判 NG。
+                        //   原"失败保留待写、下次 xie() 补发"会使 PLC 已判 NG 后又收到迟到的旧 OK（语义矛盾），
+                        //   且空闲期无主动 flush、补发时机不可控；宁可不发，由 PLC 超时兜底。
+                        if (!writeAllOk)
+                            LogXieRetry("槽 " + pat.Value[5] + " → " + fins_temp);   // 失败诊断日志（5s 限流），随后清槽
+                        pat.Value[5] = "无";
                     }
                     catch (Exception exSlot)
                     {
