@@ -443,6 +443,9 @@ namespace WindowsFormsApplication1
         {
             nRet = -1;
             if (slot < 0 || slot >= 12 || deviceArrayIndex < 0 || deviceArrayIndex >= device1.Length) return false;
+            // ★B1 修复：入口复查中止标志——重连 Task 可能在关闭/切型/停机开始后才执行到这里，
+            //   原实现不复查，会拿旧 device1 缓存把刚关掉的槽重新打开（幽灵相机）。
+            if (!_cameraReconnectEnabled || _disposingFlag || _switchingScheme || dakaizhong) return false;
             lock (_cameraLock)
             {
                 if (_cameraCtrl.Cameras[slot] == null)

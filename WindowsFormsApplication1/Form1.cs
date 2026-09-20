@@ -7476,6 +7476,9 @@ namespace WindowsFormsApplication1
                                 // 原相机4/8/9/10/11/12 失败字符串缺 "\r\n"、相机8/9 缺"断线开始重连/重连失败"日志，现已统一为规范格式。
                                 void CheckAndReconnectCamera(int slot)
                                 {
+                                    // ★B1 修复：每路执行前复查中止标志——本 Task 可能在关闭/切型/开机中才跑到这里，
+                                    //   原实现只在 timer2_Tick 入口判一次，Task 体内不再复查。
+                                    if (!_cameraReconnectEnabled || _disposingFlag || _switchingScheme || dakaizhong) return;
                                     var job = _jobs.Myjobs[slot];
                                     if (_cameraCtrl.Cameras[slot] == null)
                                     {
@@ -11587,6 +11590,13 @@ namespace WindowsFormsApplication1
 
         private void bnClose_Click(object sender, EventArgs e)
         {
+            // ★B1 修复：关闭前先停用自动重连、停 timer2，并有限等待在途重连 Task 落——
+            //   原实现把"停用重连"放在所有关闭动作 + ResetMember 之后：在途 Task 可能拿旧 device1 缓存
+            //   把刚关掉的槽重新打开（幽灵相机继续进帧），且 ResetMember 重赋 cbImage 后旧委托失去
+            //   字段 root，GC 回收 thunk → 原生回调打空指针的崩溃窗口。
+            _cameraReconnectEnabled = false;
+            try { timer2.Enabled = false; } catch { }
+            for (int w = 0; w < 40 && chonglianzhong; w++) Thread.Sleep(50);   // 最多等 2 秒（有界）
             for (int i = 0; i < 12; ++i)
             {
                 int nRet;
@@ -11621,6 +11631,12 @@ namespace WindowsFormsApplication1
             }
             // ★ 修复（关设备顺序）：所有相机已停止取流并关闭后，再释放非托管缓冲，
             //   避免海康 SDK 回调线程仍在用 m_pSaveImageBuf 做像素转换时被 FreeHGlobal 导致崩溃
+            // ★A2 修复：仅"设备都已关"还不够——最后几帧可能仍在回调线程里做像素转换（毫秒级）。
+            //   回调全程被 _inspectionLifecycle 包着（ImageCallBack TryEnter/Exit），
+            //   此处等它归零即证明"无回调正在使用缓冲"，再做 Free/Destroy
+            //   （原先 FreeHGlobal 与 EnsureConvertBuffer 的无锁 free+realloc 存在 use-after-free/双重释放）。
+            if (!_inspectionLifecycle.WaitForIdle(2000))
+                _logger.WriteLog("bnClose：等待回调静止超时(2s)，仍继续释放缓冲（设备已关、无新回调，窗口已极小）");
             for (int i = 0; i < 12; i++)
             {
                 FreeDriverBuffer(i);
