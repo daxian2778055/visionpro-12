@@ -3399,8 +3399,6 @@ namespace WindowsFormsApplication1
                 return;
             }
             // ★ 在 UI 线程预缓存 checkedListBox 状态，避免后台线程直接访问 UI 控件
-            bool[] checkedCameras = new bool[12];
-            try { for (int __i = 0; __i < 12; __i++) checkedCameras[__i] = checkedListBox1.GetItemChecked(__i); } catch { }
             Task.Run(() =>
             {
                 try
@@ -3467,7 +3465,7 @@ namespace WindowsFormsApplication1
                             button11.Enabled = true;
                             label133.Text = "预备相机1运行";
                         }));
-                            if (checkedCameras[0] && _jobs.myjob1.yun == 0)
+                            if (_jobs.myjob1.yun == 0)
                             {
                                 this.Invoke(new Action(() =>
                                 {
@@ -3514,7 +3512,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机2运行";
                             }));
-                            if (checkedCameras[1] && _jobs.myjob2.yun == 0 && manager1.JobCount > 1)
+                            if (_jobs.myjob2.yun == 0 && manager1.JobCount > 1)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab2.Enabled = false; }));
                                 _jobs.myjob2.yun = 1;
@@ -3557,7 +3555,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机3运行";
                             }));
-                            if (checkedCameras[2] && _jobs.myjob3.yun == 0 && manager1.JobCount > 2)
+                            if (_jobs.myjob3.yun == 0 && manager1.JobCount > 2)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab3.Enabled = false; }));
                                 _jobs.myjob3.yun = 1;
@@ -3599,7 +3597,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机4运行";
                             }));
-                            if (checkedCameras[3] && _jobs.myjob4.yun == 0 && manager1.JobCount > 3)
+                            if (_jobs.myjob4.yun == 0 && manager1.JobCount > 3)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab4.Enabled = false; }));
                                 _jobs.myjob4.yun = 1;
@@ -3641,7 +3639,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机5运行";
                             }));
-                            if (checkedCameras[4] && _jobs.myjob5.yun == 0 && manager1.JobCount > 4)
+                            if (_jobs.myjob5.yun == 0 && manager1.JobCount > 4)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab5.Enabled = false; }));
                                 _jobs.myjob5.yun = 1;
@@ -3684,7 +3682,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机6运行";
                             }));
-                            if (checkedCameras[5] && _jobs.myjob6.yun == 0 && manager1.JobCount > 5)
+                            if (_jobs.myjob6.yun == 0 && manager1.JobCount > 5)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab6.Enabled = false; }));
                                 _jobs.myjob6.yun = 1;
@@ -3726,7 +3724,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机7运行";
                             }));
-                            if (checkedCameras[6] && _jobs.myjob7.yun == 0 && manager1.JobCount > 6)
+                            if (_jobs.myjob7.yun == 0 && manager1.JobCount > 6)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab7.Enabled = false; }));
                                 _jobs.myjob7.yun = 1;
@@ -3768,7 +3766,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机8运行";
                             }));
-                            if (checkedCameras[7] && _jobs.myjob8.yun == 0 && manager1.JobCount > 7)
+                            if (_jobs.myjob8.yun == 0 && manager1.JobCount > 7)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab8.Enabled = false; }));
                                 _jobs.myjob8.yun = 1;
@@ -3807,7 +3805,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机9运行";
                             }));
-                            if (checkedCameras[8] && _jobs.myjob9.yun == 0 && manager1.JobCount > 8)
+                            if (_jobs.myjob9.yun == 0 && manager1.JobCount > 8)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab9.Enabled = false; }));
                                 _jobs.myjob9.yun = 1;
@@ -3846,7 +3844,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机10运行";
                             }));
-                            if (checkedCameras[9] && _jobs.myjob10.yun == 0 && manager1.JobCount > 9)
+                            if (_jobs.myjob10.yun == 0 && manager1.JobCount > 9)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab10.Enabled = false; }));
                                 _jobs.myjob10.yun = 1;
@@ -3885,7 +3883,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机11运行";
                             }));
-                            if (checkedCameras[10] && _jobs.myjob11.yun == 0 && manager1.JobCount > 10)
+                            if (_jobs.myjob11.yun == 0 && manager1.JobCount > 10)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab11.Enabled = false; }));
                                 _jobs.myjob11.yun = 1;
@@ -3924,7 +3922,7 @@ namespace WindowsFormsApplication1
                             {
                                 label133.Text = "预备相机12运行";
                             }));
-                            if (checkedCameras[11] && _jobs.myjob12.yun == 0 && manager1.JobCount > 11)
+                            if (_jobs.myjob12.yun == 0 && manager1.JobCount > 11)
                             {
                                 this.Invoke(new Action(() => { bnStopGrab12.Enabled = false; }));
                                 _jobs.myjob12.yun = 1;
@@ -3994,12 +3992,9 @@ namespace WindowsFormsApplication1
                             // 存图测试1ToolStripMenuItem.Checked = true;
                         }));
 
-                        // ★N7：原实现在 Task 线程裸读控件——Debug 下抛跨线程异常且被 Task 静默吞，
-                        //   其后的 EnableCameraReconnect 被整段跳过（相机掉线不再自动重连）。改 UI 线程读取。
-                        bool _noneChecked = false;
-                        this.Invoke(new Action(() => { _noneChecked = checkedListBox1.SelectedIndices.Count == 0; }));
-                        if (_noneChecked)
-                            _logger.WriteLog("请选择要开启的相机");
+                        // ★规则（2026-09-20 现场定）：相机启动只看方案流程数（JobCount），不再看勾选。
+                        //   全 12 路都没起来时给中性提示（原“请选择要开启的相机”已不适用）。
+                        _logger.WriteLog("没有任何相机启动成功（流程数=" + manager1.JobCount + "，请检查相机连接与驱动状态）");
                     }
                     else
                     {
