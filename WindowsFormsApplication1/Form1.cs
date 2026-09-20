@@ -7438,7 +7438,24 @@ namespace WindowsFormsApplication1
                                                     {
                                                         _jobs.Myjobs[capturedSlot].yun = 1;
                                                         int grabRet;
-                                                        PrepareCameraGrab(capturedSlot, out grabRet);
+                                                        // ★B2 修复：原实现丢弃 PrepareCameraGrab 返回值——GigE 回归后
+                                                        //   StartGrabbing/PayloadSize 失败时该槽"已连接但不采集"永久僵死
+                                                        //   （下一轮 IsDeviceConnected 直接 return，再无重试路径），软触发恒被拒。
+                                                        //   失败则回滚 yun 并完整销毁置 null，交给下一轮按名重扫（可自愈）。
+                                                        if (!PrepareCameraGrab(capturedSlot, out grabRet))
+                                                        {
+                                                            _jobs.Myjobs[capturedSlot].yun = 0;
+                                                            lock (_cameraLock)
+                                                            {
+                                                                try { _cameraCtrl.Cameras[capturedSlot].MV_CC_StopGrabbing_NET(); } catch { }
+                                                                SetCameraGrabbing(capturedSlot, false);
+                                                                try { _cameraCtrl.Cameras[capturedSlot].MV_CC_CloseDevice_NET(); } catch { }
+                                                                try { _cameraCtrl.Cameras[capturedSlot].MV_CC_DestroyDevice_NET(); } catch { }
+                                                                _cameraCtrl.Cameras[capturedSlot] = null;
+                                                            }
+                                                            _logger.WriteLog("相机" + (capturedSlot + 1) + "重连后启动取流失败(nRet=" + grabRet + ")，已销毁句柄待按名重扫");
+                                                            cameraState += "相机" + (capturedSlot + 1) + "重连后启动取流失败\r\n";
+                                                        }
                                                     }
                                                     cameraState += "相机" + (capturedSlot + 1) + "已重连\r\n";
                                                     _logger.WriteLog("相机" + (capturedSlot + 1) + "重连成功，deviceIndex=" + i_temp);
@@ -7487,7 +7504,21 @@ namespace WindowsFormsApplication1
                                         {
                                             job.yun = 1;
                                             int grabRet;
-                                            PrepareCameraGrab(slot, out grabRet);
+                                            // ★B2 修复（与 capturedSlot 分支同）：启动取流失败则回滚 yun 并销毁置 null，交给按名重扫自愈
+                                            if (!PrepareCameraGrab(slot, out grabRet))
+                                            {
+                                                job.yun = 0;
+                                                lock (_cameraLock)
+                                                {
+                                                    try { _cameraCtrl.Cameras[slot].MV_CC_StopGrabbing_NET(); } catch { }
+                                                    SetCameraGrabbing(slot, false);
+                                                    try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
+                                                    try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                                                    _cameraCtrl.Cameras[slot] = null;
+                                                }
+                                                _logger.WriteLog("相机" + (slot + 1) + "重连后启动取流失败(nRet=" + grabRet + ")，已销毁句柄待按名重扫");
+                                                cameraState += "相机" + (slot + 1) + "重连后启动取流失败\r\n";
+                                            }
                                         }
                                         job.state = "";
                                     }
@@ -11014,7 +11045,14 @@ namespace WindowsFormsApplication1
                     CameraDeviceInfo devInfo;
                     if (!slotMap.TryGetValue(slot, out devInfo))
                     {
-                        _cameraCtrl.Cameras[slot] = null;
+                        // ★A1 修复：名不匹配的槽若仍有上次残留的活设备，必须先完整销毁再丢弃——
+                        //   原实现直接置 null 丢句柄：GigE 独占控制下该设备被卡死，
+                        //   后续打开恒返回 0x80000007（只能重启软件或给相机断电）。
+                        if (_cameraCtrl.Cameras[slot] != null)
+                        {
+                            _logger.WriteLog("相机" + (slot + 1) + "本次未匹配到设备，销毁残留句柄后跳过");
+                            ClearCameraSlotOnOpenFailed(slot.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
+                        }
                         continue;
                     }
 
@@ -11024,6 +11062,10 @@ namespace WindowsFormsApplication1
 
                     try
                     {
+                        // ★A1 修复：槽位若已有残留活对象（上次打开未清理），先完整销毁再创建——
+                        //   原实现在仍打开的设备上直接 CreateDevice，会失败/冲突。
+                        if (_cameraCtrl.Cameras[slot] != null)
+                            ClearCameraSlotOnOpenFailed(slot.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
                         if (_cameraCtrl.Cameras[slot] == null)
                             _cameraCtrl.Cameras[slot] = new MyCamera();
 
@@ -11081,10 +11123,16 @@ namespace WindowsFormsApplication1
                 }
             }
 
-            for (int i = 0; i < 12; i++)
+            // ★A1 修复：未成功槽的清理统一走 ClearCameraSlotOnOpenFailed（Stop→Close→Destroy→清 pending），
+            //   原实现在锁外直接置 null：若槽内仍有残留活对象会丢句柄（GigE 独占下后续打开恒失败），
+            //   且锁外访问与重连线程存在竞态。
+            lock (_cameraLock)
             {
-                if (temp[i] == 0)
-                    _cameraCtrl.Cameras[i] = null;
+                for (int i = 0; i < 12; i++)
+                {
+                    if (temp[i] == 0 && _cameraCtrl.Cameras[i] != null)
+                        ClearCameraSlotOnOpenFailed(i.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
+                }
             }
 
             bnOpen.Enabled = false;
