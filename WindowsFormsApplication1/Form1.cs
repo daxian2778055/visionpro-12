@@ -321,6 +321,9 @@ namespace WindowsFormsApplication1
             LoadUiThemeFromIni();
             CreateTabNav();
             ApplyModernUiTheme();
+            // ★日期标识（现场规则）：YA + 日期(MMdd)，如 9 月 20 日 → YA0920；
+            //   启动时按当天自动设置（原为设计器硬编码 YA0919，需人工改日期）。
+            try { label148.Text = "YA" + DateTime.Now.ToString("MMdd"); } catch { }
         }
         protected override Point ScrollToControl(Control activeControl)
         {
