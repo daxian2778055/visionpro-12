@@ -129,6 +129,11 @@ namespace WindowsFormsApplication1
         //   协议窗体（FormOmron/FormModbus/FormModbusRtu）的手动测试按钮在 lock(_ioSync) 内调用 DemoUtils.*Render，
         //   模态框会把 _ioSync 按住到操作员点掉为止，轮询/心跳/重连全部卡死、PLC 触发脉冲丢失。
         //   这些窗体改用 Text 版本：锁内只做 I/O 并生成文案，弹窗统一放到锁外。返回值 null=成功且无需提示。
+        // ★复审修复（2026-09-23）：原"成功返回 Write Success 文案"破坏 null=成功约定，且协议层失败（非异常）
+        //   与一般提示无法区分，弹窗标题只能一律"提示"。现失败文案统一带 ErrorMarker 前缀，
+        //   ManualGuarded 在锁外识别前缀→剥掉并按 errorTitle 弹；成功返回 null 静默。
+        public const string ErrorMarker = "\u2757";
+
         public static string ReadResultText<T>( Func<OperateResult<T>> read, string address, TextBox textBox )
         {
             try
@@ -139,11 +144,11 @@ namespace WindowsFormsApplication1
                     textBox.AppendText( DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] " + result.Content + Environment.NewLine );
                     return null;
                 }
-                return DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Read Failed " + Environment.NewLine + "Reason：" + result.ToMessageShowString( );
+                return ErrorMarker + DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Read Failed " + Environment.NewLine + "Reason：" + result.ToMessageShowString( );
             }
             catch ( Exception ex )
             {
-                return "Data for reading is not corrent: " + ex.Message;
+                return ErrorMarker + "Data for reading is not corrent: " + ex.Message;
             }
         }
 
@@ -154,14 +159,15 @@ namespace WindowsFormsApplication1
                 OperateResult result = write( );
                 if (result.IsSuccess)
                 {
-                    return DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Write Success";
+                    // 成功不再弹（null=静默，与 ReadResultText/BulkReadResultText 同约定）
+                    return null;
                 }
-                return DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Write Failed " + Environment.NewLine + " Reason：" + result.ToMessageShowString( );
+                return ErrorMarker + DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Write Failed " + Environment.NewLine + " Reason：" + result.ToMessageShowString( );
             }
             catch ( Exception ex )
             {
                 // 主要是为了捕获写入的值不正确的情况
-                return "Data for writting is not corrent: " + ex.Message;
+                return ErrorMarker + "Data for writting is not corrent: " + ex.Message;
             }
         }
 
@@ -175,11 +181,11 @@ namespace WindowsFormsApplication1
                     resultTextBox.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
                     return null;
                 }
-                return "Read Failed：" + read.ToMessageShowString( );
+                return ErrorMarker + "Read Failed：" + read.ToMessageShowString( );
             }
             catch ( Exception ex )
             {
-                return "Read Failed：" + ex.Message;
+                return ErrorMarker + "Read Failed：" + ex.Message;
             }
         }
         public static readonly string IpAddressInputWrong = "IpAddress input wrong";

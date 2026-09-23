@@ -884,8 +884,18 @@ namespace WindowsFormsApplication1
                 }
                 finally { System.Threading.Monitor.Exit(_ioSync); }
             }
-            // ★审核建议①：标题按来源区分——op 返回的是"操作结果文案"（含写成功提示），只有异常才配叫 errorTitle
-            if (!string.IsNullOrEmpty(msg)) MessageBox.Show(msg, failed ? errorTitle : "提示");
+            // ★复审修复（2026-09-23）：failed 原只认异常——协议层失败（ResultText 返回的 "Read/Write Failed…"
+            //   非异常路径）也被按"提示"弹，且成功文案曾伪装成失败。现约定 ErrorMarker 前缀=失败：
+            //   识别后剥标并按 errorTitle 弹（醒目）；null=成功静默；其余无前缀文案=一般提示按"提示"弹。
+            if (!string.IsNullOrEmpty(msg))
+            {
+                if (msg.StartsWith(DemoUtils.ErrorMarker, StringComparison.Ordinal))
+                {
+                    failed = true;
+                    msg = msg.Substring(DemoUtils.ErrorMarker.Length);
+                }
+                MessageBox.Show(msg, failed ? errorTitle : "提示");
+            }
         }
 
         #endregion
@@ -983,7 +993,7 @@ namespace WindowsFormsApplication1
                     textBox11.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
                     return null;
                 }
-                return "Read Failed：" + read.ToMessageShowString( );
+                return DemoUtils.ErrorMarker + "Read Failed：" + read.ToMessageShowString( );
             }, "读取出错");
         }
 

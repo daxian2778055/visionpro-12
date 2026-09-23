@@ -5317,18 +5317,47 @@ namespace WindowsFormsApplication1
                     _uiMonitorThread = new Thread(() =>
                     {
                         bool again;
+                        // ★复审修复②（2026-09-23）：运行中抛异常原"记日志→线程退出"，统计/丢帧采样冻结到
+                        //   下次 Ensure（启动/取消关窗）才复活。现异常且非关窗期直接自复跑，
+                        //   并按"连跳封顶"防确定性异常死循环：60 秒窗口内最多自跳 3 次（退避 1/2/4s），
+                        //   第 4 次起不再自跳，落到锁内退让——本线程只"读"Ensure 可能挂上的复活请求，
+                        //   绝不自己写：Ensure 与本退出判定同持 _uiMonitorLock，互斥已保证交接无丢失
+                        //   （Ensure 先入见 active==true → 挂请求，本线程随后读到并复跑；
+                        //    本线程先入见无请求 → active=false 退出，其后的 Ensure 直接启新线程）。
+                        long exFirstTick = 0; int exRestarts = 0;
                         do
                         {
+                            bool crashed = false;
                             try { UI_monitor(); }
                             catch (Exception exM)
                             {
-                                try { _logger.WriteLog("UI_monitor 异常退出: " + exM.Message); } catch { }
+                                crashed = true;
+                                try { _logger.WriteLog("UI_monitor 异常退出: " + exM.ToString()); } catch { }
                             }
                             again = false;
-                            lock (_uiMonitorLock)
+                            if (crashed && !_disposingFlag)
                             {
-                                if (_uiMonitorRestartReq) { _uiMonitorRestartReq = false; again = true; }
-                                else { _uiMonitorActive = false; }
+                                long now = Environment.TickCount;
+                                if (exRestarts == 0 || unchecked((int)(now - exFirstTick)) > 60000)
+                                {
+                                    exFirstTick = now;
+                                    exRestarts = 0;   // 新窗口：3 次预算重新计
+                                }
+                                if (exRestarts < 3)
+                                {
+                                    exRestarts++;
+                                    try { Thread.Sleep(1000 * (1 << (exRestarts - 1))); } catch { }
+                                    again = true;
+                                }
+                                // exRestarts 已达 3 → 不自跳，落到下面的退让
+                            }
+                            if (!again)
+                            {
+                                lock (_uiMonitorLock)
+                                {
+                                    if (_uiMonitorRestartReq) { _uiMonitorRestartReq = false; again = true; }
+                                    else { _uiMonitorActive = false; }
+                                }
                             }
                         } while (again);
                     });
@@ -7408,6 +7437,9 @@ namespace WindowsFormsApplication1
         }
         string cameraState = "";
         volatile bool chonglianzhong = false;   // ★低风险加固：UI 线程(timer2_Tick)读写、Task.Run 后台 finally 复位，跨线程需 volatile 保证可见性
+        // ★R2 修复（2026-09-23 第24轮）：bnClose 有界等待在途重连落地的确定性信号（初判有信号=无在途 Task）。
+        //   原实现靠 Thread.Sleep 轮询 chonglianzhong，UI 线程完全不泵消息，在途 Task 的 this.Invoke 必挂。
+        private readonly System.Threading.ManualResetEventSlim _reconnectSettled = new System.Threading.ManualResetEventSlim(true);
         /// <summary>运行或打开设备后启用，用于断线/热插拔重连。</summary>
         private bool _cameraReconnectEnabled = false;
 
@@ -7438,6 +7470,11 @@ namespace WindowsFormsApplication1
             slot = -1;
             nRet = -1;
             nameMatched = false;
+            // ★R1 修复（2026-09-23 第24轮）：按名重扫分支此前不复查中止标志（只有 CheckAndReconnectCamera:7869
+            //   和热插拔 ReconnectCameraSlot:448 复查）——timer2_Tick 入口(7771)只在 Task 启动前判一次，
+            //   关闭/切型/开机若在 Task 跑到此处之后才置位，本函数仍会 Create+Open 相机成"幽灵相机"，
+            //   且 7855 空 catch 吞异常。现复用同款四标志复查，命中即返回不碰硬件。
+            if (!_cameraReconnectEnabled || _disposingFlag || _switchingScheme || dakaizhong) return false;
             device1[deviceArrayIndex] = devInfo;
             string devName = "";
 
@@ -7744,6 +7781,7 @@ namespace WindowsFormsApplication1
             if (dakaizhong || chonglianzhong)
                 return;
             chonglianzhong = true;
+            _reconnectSettled.Reset();   // ★R2：标记"有重连在途"，bnClose 据此有界等待
             Task.Run(() =>
             {
                 try
@@ -7780,6 +7818,13 @@ namespace WindowsFormsApplication1
                                         {
                                             try
                                             {
+                                                // ★R1 修复：逐台再查一次中止标志——关闭/切型落在枚举循环中间时，
+                                                //   后续设备一并放弃（TryReconnectDeviceLikeBnOpen 内另有同判据兜底）
+                                                if (!_cameraReconnectEnabled || _disposingFlag || _switchingScheme || dakaizhong)
+                                                {
+                                                    _logger.WriteLog("按名重扫中止：关闭/切型/开机进行中（枚举第 " + j + " 台时命中中止标志）");
+                                                    return;
+                                                }
                                                 MyCamera.MV_CC_DEVICE_INFO devInfo = (MyCamera.MV_CC_DEVICE_INFO)Marshal.PtrToStructure(reconnectList.pDeviceInfo[j], typeof(MyCamera.MV_CC_DEVICE_INFO));
                                                 bool nameMatched;
                                                 int boundSlot;
@@ -7929,6 +7974,7 @@ namespace WindowsFormsApplication1
                 finally
                 {
                     chonglianzhong = false;
+                    _reconnectSettled.Set();   // ★R2：本轮重连彻底落地，放行 bnClose 的有界等待
                 }
             });
             if (day1 != DateTime.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture))
@@ -8752,6 +8798,7 @@ namespace WindowsFormsApplication1
         }
         private void menuitem_Click(object sender, EventArgs e)
         {
+            if (ManualSchemeSwitchBlockedIfBusy()) return;   // ★R3：在途切换时拒绝，path_1 不动
             label75.Text = sender.ToString().Split('\\').Last();
             label173.Text = sender.ToString();
             // ★修复（2026-09-20）：path_1 必须先更新为本次选中的方案，再取 wenjianjia——
@@ -8959,6 +9006,12 @@ namespace WindowsFormsApplication1
 
         private void 保存ToolStripMenuItem_Click(object sender, EventArgs e)
         {
+            // ★R5 修复（2026-09-23 第24轮）：切换在途/manager1 非 Loaded 时序列化会存出半写方案或直接 NRE，入口拒绝。
+            if (SchemeSwitchInProgressForSave())
+            {
+                MessageBox.Show("方案正在切换或尚未加载完成，不能保存。请等待切换结束后重试。", "提示");
+                return;
+            }
             try
             {
                 保存ToolStripMenuItem.Enabled = false;
@@ -8966,14 +9019,15 @@ namespace WindowsFormsApplication1
                 //   SaveObjectToFile 序列化并发 → 存出损坏/半改写方案或 COM 异常。复用切方案同款
                 //   "关门排空"：StopAccepting → WaitForIdle 再序列化；若别的流程已关门则不再重复关门/开门。
                 bool saveNeedResume = !_inspectionLifecycle.IsPaused;
-                if (saveNeedResume)
-                {
-                    _inspectionLifecycle.StopAccepting();
-                    if (!_inspectionLifecycle.WaitForIdle(5000))
-                        _logger.WriteLog("保存方案：等待在途检测静止超时(5s)，仍继续序列化（有并发损坏风险，建议空闲期保存）");
-                }
+                if (saveNeedResume) _inspectionLifecycle.StopAccepting();
                 try
                 {
+                    // ★R5 修复②（第24轮复审）：超时 throw 必须发生在内层 try 之内——原实现在 StopAccepting 之后、
+                    //   进入内层 try 之前就抛，finally 的 Resume 被跳过：一次 5s 静止等待超时 = _inspectionLifecycle
+                    //   永久 IsPaused → 后续帧全部拒收（全系统停检），且再次保存因 saveNeedResume=false 静默掩盖。
+                    //   （与 W1 修的"早退跳过 Resume"同类错误。）
+                    if (saveNeedResume && !_inspectionLifecycle.WaitForIdle(5000))
+                        throw new TimeoutException("保存中止：等待在途检测静止超时(5s)，检测仍在运行，此时序列化可能写坏方案");
                     SanitizeSchemeImagesForSave();
                     CogSerializer.SaveObjectToFile(manager1, path_1);
                 }
@@ -10132,6 +10186,17 @@ namespace WindowsFormsApplication1
 
         private void 另存为ToolStripMenuItem_Click(object sender, EventArgs e)
         {
+            // ★R5 修复（2026-09-23 第24轮）：同"保存"——切换在途/manager1 非 Loaded 时不得序列化。
+            if (SchemeSwitchInProgressForSave())
+            {
+                MessageBox.Show("方案正在切换或尚未加载完成，不能另存为。请等待切换结束后重试。", "提示");
+                return;
+            }
+            // ★R4 修复②（第24轮复审）：快照共享字段——文件框(消息泵)返回后若闸2 拒绝，
+            //   path_1/label/wenjianjia 已被改成新文件 C，必须回滚，否则在途切换完成时
+            //   配置/界面会把 C 记成已加载方案（错位）。
+            string _saOldPath = path_1, _saOldDir = wenjianjia;
+            string _saOldL75 = label75.Text, _saOldL173 = label173.Text;
             SaveFileDialog openFileDialog = new SaveFileDialog();
             openFileDialog.RestoreDirectory = true;
             openFileDialog.Filter = "VP vpp File|*.vpp*";
@@ -10165,18 +10230,30 @@ namespace WindowsFormsApplication1
             }
             else
                 return;
+            // ★R5：ShowDialog 是消息泵——等待期间 PLC 触发的切型可能已启动（且 path_1 刚被改成新文件），
+            //   此处再判一次，绝不在切换在途时序列化 manager1。
+            if (SchemeSwitchInProgressForSave())
+            {
+                // ★R4 修复②：拒绝即回滚对话框期间被改写的共享字段，界面/配置与切换前一致。
+                path_1 = _saOldPath;
+                wenjianjia = _saOldDir;
+                label75.Text = _saOldL75;
+                label173.Text = _saOldL173;
+                _logger.WriteLog("另存为中止：文件框打开期间方案切换启动，未序列化，path_1/界面已回滚为切换前状态");
+                MessageBox.Show("方案切换已开始，另存为已取消。请在切换完成后重新另存。", "提示");
+                return;
+            }
             try
             {
                 // ★G4 修复（2026-09-23）：同"保存"菜单——序列化前排空在途检测，防止与 block.Run 并发损坏方案
                 bool saveNeedResume = !_inspectionLifecycle.IsPaused;
-                if (saveNeedResume)
-                {
-                    _inspectionLifecycle.StopAccepting();
-                    if (!_inspectionLifecycle.WaitForIdle(5000))
-                        _logger.WriteLog("另存为方案：等待在途检测静止超时(5s)，仍继续序列化（有并发损坏风险，建议空闲期保存）");
-                }
+                if (saveNeedResume) _inspectionLifecycle.StopAccepting();
                 try
                 {
+                    // ★R5 修复②（第24轮复审）：超时 throw 移入内层 try——原写法跳过 finally 的 Resume，
+                    //   一次静止等待超时即永久停检（同"保存"处，已一并修正）。
+                    if (saveNeedResume && !_inspectionLifecycle.WaitForIdle(5000))
+                        throw new TimeoutException("另存为中止：等待在途检测静止超时(5s)，检测仍在运行，此时序列化可能写坏方案");
                     SanitizeSchemeImagesForSave();
                     CogSerializer.SaveObjectToFile(manager1, path_1);
                     _config.WriteString("path", "path_1", path_1);
@@ -10195,11 +10272,17 @@ namespace WindowsFormsApplication1
 
         private void 打开ToolStripMenuItem_Click(object sender, EventArgs e)
         {
+            if (ManualSchemeSwitchBlockedIfBusy()) return;   // ★R3：在途切换时拒绝，path_1 不动
             OpenFileDialog openFileDialog = new OpenFileDialog();
             openFileDialog.Filter = "VP vpp File|*.vpp*";
             DialogResult openFileRes = openFileDialog.ShowDialog();
             if (DialogResult.OK == openFileRes)
             {
+                // ★R3 修复②（第24轮复审）：第二道闸——ShowDialog 是消息泵，文件框开着的任意时刻
+                //   PLC 可能已切型启动（qiehuanzhong=1）。原入口闸只挡对话框打开前，返回后不复查：
+                //   path_1 照改 → 末尾 xinghao_qiehuan 被 CAS 拒绝且不回滚 → 下次"保存"把旧方案
+                //   写进用户刚选的文件。与另存为闸2 同法补齐。
+                if (ManualSchemeSwitchBlockedIfBusy()) return;
                 label75.Text = openFileDialog.FileName.Split('\\').Last();
                 label173.Text = openFileDialog.FileName;
                 path_1 = openFileDialog.FileName;
@@ -10266,6 +10349,101 @@ namespace WindowsFormsApplication1
             xinghao_qiehuan("");
         }
         private volatile int qiehuanzhong = 1;
+        /// <summary>
+        /// ★R3 修复（2026-09-23 第24轮）：手动切型入口（menuitem_Click / 打开ToolStripMenuItem_Click）
+        /// 原实现"先改 path_1/label75/label173、再调 xinghao_qiehuan("")"——切换在途时 CAS 拒绝分支只记日志，
+        /// 不会把已被改写的 path_1 还原；此后点"保存"(9007 一带)会把仍存活的旧 manager1 序列化进新 path_1，
+        /// 静默覆盖用户刚选方案的 vpp 文件。现入口统一先判在途：命中即拒绝，path_1/label 一律不动。
+        /// </summary>
+        private bool ManualSchemeSwitchBlockedIfBusy()
+        {
+            if (qiehuanzhong != 0)
+            {
+                _logger.WriteLog("手动切换方案被拒绝：已有切换在途（qiehuanzhong!=0），path_1 保持不变（防被覆盖写坏方案文件）");
+                MessageBox.Show("方案正在切换中，请等待当前切换完成后重试。", "提示");
+                return true;
+            }
+            return false;
+        }
+        /// <summary>
+        /// ★R5 修复（2026-09-23 第24轮）：保存/另存为序列化的是 manager1 对象图——切换在途（Shutdown 窗口、
+        /// manager1 正被替换）或 manager1 尚未 Loaded 时序列化 = 存出损坏/半改写方案，或干脆 NRE。
+        /// </summary>
+        private bool SchemeSwitchInProgressForSave()
+        {
+            return qiehuanzhong != 0 || _switchingScheme || manager1 == null || managerState != ManagerState.Loaded;
+        }
+        /// <summary>
+        /// ★R6 修复（2026-09-23 第24轮）：单路"分流程"覆盖——与启动侧(1362-1415)同语义：
+        /// 读 cameraN/fen → 含 .vpp 则加载 wenjianjia\N\文件 覆盖基块（加载失败回退基块并记日志）
+        /// → 在最终块上重算 Color/output3/biaotou/zidongbaoguang → 刷新本路分流程下拉框。
+        /// 启动侧 tishi 同样只在基块上算（覆盖后不重算），此处保持一致口径。可在后台线程调用，
+        /// 仅"刷新下拉"一步经 SafeBeginInvoke 回 UI。
+        /// </summary>
+        private void ApplySubFlowOverlayOneJob(int slot, Myjob job, ComboBox fenCombo)
+        {
+            if (job == null || job.block == null) return;
+            string baseFen = "";
+            try
+            {
+                baseFen = _config.ReadString("camera" + (slot + 1), "fen", "").Replace("\0", "");
+                if (baseFen.Contains("vpp"))
+                {
+                    CogToolBlock baseBlock = job.block;
+                    try
+                    {
+                        job.block = (CogToolBlock)CogSerializer.LoadObjectFromFile(wenjianjia + "\\" + (slot + 1) + "\\" + baseFen);
+                    }
+                    catch (Exception exFen)
+                    {
+                        job.block = baseBlock;   // 同启动侧 catch：回退基块
+                        _logger.WriteLog("分流程(切换)" + exFen.Message);
+                    }
+                }
+                if (job.block == null) return;
+                if ((job.block.Inputs["Input"]).ValueType.ToString().Contains("8"))
+                    job.Color = false;
+                else
+                    job.Color = true;
+                job.output3 = "空";
+                job.biaotou = "";
+                job.zidongbaoguang = false;
+                for (int i = 0; i < job.block.Outputs.Count; i++)
+                {
+                    string on = job.block.Outputs[i].Name;
+                    if (on.Contains("ji")) job.biaotou += on + ",";
+                    if (on.Contains("buchang")) job.zidongbaoguang = true;
+                    if (on.Contains("Output3")) job.output3 = "有";
+                }
+            }
+            catch (Exception exOv)
+            {
+                _logger.WriteLog("分流程覆盖异常(相机" + (slot + 1) + ")：" + exOv.Message);
+            }
+            // 刷新本路分流程下拉显示（与启动侧 comboBoxN.Text = pppp 同口径），回 UI 线程
+            string show = baseFen;
+            try { SafeBeginInvoke(new Action(() => { try { if (fenCombo != null) fenCombo.Text = show; } catch { } })); } catch { }
+        }
+
+        /// <summary>★R6：切换收尾统一给全部已绑定流程补"分流程"覆盖（与启动加载行为对齐）。</summary>
+        private void ApplySubFlowOverlaysAfterSwitch()
+        {
+            ComboBox[] fenCombos = { comboBox7, comboBox9, comboBox10, comboBox11, comboBox12, comboBox13,
+                                     comboBox14, comboBox15, comboBox42, comboBox46, comboBox50, comboBox54 };
+            for (int i = 0; i < 12; i++)
+            {
+                try
+                {
+                    Myjob j = _jobs.Myjobs[i];
+                    if (j == null || j.job == null || j.block == null) continue;   // 该路未绑定则跳过（与启动一致）
+                    ApplySubFlowOverlayOneJob(i, j, i < fenCombos.Length ? fenCombos[i] : null);
+                }
+                catch (Exception exOne)
+                {
+                    _logger.WriteLog("分流程覆盖异常(相机" + (i + 1) + "，不影响其它路)：" + exOne.Message);
+                }
+            }
+        }
         // ===== 方案切换回执（相机13）：由哪条通讯链路发起 → 随 xinghao_qiehuan/SendSchemeSwitchAck
         //   参数显式传递（★M4：原全局单槽 回执协议号/连接号 在两条连接同时切型时后写覆盖先写，
         //   会丢回执/把回执发到另一条连接；传参后每条切型自带来源，互不覆盖、无残留）=====
@@ -10470,7 +10648,10 @@ namespace WindowsFormsApplication1
                                 managerState = ManagerState.Loading; // ★ 切换方案时重置状态
                                 try
                                 {
-                                    newMgr = (CogJobManager)CogSerializer.LoadObjectFromFile(path_1);
+                                    // ★R4 修复（2026-09-23 第24轮）：原从共享字段 path_1 加载——非模态 Frm2 期间
+                                    //   若 path_1 被并发改写会加载错方案并把错路径写入配置，且失败回退仍拿 oldPathSnapshot，
+                                    //   界面/配置彻底错位。改从不可变闭包参数 a（本次校验通过的目标路径）加载。
+                                    newMgr = (CogJobManager)CogSerializer.LoadObjectFromFile(a);
                                 }
                                 finally
                                 {
@@ -10529,7 +10710,13 @@ namespace WindowsFormsApplication1
                             manager1 = newMgr;
                             try { _jobs.JobManager = manager1; } catch { }
                             managerState = ManagerState.Loaded; // ★ 标记加载成功
-                            try { _config.WriteString("path", "path_1", path_1); }
+                            // ★R4 修复②（第24轮复审）：配置写回与 path_1 钉回必须用不可变目标路径 a——
+                            //   path_1 在加载期间可能已被"另存为/打开"并发改写成别的文件，写 path_1 会记成
+                            //   "加载的是 a、配置记的是 C" 的错位；不钉回则下次保存把新方案写进 C。
+                            path_1 = a;
+                            try { wenjianjia = Path.GetDirectoryName(a); } catch { }
+                            try { this.Invoke(new Action(() => { try { label75.Text = a.Split('\\').Last(); label173.Text = a; } catch { } })); } catch { }
+                            try { _config.WriteString("path", "path_1", a); }
                             catch (Exception exCfg) { _logger.WriteLog("保存方案路径失败：" + exCfg.Message); }
                             UpdateSplashProgress(45, "方案加载完成，正在绑定作业...");
                         }
@@ -11175,6 +11362,11 @@ namespace WindowsFormsApplication1
                             _logger.WriteLog("方案绑定诊断: JobCount=" + _diagJc + " | block: " + _diagBind);
                         }
                         catch { }
+                        // ★R6 修复②（第24轮复审）：接线——ApplySubFlowOverlaysAfterSwitch 上轮只有定义没有调用点，
+                        //   R6"切换与启动行为不一致"实际未修复。12 路绑定已完成（含上面诊断），
+                        //   在恢复相机/发 ACK 之前统一给各已绑定流程补"分流程"覆盖，与启动加载同口径。
+                        try { ApplySubFlowOverlaysAfterSwitch(); }
+                        catch (Exception exSf) { _logger.WriteLog("切换收尾分流程覆盖异常：" + exSf.Message); }
                         listBox2.Visible = true;
                         UpdateSplashProgress(80, "正在恢复相机与参数...");
 
@@ -12255,7 +12447,30 @@ namespace WindowsFormsApplication1
             //   字段 root，GC 回收 thunk → 原生回调打空指针的崩溃窗口。
             _cameraReconnectEnabled = false;
             try { timer2.Enabled = false; } catch { }
-            for (int w = 0; w < 40 && chonglianzhong; w++) Thread.Sleep(50);   // 最多等 2 秒（有界）
+            // ★R2 修复（2026-09-23 第24轮）：原 `for(w<40 && chonglianzhong) Thread.Sleep(50)` 完全不泵 UI 消息，
+            //   在途重连 Task 的 this.Invoke(ApplyCameraUiAfterConnect/按钮态刷新) 永远排不上→Task 卡 Invoke
+            //   进不到 finally→chonglianzhong 恒 true→本循环空等满 2 秒后照样拆设备=拆除与建链并发。
+            //   现改"等待+泵消息"：每 50ms 切片泵一次 DoEvents，让在途 Invoke 得以执行、Task 落地置信号。
+            //   泵会引入重入，故先禁用 bnClose 防连点（bnOpen 重开时会恢复 bnClose.Enabled）。仍保留 2 秒上限。
+            try { bnClose.Enabled = false; } catch { }
+            // ★R2 修复②（第24轮复审）：泵窗口只禁 bnClose 不够——DoEvents 期间用户仍可点 bnOpen 重开相机、
+            //   打开/保存/另存为弹文件框改 path_1、设置菜单发起切型，与拆除等待交错。等待期一并禁用，
+            //   拆除段 finally 统一恢复（防异常残留死入口）。
+            try
+            {
+                bnOpen.Enabled = false;
+                打开ToolStripMenuItem.Enabled = false;
+                保存ToolStripMenuItem.Enabled = false;
+                另存为ToolStripMenuItem.Enabled = false;
+                设置ToolStripMenuItem.Enabled = false;
+            }
+            catch { }
+            for (int w = 0; w < 40 && !_reconnectSettled.Wait(50); w++)
+            {
+                try { System.Windows.Forms.Application.DoEvents(); } catch { }
+            }
+            if (chonglianzhong)
+                _logger.WriteLog("bnClose：等待在途重连 2 秒超时仍未落地（已泵消息，极端卡死时继续拆除，窗口已极小）");
             // ★G2 修复：原 WaitForIdle(2000) 放在 Close/Destroy 循环之后——拆除期间 TryEnter 仍放行新帧，
             //   在途回调与 MV_CC_CloseDevice/DestroyDevice 并发=回调访问已销毁句柄（A2 只保护了 FreeHGlobal，
             //   没保护设备销毁本身）。现先 StopAccepting 关门（新回调直接拒收）→ WaitForIdle 排空在途回调，
@@ -12339,6 +12554,15 @@ namespace WindowsFormsApplication1
                 // ★G2 修复配套 + ★W1：无论拆除段是否抛异常，finally 统一放门——bnOpen 重开相机后回调需能进帧；
                 //   若正在退出（_disposingFlag）回调/检测入口自有判断，放门无副作用。
                 _inspectionLifecycle.Resume();
+                // ★R2 修复②：恢复 bnClose 等待泵窗口期间禁用的入口（与拆除结果无关，finally 必恢复）。
+                try
+                {
+                    打开ToolStripMenuItem.Enabled = true;
+                    保存ToolStripMenuItem.Enabled = true;
+                    另存为ToolStripMenuItem.Enabled = true;
+                    设置ToolStripMenuItem.Enabled = true;
+                }
+                catch { }
             }
 
             //try
@@ -12402,7 +12626,13 @@ namespace WindowsFormsApplication1
             DeviceListAcq();
             m_nFrames = new int[12];
             m_bSaveImg = new bool[12];
-            cbImage = new MyCamera.cbOutputExdelegate(ImageCallBack);
+            // ★R2 修复（2026-09-23 第24轮）：cbImage 是注册给 SDK 的图像回调委托的唯一字段 root。
+            //   仍有相机句柄存活时重赋 = 旧委托失去 rooting，GC 回收 thunk → 原生回调打空指针崩溃窗口。
+            //   正常 bnClose 已把 12 槽全部 Close/Destroy/置 null（Count==0）才走到这里；异常残留则跳过重赋、保留旧委托。
+            if (_cameraCtrl.Count != 0)
+                _logger.WriteLog("ResetMember：仍有 " + _cameraCtrl.Count + " 路相机句柄未释放，跳过 cbImage 重赋(保留旧委托防回调打空)，请排查幽灵相机");
+            else
+                cbImage = new MyCamera.cbOutputExdelegate(ImageCallBack);
             //   m_bTimerFlag = false;
             m_hDisplayHandle = new IntPtr[12];
             m_pDeviceInfo = new MyCamera.MV_CC_DEVICE_INFO[12];
