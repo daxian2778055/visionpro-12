@@ -8799,6 +8799,8 @@ namespace WindowsFormsApplication1
         private void menuitem_Click(object sender, EventArgs e)
         {
             if (ManualSchemeSwitchBlockedIfBusy()) return;   // ★R3：在途切换时拒绝，path_1 不动
+            // ★第24轮复审建议②：改写字段前抓快照，CAS 拒绝分支据此回滚（防闸后后台切型抢跑）
+            string _swOldPath = path_1, _swTarget = sender.ToString();
             label75.Text = sender.ToString().Split('\\').Last();
             label173.Text = sender.ToString();
             // ★修复（2026-09-20）：path_1 必须先更新为本次选中的方案，再取 wenjianjia——
@@ -8862,7 +8864,8 @@ namespace WindowsFormsApplication1
                 s.Close();
             }
             // ★M4：手动切换不产生通讯回执（来源参数默认 0，无全局状态需清零）
-            xinghao_qiehuan("");
+            // ★第24轮复审建议②：附目标+旧路径快照，拒绝时在 xinghao_qiehuan 一处回滚
+            xinghao_qiehuan("", 0, 1, _swTarget, _swOldPath);
         }
         ToolStripMenuItem menuitem;
         private void 设置ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -10273,6 +10276,7 @@ namespace WindowsFormsApplication1
         private void 打开ToolStripMenuItem_Click(object sender, EventArgs e)
         {
             if (ManualSchemeSwitchBlockedIfBusy()) return;   // ★R3：在途切换时拒绝，path_1 不动
+            string _swOldPath = null, _swTarget = null;      // ★第24轮复审建议②：回滚快照（OK 分支赋值）
             OpenFileDialog openFileDialog = new OpenFileDialog();
             openFileDialog.Filter = "VP vpp File|*.vpp*";
             DialogResult openFileRes = openFileDialog.ShowDialog();
@@ -10283,6 +10287,8 @@ namespace WindowsFormsApplication1
                 //   path_1 照改 → 末尾 xinghao_qiehuan 被 CAS 拒绝且不回滚 → 下次"保存"把旧方案
                 //   写进用户刚选的文件。与另存为闸2 同法补齐。
                 if (ManualSchemeSwitchBlockedIfBusy()) return;
+                // ★第24轮复审建议②：改写字段前抓快照，CAS 拒绝分支据此回滚
+                _swOldPath = path_1; _swTarget = openFileDialog.FileName;
                 label75.Text = openFileDialog.FileName.Split('\\').Last();
                 label173.Text = openFileDialog.FileName;
                 path_1 = openFileDialog.FileName;
@@ -10346,7 +10352,8 @@ namespace WindowsFormsApplication1
                 s.Close();
             }
             // ★M4：手动切换不产生通讯回执（来源参数默认 0，无全局状态需清零）
-            xinghao_qiehuan("");
+            // ★第24轮复审建议②：附目标+旧路径快照，拒绝时在 xinghao_qiehuan 一处回滚
+            xinghao_qiehuan("", 0, 1, _swTarget, _swOldPath);
         }
         private volatile int qiehuanzhong = 1;
         /// <summary>
@@ -10521,7 +10528,10 @@ namespace WindowsFormsApplication1
             }
         }
 
-        private void xinghao_qiehuan(string a, int ackProto = 0, int ackLinkId = 1)
+        /// <param name="manualTarget">★（第24轮复审建议②）手动预改写路径的入口（menuitem_Click/打开菜单）传入本次目标；
+        /// CAS 拒绝分支据此判断"字段仍停在本次改写上"才回滚。PLC/frm3 路径不预改字段，保持默认 null。</param>
+        /// <param name="manualOldPath">同上入口改写字段前抓的旧 path_1 快照，回滚目标。</param>
+        private void xinghao_qiehuan(string a, int ackProto = 0, int ackLinkId = 1, string manualTarget = null, string manualOldPath = null)
         {
             if (Interlocked.CompareExchange(ref qiehuanzhong, 1, 0) == 0)
             {
@@ -11580,6 +11590,19 @@ namespace WindowsFormsApplication1
             {
                 // ★ 已在途：后到的切方案请求被原子门控拒绝，记录日志便于排查"PLC 发了切型但没反应"
                 _logger.WriteLog("切方案请求被忽略：已有切换在途：" + a);
+                // ★第24轮复审建议②（R3 方案B收口）：三道入口闸已把"入口闸→此处 CAS"窗口压到无消息泵的
+                //   文件 IO 级，但 PLC 切型由后台线程 CAS，理论窗口仍在——手动入口（menuitem_Click/打开）
+                //   已提前改写 path_1/label/wenjianjia，被拒后悬空→下次保存把在途切换完成的方案写进用户刚选的文件。
+                //   仅当 path_1 仍等于本次入口刚写入的目标才回滚（在途切换前言若后写则不动，绝不踩赢家的值）。
+                if (!string.IsNullOrEmpty(manualTarget) && !string.IsNullOrEmpty(manualOldPath)
+                    && string.Equals(path_1, manualTarget, StringComparison.OrdinalIgnoreCase))
+                {
+                    path_1 = manualOldPath;
+                    try { wenjianjia = Path.GetDirectoryName(path_1); } catch { }
+                    string _rb = manualOldPath;
+                    try { SafeBeginInvoke(new Action(() => { try { label75.Text = _rb.Split('\\').Last(); label173.Text = _rb; } catch { } })); } catch { }
+                    _logger.WriteLog("手动切方案被在途切换拒绝，path_1/界面已回滚为入口前方案：" + _rb);
+                }
             }
         }
         private void 配置工具ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -12555,8 +12578,11 @@ namespace WindowsFormsApplication1
                 //   若正在退出（_disposingFlag）回调/检测入口自有判断，放门无副作用。
                 _inspectionLifecycle.Resume();
                 // ★R2 修复②：恢复 bnClose 等待泵窗口期间禁用的入口（与拆除结果无关，finally 必恢复）。
+                //   bnOpen 也必须在 finally——原恢复只在外层正常路径（12580 一带），拆除段抛异常
+                //   （W1 认定的可幸存场景）时该块不执行，bnOpen 永久禁用而菜单已恢复=不一致。
                 try
                 {
+                    bnOpen.Enabled = true;
                     打开ToolStripMenuItem.Enabled = true;
                     保存ToolStripMenuItem.Enabled = true;
                     另存为ToolStripMenuItem.Enabled = true;
