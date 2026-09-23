@@ -12,6 +12,9 @@ namespace WindowsFormsApplication1
         // 否则并发读写同一文件会抛出 IOException 且计数互相覆盖。
         private readonly object _lock = new object();
 
+        // ★第26轮#20：最近一次已核对过的"日文件 + 方案列头"组合，避免每条记录都去读文件头
+        private string _lastDayHeaderKey = "";
+
         /*按照年份创建文件夹*/
         public void CreateDirectoryCsvPath(string path22)
         {
@@ -39,6 +42,8 @@ namespace WindowsFormsApplication1
         /*按照月份创建csv*/
         public void CreateCsvPath(string path22, string shuju)
         {
+            lock (_lock)   // ★第26轮#20：与 WriteDate/WriteDate1 同锁串行（12 路检测线程都会进来）
+            {
             try
             {
                 string strYear = DateTime.Now.Year.ToString();
@@ -63,11 +68,44 @@ namespace WindowsFormsApplication1
                         sw2.BaseStream.Seek(0, SeekOrigin.Begin);
                         sw2.WriteLine("序号,日期," + shuju + "结果");
                     }
+                    _lastDayHeaderKey = strCsvPath2 + "|" + shuju;
+                }
+                else
+                {
+                    // ★第26轮#20：原实现只在文件不存在时写表头。当天切了方案（输出列名/列数不同）
+                    //   表头不会更新，此后一整天写进去的数据列与表头永久错位。
+                    //   现按"文件+列头"做一次性核对：不一致就在末尾追加一行新表头当分界
+                    //   （不重写既有数据），并记日志。核对每个组合只做一次，不给每条记录增加读盘。
+                    string wantKey = strCsvPath2 + "|" + shuju;
+                    if (wantKey != _lastDayHeaderKey)
+                    {
+                        _lastDayHeaderKey = wantKey;
+                        try
+                        {
+                            string existing;
+                            using (var rd = new StreamReader(strCsvPath2, Encoding.Default)) existing = rd.ReadLine() ?? "";
+                            string want = "序号,日期," + shuju + "结果";
+                            if (existing.Trim() != want.Trim())
+                            {
+                                using (var ap = new StreamWriter(File.Open(strCsvPath2, FileMode.Append), Encoding.Default))
+                                {
+                                    ap.WriteLine();
+                                    ap.WriteLine(want);
+                                }
+                                Errorwrite.WriteLog("每日统计 CSV 列头与当前方案不一致，已在文件末尾追加新表头作为分界: " + strCsvPath2);
+                            }
+                        }
+                        catch (Exception exHead)
+                        {
+                            Errorwrite.WriteLog("每日统计 CSV 列头核对失败（忽略，不影响写数据）!" + exHead.Message);
+                        }
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Errorwrite.WriteLog("日志文件生成出错!" + ex.Message);
+            }
             }
         }
 

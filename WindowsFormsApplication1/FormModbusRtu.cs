@@ -229,6 +229,7 @@ namespace WindowsFormsApplication1
         public int PollInterval { get { return (int)lunxun_time; } }
         public bool IsPollEnabled { get { return fins_lunxunen; } }
         public bool IsCommEnabled { get { return fins_en; } }
+        public bool IsReconnecting { get { return System.Threading.Volatile.Read(ref _reconnecting) != 0; } }   // ★#32：把真实重连状态暴露给 per-link 轮询门控
         public int AddressBase { get { return (int)address_qishi; } }
         public Dictionary<string, string[]> FinsBlocks { get { return fins_dic; } }
         public Dictionary<int, string[]> CameraBindings { get { return camera_dic; } }
@@ -1293,7 +1294,7 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void SetParamControlsEnabled(bool enable)
         {
-            foreach (var name in new[] { "textBox1", "textBox2", "textBox15", "textBox16", "comboBox1", "comboBox2", "numericUpDown1", "numericUpDown2", "numericUpDown3" })
+            foreach (var name in new[] { "textBox1", "textBox2", "textBox15", "textBox16", "comboBox1", "comboBox2", "comboBox3", "checkBox1", "numericUpDown1", "numericUpDown2", "numericUpDown3" })
             {
                 var c = this.Controls.Find(name, true);
                 if (c.Length > 0) c[0].Enabled = enable;
@@ -3490,6 +3491,11 @@ namespace WindowsFormsApplication1
                     {
                         lock (_ioSync)   // ★与成功/失败回执的“设[4][5]+写出”互斥：防两组槽值交叠后发错通道
                         {
+                            // ★第26轮#34：门控原先只在 UI 线程 Tick 判一次——入队到此刻之间操作员可取消
+                            //   心跳勾、点断开、或自动重连已启动，残余任务仍会把心跳值写进反馈槽并打向
+                            //   已关串口（异常虽被吞，但反馈通道已被污染一帧）。持锁后按同一组条件复查。
+                            if (!_heartbeatEnabled || !fins_en || _reconnecting != 0 || !chushihua
+                                || _rtuLink == null || !_rtuLink.IsConnected || _rtuLink.Client == null) return;
                             camera_dic[13][4] = val;
                             camera_dic[13][5] = chan;
                             xie(val);

@@ -81,6 +81,9 @@ namespace WindowsFormsApplication1
         MyCamera.cbExceptiondelegate cbException;
         MyCamera.MV_CC_DEVICE_INFO_LIST m_pDeviceList = new MyCamera.MV_CC_DEVICE_INFO_LIST();
         MyCamera.MV_CC_DEVICE_INFO[] m_pDeviceInfo = new MyCamera.MV_CC_DEVICE_INFO[12];
+        // ★第26轮建议1：m_pDeviceInfo 按 deviceArrayIndex（枚举序号）写入，而 GetLostFrame 按相机槽位读
+        //   ——槽位稀疏/乱序时取到别的设备的传输层类型，判定走错分支、丢帧恒 0。此数组严格按槽位记。
+        private readonly UInt32[] m_slotTLayerType = new UInt32[12];
         private readonly CameraController _cameraCtrl = AppHost.Services.Resolve<CameraController>();
         [System.Runtime.ExceptionServices.HandleProcessCorruptedStateExceptions]
         [DllImport("kernel32.dll", EntryPoint = "CopyMemory", SetLastError = false)]
@@ -103,31 +106,24 @@ namespace WindowsFormsApplication1
         public UInt32[] m_nSaveImageBufSize = new UInt32[12] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
         public string[] camera_name = new string[12] { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12" };
         public IntPtr[] m_pSaveImageBuf = new IntPtr[12] { IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero };
-        private Object[] m_BufForSaveImageLock = new Object[12];
+        // ★第26轮#22：每路像素转换缓冲的专用锁。随字段初始化一次填满并 readonly——
+        //   锁对象终身稳定（原实现靠启动流程循环填充，理论上存在"未填即 lock(null)"与整体重赋值的风险）。
+        private readonly object[] m_BufForSaveImageLock = CreateBufLocks();
+        private static object[] CreateBufLocks()
+        {
+            var a = new object[12];
+            for (int i = 0; i < 12; i++) a[i] = new object();
+            return a;
+        }
         // 以下死字段已删除（全工程仅声明、无任何读写；相机对象由 CameraController 统一持有）：
         //   private MyCamera mycamera, mycamera1..mycamera12;
         MyCamera.MV_CC_DEVICE_INFO[] device1 = new MyCamera.MV_CC_DEVICE_INFO[12];
         int[] m_nFrames = new int[12];      // ch:帧数 | en:Frame Number
         // ch:用于从驱动获取图像的缓存 | en:Buffer for getting image from driver
         UInt32[] m_nBufSizeForDriver = new uint[12];
-        IntPtr m_BufForDriver1;
-
-        IntPtr m_BufForDriver2;
-
-        IntPtr m_BufForDriver3;
-
-        IntPtr m_BufForDriver4;
-
-        IntPtr m_BufForDriver5;
-
-        IntPtr m_BufForDriver6;
-
-        IntPtr m_BufForDriver7;
-        IntPtr m_BufForDriver8;
-        IntPtr m_BufForDriver9;
-        IntPtr m_BufForDriver10;
-        IntPtr m_BufForDriver11;
-        IntPtr m_BufForDriver12;
+        // ★第26轮#23：原 m_BufForDriver1..12（每路 Marshal.AllocHGlobal(PayloadSize)）已删除——
+        //   取帧走 SDK 回调 / GetImageBuffer 路径，这 12 个指针分配后全仓从未被读用，
+        //   12 路 × 5~25MB 纯占非托管内存，还要配套 FreeDriverBuffer。m_nBufSizeForDriver 有读取方，保留。
         // 以下死字段已删除（全工程仅声明、零使用）：private static Object BufForDriverLock1..12;
         bool[] m_bSaveImg = new bool[12];    // ch:保存图片标志位 | en:Save Image Flag Bit
         IntPtr[] m_hDisplayHandle = new IntPtr[12];
@@ -294,10 +290,6 @@ namespace WindowsFormsApplication1
             cbException = new MyCamera.cbExceptiondelegate(ExceptionCallBack);
             for (int i = 0; i < 12; ++i)
             {
-                m_BufForSaveImageLock[i] = new Object();
-            }
-            for (int i = 0; i < 12; ++i)
-            {
                 m_nBufSizeForDriver[i] = 0;
             }
             for (int i = 0; i < 12; ++i)
@@ -329,7 +321,9 @@ namespace WindowsFormsApplication1
 
         private TextBox[] tbExposure;
         public int qqqq;
-        int item_sum;
+        // ★第26轮#18/#19：动态"方案历史"菜单项统一打此 Tag，清理时按 Tag 精确删除。
+        //   取代原 item_sum 下标方案（该字段仅在启动装载段成功执行时赋值，条件又恒 false 从不裁剪）。
+        private const string SchemeHistoryMenuTag = "scheme_history";
         CogJobManager manager1;
         CogToolGroup group_1;
         CogToolBlock block_1;
@@ -935,40 +929,31 @@ namespace WindowsFormsApplication1
                 {
                 this.Invoke(new Action(() =>
                 {
-                    item_sum = this.设置ToolStripMenuItem.DropDownItems.Count;
+                    // ★第26轮#18/#19：原实现用字段 item_sum 记下"静态项个数"，再靠
+                    //   `if (i > item_sum) ... RemoveAt(item_sum)` 裁剪动态历史项——但 item_sum 就是
+                    //   本行取到的当前 Count，条件恒 false，这段裁剪从未生效；而 DropDownOpening
+                    //   复用同一个 item_sum，本段一旦被跳过（句柄未创建）item_sum 恒 0，
+                    //   那边就退化成 RemoveAt(0) 反复删除，把静态菜单项一项项删光。
+                    //   现改为给动态历史项打 Tag，清理时按 Tag 精确删除，彻底摆脱下标。
                     try
                     {
-                        int i = this.设置ToolStripMenuItem.DropDownItems.Count;
-                        if (i > item_sum)
-                        {
-                            for (int j = 0; j < i; j++)
-                            {
-                                if (j >= item_sum)
-                                {
-                                    this.设置ToolStripMenuItem.DropDownItems.RemoveAt(item_sum);
-                                }
-                            }
-                        }
                         sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
-                        i = item_sum;
+                        int i = this.设置ToolStripMenuItem.DropDownItems.Count;
                         while (sr.Peek() >= 0)
                         {
-                            menuitem = new ToolStripMenuItem(sr.ReadLine());
-                            this.设置ToolStripMenuItem.DropDownItems.Insert(i, menuitem);
+                            string line = sr.ReadLine();
+                            if (string.IsNullOrEmpty(line)) continue;
+                            ToolStripMenuItem history = new ToolStripMenuItem(line);
+                            history.Tag = SchemeHistoryMenuTag;   // ★第26轮#18/#19：标记为动态历史项
+                            this.设置ToolStripMenuItem.DropDownItems.Insert(i, history);
                             i++;
-                            menuitem.Click += new EventHandler(menuitem_Click);
+                            history.Click += new EventHandler(menuitem_Click);
                         }
                         sr.Dispose();
-                        sr.Close();
                     }
                     catch
                     {
-                        try
-                        {
-                            sr.Dispose();
-                            sr.Close();
-                        }
-                        catch { }
+                        try { if (sr != null) sr.Dispose(); } catch { }
                     }
                     sr = null;
                 }));
@@ -2911,14 +2896,25 @@ namespace WindowsFormsApplication1
         {
             while (!_disposingFlag)
             {
-                int now = 0;
-                int forword = _jobs.myjob1.sum;
-                // 使用缓存值避免在后台线程直接读 UI 控件
-                decimal sleepSeconds = _cachedNumericUpDown6Value ?? 1;
-                Thread.Sleep(decimal.ToInt32(sleepSeconds) * 1000 - 5);
-                if (_disposingFlag) break;
-                now = _jobs.myjob1.sum;
-                zhen = ((now - forword) * 1.00F / decimal.ToInt32(sleepSeconds)).ToString();
+                // ★第26轮建议11：本线程原先裸跑——间隔参数填 0 时 Sleep(0*1000-5)=Sleep(-5) 直接抛，
+                //   异常沿线程体上抛让线程静默死亡，帧率显示从此永久冻结（只能重启）。整轮加守护 + 周期钳位。
+                decimal sleepSeconds = _cachedNumericUpDown6Value ?? 1;   // 使用缓存值避免在后台线程直接读 UI 控件
+                int cycleSec = decimal.ToInt32(sleepSeconds);
+                if (cycleSec < 1) cycleSec = 1;                           // 兼作分母，0 会算出 Infinity
+                int cycleMs = cycleSec * 1000 - 5;
+                if (cycleMs < 1) cycleMs = 1;
+                try
+                {
+                    int forword = _jobs.myjob1.sum;
+                    Thread.Sleep(cycleMs);
+                    if (_disposingFlag) break;
+                    int now = _jobs.myjob1.sum;
+                    zhen = ((now - forword) * 1.00F / cycleSec).ToString();
+                }
+                catch
+                {
+                    try { Thread.Sleep(1000); } catch { }   // 意外时退避，绝不让本线程退出，也不热自旋
+                }
             }
 
         }
@@ -4210,6 +4206,14 @@ namespace WindowsFormsApplication1
                 try { j.calib = null; } catch { }
                 try { j.Cogbmp = null; } catch { }
             }
+            // ★第26轮#7：切换方案路径把 12 路的 OwnedIndependent 全赋给同一个 myIndependentJob
+            //   （只有启动路径才每路一个字段）——myIndependentJob2..12 因此一直钉住上一方案
+            //   已 Shutdown 的 CogJobIndependent，RCW 回收不掉、字段值也与当前方案不符。
+            //   这 13 个字段仅是"取到就地调一次 RealTimeQueueFlush"的临时句柄（全仓无其它读取方），
+            //   随旧方案一并清空即可。
+            myIndependentJob = myIndependentJob2 = myIndependentJob3 = myIndependentJob4 =
+                myIndependentJob5 = myIndependentJob6 = myIndependentJob7 = myIndependentJob8 =
+                myIndependentJob9 = myIndependentJob10 = myIndependentJob11 = myIndependentJob12 = null;
             try
             {
                 GC.Collect();
@@ -4240,7 +4244,12 @@ namespace WindowsFormsApplication1
                     // 帧清理原保护 _pendingFrame（死字段已删），锁在此保持对称
                 }
             }
-            return _inspectionLifecycle.WaitForIdle(10000);
+            bool idle = _inspectionLifecycle.WaitForIdle(10000);
+            // ★第26轮建议3：停线程不等于清队列——残留帧会撑过本次停止，重启检测后被旧帧消费，
+            //   而其携带的 CommTriggerSource 早已失效（回执发往旧连接）。切方案路径为此显式 Drain，
+            //   停止路径同口径补上。放在 WaitForIdle 之后，此刻队列无消费者，Dispose 图像安全。
+            DrainPendingFrames();
+            return idle;
         }
 
         private sealed class InspectionFrame
@@ -4265,6 +4274,7 @@ namespace WindowsFormsApplication1
             while (!_inspectStop && !_disposingFlag)
             {
                 InspectionFrame frame = null;
+                bool tokenHeld = false;   // ★第26轮#6：本帧是否已占住该路 recordBusy（finally 须释放）
                 lock (_inspectLocks[slot])
                 {
                     if (_frameQueue[slot] != null && _frameQueue[slot].Count > 0)
@@ -4279,10 +4289,29 @@ namespace WindowsFormsApplication1
                 try
                 {
                     if (_switchingScheme || _disposingFlag) continue;
+                    var job = _jobs.Myjobs[slot];
+                    // ★第26轮#6：必须先占住该路 recordBusy 再换帧位图。原实现把
+                    //   ReleaseFrameBitmap(slot) / bmp[slot] = frame.Image 写在 getrecord 之前、
+                    //   令牌之外——UI 手动回图/触发进来的另一个 getrecord 可能正持令牌读 bmp[camIdx]，
+                    //   此刻 Dispose + 覆盖 = use-after-dispose（随机崩溃 / 检测读到半死位图）。
+                    if (job != null)
+                        tokenHeld = System.Threading.Interlocked.CompareExchange(ref job.recordBusy, 1, 0) == 0;
+                    if (!tokenHeld)
+                    {
+                        if (job != null) job.trriger = 0;   // ★R9 同口径：未消费即回滚回图标志，防粘滞
+                        int now = Environment.TickCount;
+                        int tslot = (slot >= 0 && slot < 12) ? slot : 12;
+                        if (now - _lastWorkerBusyLogTick[tslot] > 5000)
+                        {
+                            _lastWorkerBusyLogTick[tslot] = now;
+                            try { _logger.WriteLog("InspectWorker：相机" + (slot + 1) + "流程占用中（回图/检测未结束），本帧丢弃"); } catch { }
+                        }
+                        continue;   // frame.Image 由下方 finally 释放
+                    }
                     ReleaseFrameBitmap(slot);
                     bmp[slot] = frame.Image;
                     var payload = frame.Trigger != null ? frame.Trigger.Payload : default(System.Collections.Generic.KeyValuePair<string, string>);
-                    getrecord(_jobs.Myjobs[slot], payload, frame.Trigger?.Source, frame.Image == null);
+                    getrecord(job, payload, frame.Trigger?.Source, frame.Image == null, true);
                 }
                 catch (Exception ex)
                 {
@@ -4290,6 +4319,11 @@ namespace WindowsFormsApplication1
                 }
                 finally
                 {
+                    if (tokenHeld)
+                    {
+                        tokenHeld = false;
+                        try { _jobs.Myjobs[slot].recordBusy = 0; } catch { }
+                    }
                     if (bmp[slot] == frame.Image) ReleaseFrameBitmap(slot);
                     else if (frame.Image != null) frame.Image.Dispose();
                 }
@@ -4337,6 +4371,9 @@ namespace WindowsFormsApplication1
             try { _inspectSignal[slot].Set(); } catch { }
         }
 
+        // ★第26轮#22 调用约定：本方法会 FreeHGlobal+AllocHGlobal 同一块共享转换缓冲，
+        //   调用方必须先持有 m_BufForSaveImageLock[camIndex]，并在"往该缓冲转换 + 从该缓冲复制出图"
+        //   全部完成后才释放该锁（释放路径同样持此锁），否则存在 use-after-free。
         private void EnsureConvertBuffer(int camIndex, uint needSize)
         {
             if (camIndex < 0 || camIndex >= 12 || needSize == 0) return;
@@ -4449,20 +4486,23 @@ namespace WindowsFormsApplication1
         /// ★ 2026-09-06（②参数错位修复）：增加 payload 参数，将通讯触发时刻的 inputKey/selection 快照
         /// 在检测前写入 block 输入，避免多触发连续到达时共享 block.Inputs 被覆盖。
         /// </summary>
-        private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc = null, bool acquisitionFailed = false)
+        private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc = null, bool acquisitionFailed = false, bool tokenHeldByCaller = false)
         {
             // ★G1 修复：每槽 recordBusy CAS 互斥——UI 手动回图(~24处)与检测线程都汇流到本方法→block.Run，
             //   _inspectionLifecycle.TryEnter 只是暂停门+计数（允许多个并发进入），挡不住同 block 双线程 Run。
             //   占用中则丢弃本次：通讯触发帧由 PLC 超时判 NG（既有约定），手动回图提示后重点即可。
+            // ★第26轮#6：tokenHeldByCaller=true 表示调用方（InspectWorker）已占住本路令牌并在自己的
+            //   finally 里释放——本方法不再抢/放，"位图换帧"因此得以落在令牌保护范围内。
             bool busyClaimed = false;
-            if (myjob != null)
+            if (myjob != null && !tokenHeldByCaller)
                 busyClaimed = System.Threading.Interlocked.CompareExchange(ref myjob.recordBusy, 1, 0) == 0;
-            if (myjob != null && !busyClaimed)
+            if (myjob != null && !busyClaimed && !tokenHeldByCaller)
             {
                 int now = Environment.TickCount;
-                if (now - _lastRecordBusyLogTick > 5000)
+                int tslot = BusyLogSlot(myjob);
+                if (now - _lastRecordBusyLogTick[tslot] > 5000)
                 {
-                    _lastRecordBusyLogTick = now;
+                    _lastRecordBusyLogTick[tslot] = now;
                     try { _logger.WriteLog("getrecord：相机流程(" + (myjob.path_number ?? "") + ")忙（检测/回图占用中），本次调用丢弃"); } catch { }
                 }
                 // ★R9（第25轮）：未消费的提前返回必须回滚回图标志——trriger 粘滞 1 时，回图按钮的
@@ -4491,12 +4531,28 @@ namespace WindowsFormsApplication1
             finally
             {
                 if (busyClaimed) myjob.recordBusy = 0;
+                // ★第26轮建议9：回图标志复位收口于此——本轮无论走通还是异常逃逸，trriger 都不再残留 1。
+                //   原先只在 GetRecordCore 正常路径深处清一次，异常时粘滞 → 回图按钮的 `if (trriger == 0)`
+                //   门槛永久短路该路后续回图（与 R9 同一失效模式）。
+                if (myjob != null) myjob.trriger = 0;
             }
         }
-        private int _lastRecordBusyLogTick;
+        // ★第26轮建议10：限流时戳按路分槽。原先三路各只有一个共享字段，12 条相机轮流通用——
+        //   任一路频繁占用就会替其它路"吃掉"这 5 秒窗口，最需要看日志的那路反而一声不响。
+        //   末槽(12)给 path_number 解析不出来的道路。
+        private readonly int[] _lastRecordBusyLogTick = new int[13];
+        private readonly int[] _lastWorkerBusyLogTick = new int[13];   // ★第26轮#6：InspectWorker 丢帧限流独立节流，不与回图侧互相压制
+        private readonly int[] _lastReplaySkipLogTick = new int[13];
+        private int BusyLogSlot(Myjob job)
+        {
+            int slot = ParsePathNumberIndex(job);
+            return slot >= 0 ? slot : 12;
+        }
 
         // ★手动回图位图泄漏修复：myjob.img 只在使用后(getrecord 消费)或本次覆盖时释放。
-        //   注意不能在 getrecord 提前返回(忙/暂停)时释放——trriger==1 时 timer 会重试 getrecord，img 必须存活到真正消费。
+        //   ★第25轮 R9 更正（原注释失实）：timer7 的 Tick 只在 trriger==0 时翻页选择项，不会重发 getrecord，
+        //   所以"提前返回时 img 必须存活到重试"这一前提并不成立；三条未消费提前返回已改为回滚 trriger，
+        //   img 保留到下次 SetReplayImg 覆盖时释放即可。
         //   仅在选择新图覆盖旧图这一刻 Dispose 旧图是安全的(回图操作限定 yunxing==false，无并发消费者)。
         // ★W4 修复（2026-09-23 第23轮）：上面的"无并发消费者"前提有漏洞——yunxing 刚翻真的瞬间，
         //   最后一圈 yunxing==false 时排队的 getrecord 可能仍持 recordBusy 在跑，GetRecordCore 正在读旧 img，
@@ -4508,9 +4564,10 @@ namespace WindowsFormsApplication1
             if (System.Threading.Interlocked.CompareExchange(ref job.recordBusy, 1, 0) != 0)
             {
                 int now = Environment.TickCount;
-                if (now - _lastReplaySkipLogTick > 5000)
+                int tslot = BusyLogSlot(job);
+                if (now - _lastReplaySkipLogTick[tslot] > 5000)
                 {
-                    _lastReplaySkipLogTick = now;
+                    _lastReplaySkipLogTick[tslot] = now;
                     try { _logger.WriteLog("回图跳过：相机流程(" + (job.path_number ?? "") + ")仍在执行中，稍后再点一次回图即可: " + filePath); } catch { }
                 }
                 return;
@@ -4523,7 +4580,6 @@ namespace WindowsFormsApplication1
             }
             finally { job.recordBusy = 0; }
         }
-        private int _lastReplaySkipLogTick;
 
         private void GetRecordCore(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc, bool acquisitionFailed)
         {
@@ -4956,7 +5012,8 @@ namespace WindowsFormsApplication1
                                 temptime = DateTime.Now.ToLongTimeString().ToString();
                             }
                             #region 总数计算
-                            myjob.trriger = 0;
+                            // ★第26轮建议9：本处的 myjob.trriger = 0 已上收到 getrecord 的最外层 finally
+                            //   （核心流程任何异常逃逸都不再把回图标志粘在 1）。
                             Interlocked.Increment(ref myjob.sum);
                             #endregion
                             // P2-1 fix: oksum/NG count are critical stats, not queueable (queue drop = miscount).
@@ -5018,7 +5075,10 @@ namespace WindowsFormsApplication1
                                         }
                                     }
                                 }
-                                myjob.rate = myjob.oksum * 1.000f / myjob.sum;
+                                // ★第26轮#29：float 除零不抛异常而是得 NaN——与"清零"按钮并发时
+                                //   sum 可能刚被清成 0，合格率会显示成 "合格率:NaN" 并一直挂到下一帧。
+                                int _sumSnap = Volatile.Read(ref myjob.sum);
+                                myjob.rate = _sumSnap > 0 ? myjob.oksum * 1.000f / _sumSnap : 0f;
                             }
                             catch (Exception ex)
                             {
@@ -5310,6 +5370,14 @@ namespace WindowsFormsApplication1
 
         public int zhuanhuan = 0;
 
+        // ★第26轮#26：BeginInvoke 背压标志。zhuanhuan 只由后台线程自己翻转，与委托是否已在 UI
+        //   线程执行完无关——UI 一旦繁忙（大记录渲染、模态弹窗、磁盘等待），每 35ms 就再排一个
+        //   委托，消息队列无界增长（内存持续上涨 + 界面越卡越深的雪崩）。
+        //   现按相位各挂一个"在飞"标志：委托体内 finally 复位，未复位前本相位的刷新直接跳过
+        //   （跳帧而非排队；显示的本来就是瞬时统计值，跳帧无副作用）。
+        private int _uiStatInFlight;
+        private int _uiLabelInFlight;
+
         #endregion
         #endregion
         #region 界面监控与统计
@@ -5411,11 +5479,14 @@ namespace WindowsFormsApplication1
                 if (zhuanhuan == 0)
                 {
                     zhuanhuan = 1;
-                    if (tongji == 1)
+                    if (tongji == 1 && Interlocked.CompareExchange(ref _uiStatInFlight, 1, 0) == 0)
                     {
 
-                        SafeBeginInvoke(() =>
+                        bool queuedStat = TryBeginInvoke(() =>
                         {
+                            // ★#26 第一条语句即复位：本委托已被 UI 线程取走执行，允许排下一帧。
+                            //   最坏情况队列里只有 2 项（1 在执行 + 1 在等），不再无界增长。
+                            Volatile.Write(ref _uiStatInFlight, 0);
                             if (manager1 == null) return;
                             for (int _i = 0; _i < 12; _i++)
                             {
@@ -5429,17 +5500,24 @@ namespace WindowsFormsApplication1
                                 }
                             }
                         });
+                        if (!queuedStat) Volatile.Write(ref _uiStatInFlight, 0);   // 未能入队（关窗/句柄已毁）：不遗留占用
                     }
                 }
                 else
                 {
                     zhuanhuan = 0;
 
-                    SafeBeginInvoke(() =>
+                    if (Interlocked.CompareExchange(ref _uiLabelInFlight, 1, 0) == 0)
                     {
+                    bool queuedLabel = TryBeginInvoke(() =>
+                    {
+                        // ★#26 同上一相位：取走即复位，最坏 2 项在队，不再每 35ms 无界排队
+                        Volatile.Write(ref _uiLabelInFlight, 0);
                         if (tongji == 1)
                         {
-                            if (_jobs.myjob1.shijianEn && m_nCanOpenDeviceNum > 0)
+                            // ★第26轮#5：各路"是否已开相机"的守卫原先写成 m_nCanOpenDeviceNum > N —— 该字段是
+                            //   每次开设备 ++ 的累计数（反复开关会虚高、且中间槽位掉线不体现），改成按槽位判定。
+                            if (_jobs.myjob1.shijianEn && IsCameraSlotOpen(0))
                             {
                                 label153.Text = _jobs.myjob1.outputok2.ToString();
                                 // label71.Text = _jobs.myjob1.outputok.ToString();
@@ -5447,67 +5525,67 @@ namespace WindowsFormsApplication1
                                 label86.Text = _lostFrameCache[0];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label134.Text = (m_nFrames[0] - _jobs.myjob1.sum).ToString();
                             }
-                            if (_jobs.myjob2.shijianEn && m_nCanOpenDeviceNum > 1)
+                            if (_jobs.myjob2.shijianEn && IsCameraSlotOpen(1))
                             {
                                 label62.Text = _jobs.myjob2.address;
                                 label52.Text = _lostFrameCache[1];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label49.Text = (m_nFrames[1] - _jobs.myjob2.sum).ToString();
                             }
-                            if (_jobs.myjob3.shijianEn && m_nCanOpenDeviceNum > 2)
+                            if (_jobs.myjob3.shijianEn && IsCameraSlotOpen(2))
                             {
                                 label23.Text = _jobs.myjob3.address;
                                 label53.Text = _lostFrameCache[2];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label50.Text = (m_nFrames[2] - _jobs.myjob3.sum).ToString();
                             }
-                            if (_jobs.myjob4.shijianEn && m_nCanOpenDeviceNum > 3)
+                            if (_jobs.myjob4.shijianEn && IsCameraSlotOpen(3))
                             {
                                 label16.Text = _jobs.myjob4.address;
                                 label54.Text = _lostFrameCache[3];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label51.Text = (m_nFrames[3] - _jobs.myjob4.sum).ToString();
                             }
-                            if (_jobs.myjob5.shijianEn && m_nCanOpenDeviceNum > 4)
+                            if (_jobs.myjob5.shijianEn && IsCameraSlotOpen(4))
                             {
                                 label93.Text = _jobs.myjob5.address;
                                 label90.Text = _lostFrameCache[4];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label135.Text = (m_nFrames[4] - _jobs.myjob5.sum).ToString();
                             }
-                            if (_jobs.myjob6.shijianEn && m_nCanOpenDeviceNum > 5)
+                            if (_jobs.myjob6.shijianEn && IsCameraSlotOpen(5))
                             {
                                 label103.Text = _jobs.myjob6.address;
                                 label100.Text = _lostFrameCache[5];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label136.Text = (m_nFrames[5] - _jobs.myjob6.sum).ToString();
                             }
-                            if (_jobs.myjob7.shijianEn && m_nCanOpenDeviceNum > 6)
+                            if (_jobs.myjob7.shijianEn && IsCameraSlotOpen(6))
                             {
                                 label114.Text = _jobs.myjob7.address;
                                 label110.Text = _lostFrameCache[6];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label137.Text = (m_nFrames[6] - _jobs.myjob7.sum).ToString();
                             }
-                            if (_jobs.myjob8.shijianEn && m_nCanOpenDeviceNum > 7)
+                            if (_jobs.myjob8.shijianEn && IsCameraSlotOpen(7))
                             {
                                 label124.Text = _jobs.myjob8.address;
                                 label121.Text = _lostFrameCache[7];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label138.Text = (m_nFrames[7] - _jobs.myjob8.sum).ToString();
                             }
-                            if (_jobs.myjob9.shijianEn && m_nCanOpenDeviceNum > 8)
+                            if (_jobs.myjob9.shijianEn && IsCameraSlotOpen(8))
                             {
                                 label235.Text = _jobs.myjob9.address;
                                 label236.Text = _lostFrameCache[8];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label237.Text = (m_nFrames[8] - _jobs.myjob9.sum).ToString();
                             }
-                            if (_jobs.myjob10.shijianEn && m_nCanOpenDeviceNum > 9)
+                            if (_jobs.myjob10.shijianEn && IsCameraSlotOpen(9))
                             {
                                 label241.Text = _jobs.myjob10.address;
                                 label242.Text = _lostFrameCache[9];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label243.Text = (m_nFrames[9] - _jobs.myjob10.sum).ToString();
                             }
-                            if (_jobs.myjob11.shijianEn && m_nCanOpenDeviceNum > 10)
+                            if (_jobs.myjob11.shijianEn && IsCameraSlotOpen(10))
                             {
                                 label247.Text = _jobs.myjob11.address;
                                 label248.Text = _lostFrameCache[10];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label249.Text = (m_nFrames[10] - _jobs.myjob11.sum).ToString();
                             }
-                            if (_jobs.myjob12.shijianEn && m_nCanOpenDeviceNum > 11)
+                            if (_jobs.myjob12.shijianEn && IsCameraSlotOpen(11))
                             {
                                 label253.Text = _jobs.myjob12.address;
                                 label254.Text = _lostFrameCache[11];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
@@ -5603,6 +5681,8 @@ namespace WindowsFormsApplication1
                             rOI设置ToolStripMenuItem.Checked = false;
                         }
                     });
+                    if (!queuedLabel) Volatile.Write(ref _uiLabelInFlight, 0);   // 未能入队：不遗留占用
+                    }
                 }
             }
         }
@@ -7126,11 +7206,13 @@ namespace WindowsFormsApplication1
                 // 3. 释放非托管内存（防止泄漏）
                 for (int i = 0; i < 12; i++)
                 {
-                    FreeDriverBuffer(i);
-                    if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                    lock (m_BufForSaveImageLock[i])   // ★#22：与回调侧"转换+复制"同锁，防释放中仍有回调往该缓冲写像素
                     {
-                        try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
-                        m_pSaveImageBuf[i] = IntPtr.Zero;
+                        if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                        {
+                            try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
+                            m_pSaveImageBuf[i] = IntPtr.Zero;
+                        }
                     }
                 }
 
@@ -7302,11 +7384,13 @@ namespace WindowsFormsApplication1
             // 释放非托管内存
             for (int i = 0; i < 12; i++)
             {
-                FreeDriverBuffer(i);
-                if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                lock (m_BufForSaveImageLock[i])   // ★#22：与回调侧"转换+复制"同锁
                 {
-                    try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
-                    m_pSaveImageBuf[i] = IntPtr.Zero;
+                    if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                    {
+                        try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
+                        m_pSaveImageBuf[i] = IntPtr.Zero;
+                    }
                 }
             }
 
@@ -7328,22 +7412,35 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void ResetMyJobOutputs()
         {
-            try
+            // ★第26轮#28：原实现 48 个无锁裸赋值挤在同一个 try 里——任一路 job 为 null 就整体跳出，
+            //   后段各路的输出状态残留旧值；且 outputok/outputok2 与 outputng/outputng2 在
+            //   JobService.SetOk/SetNg、timer17 测试输出中都是按 locker_ok/locker_ng 成对加锁写的，
+            //   这里不加锁直接清，可与脉冲线程交叉成"半新半旧"配对（指示灯显示与实际输出不一致）。
+            //   现逐路取同一把锁、单路异常只记日志，不再影响其它路。
+            var jobs = _jobs;
+            if (jobs == null || jobs.Myjobs == null) return;
+            for (int i = 0; i < 12 && i < jobs.Myjobs.Length; i++)
             {
-                _jobs.myjob1.outputok = 0; _jobs.myjob1.outputng = 0; _jobs.myjob1.outputok2 = -1; _jobs.myjob1.outputng2 = -1;
-                _jobs.myjob2.outputok = 0; _jobs.myjob2.outputng = 0; _jobs.myjob2.outputok2 = -1; _jobs.myjob2.outputng2 = -1;
-                _jobs.myjob3.outputok = 0; _jobs.myjob3.outputng = 0; _jobs.myjob3.outputok2 = -1; _jobs.myjob3.outputng2 = -1;
-                _jobs.myjob4.outputok = 0; _jobs.myjob4.outputng = 0; _jobs.myjob4.outputok2 = -1; _jobs.myjob4.outputng2 = -1;
-                _jobs.myjob5.outputok = 0; _jobs.myjob5.outputng = 0; _jobs.myjob5.outputok2 = -1; _jobs.myjob5.outputng2 = -1;
-                _jobs.myjob6.outputok = 0; _jobs.myjob6.outputng = 0; _jobs.myjob6.outputok2 = -1; _jobs.myjob6.outputng2 = -1;
-                _jobs.myjob7.outputok = 0; _jobs.myjob7.outputng = 0; _jobs.myjob7.outputok2 = -1; _jobs.myjob7.outputng2 = -1;
-                _jobs.myjob8.outputok = 0; _jobs.myjob8.outputng = 0; _jobs.myjob8.outputok2 = -1; _jobs.myjob8.outputng2 = -1;
-                _jobs.myjob9.outputok = 0; _jobs.myjob9.outputng = 0; _jobs.myjob9.outputok2 = -1; _jobs.myjob9.outputng2 = -1;
-                _jobs.myjob10.outputok = 0; _jobs.myjob10.outputng = 0; _jobs.myjob10.outputok2 = -1; _jobs.myjob10.outputng2 = -1;
-                _jobs.myjob11.outputok = 0; _jobs.myjob11.outputng = 0; _jobs.myjob11.outputok2 = -1; _jobs.myjob11.outputng2 = -1;
-                _jobs.myjob12.outputok = 0; _jobs.myjob12.outputng = 0; _jobs.myjob12.outputok2 = -1; _jobs.myjob12.outputng2 = -1;
+                var job = jobs.Myjobs[i];
+                if (job == null) continue;
+                try
+                {
+                    lock (job.locker_ok)
+                    {
+                        job.outputok = 0;
+                        job.outputok2 = -1;
+                    }
+                    lock (job.locker_ng)
+                    {
+                        job.outputng = 0;
+                        job.outputng2 = -1;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { _logger.WriteLog("复位相机" + (i + 1) + "输出状态失败: " + ex.Message); } catch { }
+                }
             }
-            catch { }
         }
 
         /// <summary>
@@ -7548,6 +7645,7 @@ namespace WindowsFormsApplication1
 
                 m_nCanOpenDeviceNum++;
                 m_pDeviceInfo[deviceArrayIndex] = device1[deviceArrayIndex];
+                m_slotTLayerType[slot] = device1[deviceArrayIndex].nTLayerType;   // ★第26轮建议1：按槽位记传输层
 
                 if (device1[deviceArrayIndex].nTLayerType == MyCamera.MV_GIGE_DEVICE)
                 {
@@ -7561,11 +7659,22 @@ namespace WindowsFormsApplication1
             }
         }
 
+        /// <summary>★第26轮#5：按槽位判断相机是否已打开。m_nCanOpenDeviceNum 是累计++的计数，
+        /// 既会随反复开/关虚高，也无法表达"只开了相机 3、5"这类稀疏槽位，不能当作"某路是否在线"用。</summary>
+        private bool IsCameraSlotOpen(int slot)
+        {
+            if (slot < 0 || slot >= 12) return false;
+            return _cameraCtrl.Cameras[slot] != null;
+        }
+
         private int CountOpenedCameras()
         {
             int count = 0;
-            int max = manager1 == null ? 12 : Math.Min(12, manager1.JobCount);
-            for (int i = 0; i < max; i++)
+            // ★第26轮#3：不再按 min(12, JobCount) 截断——相机是按 12 个槽位独立打开的，
+            //   打开路数可多于方案流程数，且切换方案瞬间 manager1/JobCount 会短暂为 null/0。
+            //   截断使已打开的相机不计数 → 误判"0 台在线"、bnClose 被禁、自动重连不启用。
+            //   本方法语义是"当前打开了几台"，只应以句柄存在与否为准。
+            for (int i = 0; i < 12; i++)
             {
                 if (_cameraCtrl.Cameras[i] == null) continue;
                 try
@@ -7731,9 +7840,21 @@ namespace WindowsFormsApplication1
                 // ★ 优先重试「上次恢复未完成」的相机：不依赖 pending（已被清空），也独立于设备在线状态。
                 if (System.Threading.Volatile.Read(ref _grabRecoveryPending[i]) != 0)
                 {
+                    // ★第26轮建议4：本分支原先既不判空也不加 try——
+                    //   ① 槽位设备已不在位时重建必然失败，恢复标志再无人清零，该路从此永久拒绝新触发；
+                    //      按"首次"分支同构清干净待回帧记录并复位标志。
+                    //   ② 任何未捕获异常会顺着 for 上抛（外层只有整方法级 try），中断本轮其余各路的恢复扫描。
+                    if (_cameraCtrl.Cameras[i] == null)
+                    {
+                        _jobs.ClearCommTriggerPending(i);
+                        System.Threading.Volatile.Write(ref _grabRecoveryPending[i], 0);
+                        _logger.WriteLog("相机" + (i + 1) + " 恢复重试：设备已不在位，清除待回帧记录与恢复标志");
+                        continue;
+                    }
                     if (System.Threading.Interlocked.CompareExchange(ref _triggerRecovering[i], 1, 0) == 0)
                     {
                         try { RebuildGrabFor(i, "重试"); }
+                        catch (Exception ex) { _logger.WriteLog("相机" + (i + 1) + " 恢复重试异常: " + ex.Message); }
                         finally { System.Threading.Volatile.Write(ref _triggerRecovering[i], 0); }
                     }
                     continue;
@@ -8108,49 +8229,8 @@ namespace WindowsFormsApplication1
 
         private void comboBox1_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob1.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox1.Text == "连续运行")
-                    {
-                        _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger1.Enabled = false;
-                        bnTriggerExec1.Enabled = false;
-                    }
-                    else if (comboBox1.Text == "触发拍照" || comboBox1.Text == "通讯触发")
-                    {
-
-                        _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-
-                        // ch:触发源选择:0 - Line0; | en:Trigger source select:0 - Line0;
-                        //           1 - Line1;
-                        //           2 - Line2;
-                        //           3 - Line3;
-                        //           4 - Counter;
-                        //           7 - Software;
-                        if (cbSoftTrigger1.Checked || comboBox1.Text == "通讯触发")
-                        {
-                            _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing1)
-                            {
-                                bnTriggerExec1.Enabled = true;
-                            }
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                        }
-                        cbSoftTrigger1.Enabled = true;
-
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog(ex.Message + "触发切换1");
-                }
-                _jobs.myjob1.triggerMode = comboBox1.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(0, comboBox1);
         }
         private void RecvInfo(string str)
         {
@@ -8869,57 +8949,59 @@ namespace WindowsFormsApplication1
                 _logger.WriteLog(ex.Message);
             }
             StreamReader sr = null;
+            // ★第26轮#12：本段在 path_1 已更新之后、xinghao_qiehuan 之前，原实现整段裸露：
+            //   菜单历史文件读/写（只读盘、无权限、盘符不存在）或 DropDownItems 索引一旦抛，
+            //   既是 UI 线程未捕获异常（弹 minidump），又让本次切换根本不执行——
+            //   留下"path_1 已指向新方案、系统仍在跑旧方案"的错位状态。历史仅为便利功能，
+            //   失败只记日志，绝不拦住切换。（原实现另有两处自伤：sr.Dispose() 后再 Close() 必抛，
+            //   截断失败的 catch 又对可能为 null 的 stream 二次 Flush/Close。）
             try
             {
-                sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
-                int i = 0;
-                while (sr.Peek() >= 0)
+                string menuIni = (Path.GetDirectoryName(path_1) ?? "") + "\\Menu.ini";
+                try
                 {
-                    i++;
-                    sr.ReadLine();
-                }
-                sr.Dispose();
-                sr.Close();
-                if (i > 5)
-                {
-                    FileStream stream = null;
-                    try
+                    int i = 0;
+                    using (sr = new StreamReader(menuIni))
                     {
-                        stream = File.Open(Path.GetDirectoryName(path_1) + "\\Menu.ini", FileMode.OpenOrCreate, FileAccess.Write);
-                        stream.Seek(0, SeekOrigin.Begin);
-                        stream.SetLength(0);
-                        stream.Flush();
-                        stream.Close();
+                        while (sr.Peek() >= 0) { i++; sr.ReadLine(); }
                     }
-                    catch
+                    sr = null;
+                    if (i > 5)
                     {
-                        stream.Flush();
-                        stream.Close();
+                        using (FileStream stream = File.Open(menuIni, FileMode.OpenOrCreate, FileAccess.Write))
+                        {
+                            stream.Seek(0, SeekOrigin.Begin);
+                            stream.SetLength(0);
+                            stream.Flush();
+                        }
+                    }
+                }
+                catch (Exception exRead)
+                {
+                    _logger.WriteLog("Menu.ini 历史读取/截断失败（忽略，不影响切换）: " + exRead.Message);
+                }
+                var historyItems = this.设置ToolStripMenuItem.DropDownItems;
+                bool needAppend = historyItems.Count == 0
+                    || historyItems[historyItems.Count - 1].Text != path_1;
+                if (needAppend)
+                {
+                    using (StreamWriter s = new StreamWriter(menuIni, true))
+                    {
+                        s.WriteLine(path_1);
+                        s.Flush();
                     }
                 }
             }
-            catch
+            catch (Exception exMenu)
             {
-                try
-                {
-                    sr.Dispose();
-                    sr.Close();
-                }
-                catch { }
-
-            };
-            if (this.设置ToolStripMenuItem.DropDownItems[this.设置ToolStripMenuItem.DropDownItems.Count - 1].Text != path_1)
-            {
-                StreamWriter s = new StreamWriter(Path.GetDirectoryName(path_1) + "\\Menu.ini", true);
-                s.WriteLine(path_1);
-                s.Flush();
-                s.Close();
+                _logger.WriteLog("Menu.ini 历史记录写入失败（已忽略，不影响切换）: " + exMenu.Message);
             }
             // ★M4：手动切换不产生通讯回执（来源参数默认 0，无全局状态需清零）
             // ★第24轮复审建议②：附目标+旧路径快照，拒绝时在 xinghao_qiehuan 一处回滚
             xinghao_qiehuan("", 0, 1, _swTarget, _swOldPath);
         }
-        ToolStripMenuItem menuitem;
+        // ★第26轮#18/#19：原 ToolStripMenuItem menuitem 共享字段已删除——历史项改为局部变量，
+        //   不再需要一个字段跨多次插入复用（旧写法每次插入都改写同一字段，易被误当作"当前项"引用）。
         private void 设置ToolStripMenuItem_Click(object sender, EventArgs e)
         {
 
@@ -10320,8 +10402,16 @@ namespace WindowsFormsApplication1
             }
             catch (Exception ex)
             {
-                _logger.WriteLog("另存为方案失败: " + ex.Message);
-                MessageBox.Show("保存方案失败！若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
+                // ★第26轮#13：序列化失败（磁盘满/无权限/路径非法）时，新文件其实不存在或内容不完整，
+                //   但 path_1/label75/label173/wenjianjia 已指向它——界面声称"当前方案=新文件"，
+                //   此后点【保存】会把内存里仍存活的旧 manager1 静默写进该文件（覆盖用户方案），
+                //   且 WriteString 被跳过导致 ini 与内存不一致。一律回滚为另存为之前的快照。
+                path_1 = _saOldPath;
+                wenjianjia = _saOldDir;
+                label75.Text = _saOldL75;
+                label173.Text = _saOldL173;
+                _logger.WriteLog("另存为方案失败（path_1/界面已回滚为原方案，未影响在跑的旧方案）: " + ex.Message);
+                MessageBox.Show("保存方案失败！已恢复显示原方案，未改动任何文件。若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
             }
         }
 
@@ -10357,51 +10447,52 @@ namespace WindowsFormsApplication1
             else
                 return;
             StreamReader sr = null;
+            // ★第26轮#12：本段在 path_1 已更新之后、xinghao_qiehuan 之前，原实现整段裸露：
+            //   菜单历史文件读/写（只读盘、无权限、盘符不存在）或 DropDownItems 索引一旦抛，
+            //   既是 UI 线程未捕获异常（弹 minidump），又让本次切换根本不执行——
+            //   留下"path_1 已指向新方案、系统仍在跑旧方案"的错位状态。历史仅为便利功能，
+            //   失败只记日志，绝不拦住切换。（原实现另有两处自伤：sr.Dispose() 后再 Close() 必抛，
+            //   截断失败的 catch 又对可能为 null 的 stream 二次 Flush/Close。）
             try
             {
-                sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
-                int i = 0;
-                while (sr.Peek() >= 0)
+                string menuIni = (Path.GetDirectoryName(path_1) ?? "") + "\\Menu.ini";
+                try
                 {
-                    i++;
-                    sr.ReadLine();
-                }
-                sr.Dispose();
-                sr.Close();
-                if (i > 5)
-                {
-                    FileStream stream = null;
-                    try
+                    int i = 0;
+                    using (sr = new StreamReader(menuIni))
                     {
-                        stream = File.Open(Path.GetDirectoryName(path_1) + "\\Menu.ini", FileMode.OpenOrCreate, FileAccess.Write);
-                        stream.Seek(0, SeekOrigin.Begin);
-                        stream.SetLength(0);
-                        stream.Flush();
-                        stream.Close();
+                        while (sr.Peek() >= 0) { i++; sr.ReadLine(); }
                     }
-                    catch
+                    sr = null;
+                    if (i > 5)
                     {
-                        stream.Flush();
-                        stream.Close();
+                        using (FileStream stream = File.Open(menuIni, FileMode.OpenOrCreate, FileAccess.Write))
+                        {
+                            stream.Seek(0, SeekOrigin.Begin);
+                            stream.SetLength(0);
+                            stream.Flush();
+                        }
+                    }
+                }
+                catch (Exception exRead)
+                {
+                    _logger.WriteLog("Menu.ini 历史读取/截断失败（忽略，不影响切换）: " + exRead.Message);
+                }
+                var historyItems = this.设置ToolStripMenuItem.DropDownItems;
+                bool needAppend = historyItems.Count == 0
+                    || historyItems[historyItems.Count - 1].Text != path_1;
+                if (needAppend)
+                {
+                    using (StreamWriter s = new StreamWriter(menuIni, true))
+                    {
+                        s.WriteLine(path_1);
+                        s.Flush();
                     }
                 }
             }
-            catch
+            catch (Exception exMenu)
             {
-                try
-                {
-                    sr.Dispose();
-                    sr.Close();
-                }
-                catch { }
-
-            };
-            if (this.设置ToolStripMenuItem.DropDownItems[this.设置ToolStripMenuItem.DropDownItems.Count - 1].Text != path_1)
-            {
-                StreamWriter s = new StreamWriter(Path.GetDirectoryName(path_1) + "\\Menu.ini", true);
-                s.WriteLine(path_1);
-                s.Flush();
-                s.Close();
+                _logger.WriteLog("Menu.ini 历史记录写入失败（已忽略，不影响切换）: " + exMenu.Message);
             }
             // ★M4：手动切换不产生通讯回执（来源参数默认 0，无全局状态需清零）
             // ★第24轮复审建议②：附目标+旧路径快照，拒绝时在 xinghao_qiehuan 一处回滚
@@ -10682,8 +10773,13 @@ namespace WindowsFormsApplication1
                     int bbtemp = 7368;
                     try
                     {
-                        listBox2.Visible = false;
-                        listBox2.Items.Clear();
+                        // ★第26轮#8：本方法体在 Task.Run 后台线程执行，listBox2 属 UI 控件——Debug 版
+                        //   （跨线程校验开启）此处第一句即抛，整次切换被打断却仍回"切换成功"。收口 UI 线程。
+                        this.Invoke(new Action(() =>
+                        {
+                            listBox2.Visible = false;
+                            listBox2.Items.Clear();
+                        }));
                         // ★C1 修复：两段式切换——先独立加载新方案（旧 manager1 及其 job/block 引用在此期间保持可用），
                         //   加载成功后【才】Shutdown 旧方案并替换。原实现"先 Shutdown 再加载"：加载失败时旧方案
                         //   已被拆、新方案又没有（manager1=null）→ 相机已关、系统停在无方案状态，只能重启软件。
@@ -10795,14 +10891,29 @@ namespace WindowsFormsApplication1
                                 managerState = ManagerState.Failed;
                                 manager1 = null;
                                 _jobs.JobManager = null;
-                                label75.Text = label75.Text + "方案已损坏";
-                                label173.Text = path_1;
+                                // ★第26轮#8：本 catch 在后台线程执行，裸写 label75/label173 在 Debug 版
+                                //   会再抛一次，把"方案已损坏"提示与下面的异常日志一起丢掉。
+                                string _damagedPath = path_1;
+                                try { this.Invoke(new Action(() =>
+                                {
+                                    try { label75.Text = label75.Text + "方案已损坏"; } catch { }
+                                    try { label173.Text = _damagedPath; } catch { }
+                                })); }
+                                catch (Exception exUi) { _logger.WriteLog("方案损坏提示刷新失败：" + exUi.Message); }
                                 _logger.WriteLog(ex.ToString() + "加载方案失败");
                             }
                         }
                         if (manager1 != null && managerState == ManagerState.Loaded)
                         {
                         try
+                        {
+                        // ★第26轮#8：本段在 Task.Run 后台线程执行，其中对 listBox2（12 路 ×6 项 + Visible/Clear）
+                        //   与 cogRecordDisplay1.Refresh() 是裸控件访问。Debug 版构造函数开着
+                        //   CheckForIllegalCrossThreadCalls=true，于是第一句 listBox2 访问即抛
+                        //   InvalidOperationException → 被下面的 catch 整体吞掉 → 新方案从未加载、
+                        //   却照常走"成功收尾"（重开相机 + 回 PLC"切换成功"）= PLC 以为换型完成，质量逃逸。
+                        //   整段收口到 UI 线程执行（与下方成功收尾块同法；启动时的同段绑定本就在 UI 线程）。
+                        this.Invoke(new Action(() =>
                         {
                             manager1.UserQueueFlush();
                             manager1.FailureQueueFlush();
@@ -11393,10 +11504,13 @@ namespace WindowsFormsApplication1
                                 }
                             }
                             
+                        }));
                         }
-                        catch
+                        catch (Exception exBind)
                         {
-                            _logger.WriteLog("无流程4");
+                            // ★第26轮#11（连同#9 可见性）：原实现只写常量"无流程4"，异常文本被丢弃——
+                            //   现场无从判断是第几路、哪一步失败。绑定不完整的后果由下方 flowBindOk 抑制回执兜住。
+                            _logger.WriteLog("切换方案: 12 路流程绑定异常（该路及其后各路可能未绑定，回执由绑定校验抑制）：" + exBind.Message);
                         }
                         }
                         else
@@ -11429,7 +11543,9 @@ namespace WindowsFormsApplication1
                         //   在恢复相机/发 ACK 之前统一给各已绑定流程补"分流程"覆盖，与启动加载同口径。
                         try { ApplySubFlowOverlaysAfterSwitch(); }
                         catch (Exception exSf) { _logger.WriteLog("切换收尾分流程覆盖异常：" + exSf.Message); }
-                        listBox2.Visible = true;
+                        // ★第26轮#8：后台线程裸访问 listBox2 → 收口 UI 线程
+                        try { this.Invoke(new Action(() => { listBox2.Visible = true; })); }
+                        catch (Exception exLb) { _logger.WriteLog("统计列表显示异常：" + exLb.Message); }
                         UpdateSplashProgress(80, "正在恢复相机与参数...");
 
                     }
@@ -11441,17 +11557,27 @@ namespace WindowsFormsApplication1
                     {
                         if (manager1 == null || managerState != ManagerState.Loaded)
                         {
-                            this.Invoke(new Action(() =>
+                            // ★第26轮#11：门控三件套必须先于任何 UI 访问、且在 Invoke 之外释放。
+                            //   原来写在 this.Invoke 体内——Invoke 本身或前面的控件赋值一旦抛，
+                            //   qiehuanzhong 永久停在 1，全系统永久停检（本条警告里最重的一项）。
+                            _switchingScheme = false;
+                            _inspectionLifecycle.Resume();
+                            Interlocked.Exchange(ref qiehuanzhong, 0);
+                            if (_comm.Omron.qiehuanzhong == 0)
+                                Frm2.start = 1;
+                            try
                             {
-                                label133.Text = "方案加载失败，请检查方案文件";
-                                checkedListBox1.Enabled = false;
-                                if (_comm.Omron.qiehuanzhong == 0)
-                                    Frm2.start = 1;
-                                _switchingScheme = false;
-                                _inspectionLifecycle.Resume();
-                                Interlocked.Exchange(ref qiehuanzhong, 0);
-                                button1.Visible = true;
-                            }));
+                                this.Invoke(new Action(() =>
+                                {
+                                    label133.Text = "方案加载失败，请检查方案文件";
+                                    checkedListBox1.Enabled = false;
+                                    button1.Visible = true;
+                                }));
+                            }
+                            catch (Exception exUiFail)
+                            {
+                                _logger.WriteLog("切换方案失败提示刷新异常（门控已释放）：" + exUiFail.Message);
+                            }
                         }
                         else
                         {
@@ -11582,13 +11708,18 @@ namespace WindowsFormsApplication1
                         {
                             for (int _w = 0; _w < 100 && !_jobs.CommTriggerArmed; _w++) Thread.Sleep(100);   // 最多等 10 秒
                             bool _armed = _jobs.CommTriggerArmed;
+                            // ★第26轮#11：门控释放移出 UI 线程并无条件先做——三者本就是 volatile 写 /
+                            //   Interlocked / Resume，不需要 UI 线程；原先放在下面的 this.Invoke 委托体内，
+                            //   而外层是空 catch：只要 Invoke 抛（窗体释放中、句柄已毁）或委托体内 display()/
+                            //   回执抛，_switchingScheme 就永久 true（全系统停止检测）、qiehuanzhong 永久 1
+                            //   （后续一切型被拒），且异常被空 catch 吞掉无人知晓。
+                            _switchingScheme = false;
+                            _inspectionLifecycle.Resume();
+                            Interlocked.Exchange(ref qiehuanzhong, 0);
                             try
                             {
                                 this.Invoke(new Action(() =>
                                 {
-                                    _switchingScheme = false;
-                                    _inspectionLifecycle.Resume();
-                                    Interlocked.Exchange(ref qiehuanzhong, 0);
                                     button1.Visible = true;
                                     display();
                                     // ★C2 修复：ACK 前逐路校验 job/block 绑定完整性——12 路重建共用一个 try，
@@ -11597,6 +11728,13 @@ namespace WindowsFormsApplication1
                                     //   任一应加载路未绑定成功即抑制回执（PLC 靠超时判 NG）。
                                     bool flowBindOk = true;
                                     int _jc = (manager1 != null) ? manager1.JobCount : 0;
+                                    // ★第26轮#10：空方案（JobCount<=0）原来零次循环 → flowBindOk 恒 true，
+                                    //   一路都没绑定也照样回 PLC"切换成功"（质量逃逸）。判为不完整。
+                                    if (_jc <= 0)
+                                    {
+                                        flowBindOk = false;
+                                        _logger.WriteLog("切换方案: 方案流程数为 " + _jc + "（没有任何流程），本次切换判失败");
+                                    }
                                     for (int _bi = 0; _bi < _jc && _bi < 12; _bi++)
                                     {
                                         if (_jobs.Myjobs[_bi] == null || _jobs.Myjobs[_bi].job == null || _jobs.Myjobs[_bi].block == null)
@@ -11611,29 +11749,55 @@ namespace WindowsFormsApplication1
                                         SendSchemeSwitchAck(ackProto, ackLinkId);   // ★ 切换成功回执：把相机13 配置的“返回值”写回 PLC 切换通道（若已配置）
                                     else
                                         _logger.WriteLog("切换方案: 回执已抑制（流程绑定不完整），PLC 靠超时判 NG");
+                                    // ★第26轮#9 + 建议7：抑制回执原先只落在日志里，界面照旧显示"运行中"，
+                                    //   操作工无从察觉"有几路相机根本没绑上流程、静默不检测"。判定结果同步刷到状态标签。
+                                    try
+                                    {
+                                        if (_armed && flowBindOk)
+                                            label133.Text = "方案切换完成";
+                                        else
+                                            label133.Text = "方案切换异常：回执已抑制（"
+                                                + (_armed ? "部分相机流程未绑定" : "检测未就绪/Arm 超时") + "），请立即检查，详见日志";
+                                    }
+                                    catch { }
                                 }));
                             }
-                            catch { }
+                            catch (Exception exArm)
+                            {
+                                // ★第26轮#11：门控已在上面释放，这里只可能丢 UI 刷新/回执——如实记录
+                                _logger.WriteLog("切换方案收尾刷新异常（门控已释放，回执可能未发出）：" + exArm.Message);
+                            }
                         });
                         }));
                         }
                     }
                     catch (Exception ex)
                     {
-                        Thread.Sleep(2000);
-                        this.Invoke(new Action(() =>
+                        // ★第26轮#11：门控释放提到最前且脱离 Invoke —— 原来整个收尾（含
+                        //   _switchingScheme/_inspectionLifecycle.Resume/qiehuanzhong）都写在一个
+                        //   未包 try 的 this.Invoke 里，运行在 Task.Run 后台线程；该 Invoke 一旦抛
+                        //   （UI 线程已死/控件赋值抛），异常被 Task 静默吞掉，门控永久不释放。
+                        _switchingScheme = false;
+                        _inspectionLifecycle.Resume();
+                        Interlocked.Exchange(ref qiehuanzhong, 0);
+                        if (_comm.Omron.qiehuanzhong == 0)
                         {
-                            if (_comm.Omron.qiehuanzhong == 0)
+                            Frm2.start = 1;
+                        }
+                        Thread.Sleep(2000);
+                        try
+                        {
+                            this.Invoke(new Action(() =>
                             {
-                                Frm2.start = 1;
-                            }
-                            _switchingScheme = false;
-                                _inspectionLifecycle.Resume();
-                            Interlocked.Exchange(ref qiehuanzhong, 0);
-                            // ★M4：切换失败不发回执（仅成功收尾调用 SendSchemeSwitchAck，来源参数默认 0）
-                            button1.Visible = true;
-                            display();
-                        }));
+                                // ★M4：切换失败不发回执（仅成功收尾调用 SendSchemeSwitchAck，来源参数默认 0）
+                                button1.Visible = true;
+                                display();
+                            }));
+                        }
+                        catch (Exception exUi2)
+                        {
+                            _logger.WriteLog("切换方案异常收尾刷新失败（门控已释放）：" + exUi2.Message);
+                        }
                         _logger.WriteLog(ex.ToString() + "切换方案2");
                     };
                 });
@@ -11680,54 +11844,33 @@ namespace WindowsFormsApplication1
             StreamReader sr = null;
             try
             {
-
-                int i = this.设置ToolStripMenuItem.DropDownItems.Count;
-                if (i > item_sum)
+                // ★第26轮#19：裁剪改为"按 Tag 从后往前删动态历史项"。原实现按 item_sum 下标
+                //   RemoveAt(item_sum)——item_sum 只在启动装载段成功执行时才被赋值，该段一旦跳过
+                //   （窗体句柄未创建）它恒为 0，于是每开一次菜单就从索引 0 反复删除，
+                //   把"配置工具/配置相机2…"等静态菜单项一并删光（现象：菜单越点越少）。
+                for (int j = this.设置ToolStripMenuItem.DropDownItems.Count - 1; j >= 0; j--)
                 {
-                    for (int j = 0; j < i; j++)
-                    {
-                        if (j >= item_sum)
-                        {
-                            this.设置ToolStripMenuItem.DropDownItems.RemoveAt(item_sum);
-                        }
-                    }
+                    if (this.设置ToolStripMenuItem.DropDownItems[j].Tag as string == SchemeHistoryMenuTag)
+                        this.设置ToolStripMenuItem.DropDownItems.RemoveAt(j);
                 }
                 // Thread.Sleep(10);
                 sr = new StreamReader(Path.GetDirectoryName(path_1) + "\\Menu.ini");
-                i = item_sum;
+                int i = this.设置ToolStripMenuItem.DropDownItems.Count;
                 while (sr.Peek() >= 0)
                 {
-                    //string item_temp = sr.ReadLine();
-                    //int end_temp=0;
-                    //for (int j = 0; j < this.设置ToolStripMenuItem.DropDownItems.Count; j++)
-                    //{
-                    //    end_temp = 0;
-                    //    if (item_temp == this.设置ToolStripMenuItem.DropDownItems[j].Text)
-                    //    {
-                    //        end_temp = 1;
-                    //    }
-
-                    //    if (end_temp == 0)
-                    //    {
-                    menuitem = new ToolStripMenuItem(sr.ReadLine());
-                    this.设置ToolStripMenuItem.DropDownItems.Insert(i, menuitem);
+                    string line = sr.ReadLine();
+                    if (string.IsNullOrEmpty(line)) continue;
+                    ToolStripMenuItem history = new ToolStripMenuItem(line);
+                    history.Tag = SchemeHistoryMenuTag;
+                    this.设置ToolStripMenuItem.DropDownItems.Insert(i, history);
                     i++;
-                    menuitem.Click += new EventHandler(menuitem_Click);
-                    //    }
-                    //}
-
+                    history.Click += new EventHandler(menuitem_Click);
                 }
                 sr.Dispose();
-                sr.Close();
             }
             catch
             {
-                try
-                {
-                    sr.Dispose();
-                    sr.Close();
-                }
-                catch { }
+                try { if (sr != null) sr.Dispose(); } catch { }
             }
         }
 
@@ -11944,6 +12087,7 @@ namespace WindowsFormsApplication1
                     _jobs.Myjobs[slot].index = deviceArrayIndex;
                     device1[deviceArrayIndex] = devInfo.NativeInfo;
                     m_pDeviceInfo[deviceArrayIndex] = devInfo.NativeInfo;
+                    m_slotTLayerType[slot] = devInfo.NativeInfo.nTLayerType;   // ★第26轮建议1：按槽位记传输层
 
                     try
                     {
@@ -12181,13 +12325,29 @@ namespace WindowsFormsApplication1
                     SetStartGrabButtonState(index, false);
                     return;
                 }
-                SetCameraGrabbing(index, true);
-                m_stFrameInfo[index].nFrameLen = 0;
-                m_stFrameInfo[index].enPixelType = MyCamera.MvGvspPixelType.PixelType_Gvsp_Undefined;
-                int nRet = _cameraCtrl.Cameras[index].MV_CC_StartGrabbing_NET();
+                int nRet;
+                // ★第26轮#1：取句柄 + StartGrabbing 收进 _cameraLock —— 与自动重连/关闭路径里的
+                //   StopGrabbing/CloseDevice/DestroyDevice 互斥，避免对已销毁句柄下发指令。
+                //   失败提示（ShowErrorMsg 会弹框）与按钮态刷新留在锁外：锁内绝不弹框的既有约定。
+                lock (_cameraLock)
+                {
+                    var cam = _cameraCtrl.Cameras[index];
+                    if (cam == null)
+                    {
+                        _logger.WriteLog("相机" + (index + 1) + "未打开，跳过开始采集");
+                        return;
+                    }
+                    SetCameraGrabbing(index, true);
+                    m_stFrameInfo[index].nFrameLen = 0;
+                    m_stFrameInfo[index].enPixelType = MyCamera.MvGvspPixelType.PixelType_Gvsp_Undefined;
+                    nRet = cam.MV_CC_StartGrabbing_NET();
+                    if (MyCamera.MV_OK != nRet)
+                    {
+                        SetCameraGrabbing(index, false);
+                    }
+                }
                 if (MyCamera.MV_OK != nRet)
                 {
-                    SetCameraGrabbing(index, false);
                     ShowErrorMsg("Start Grabbing Fail!", nRet);
                     return;
                 }
@@ -12204,8 +12364,20 @@ namespace WindowsFormsApplication1
         {
             try
             {
-                SetCameraGrabbing(index, false);
-                int nRet = _cameraCtrl.Cameras[index].MV_CC_StopGrabbing_NET();
+                int nRet;
+                // ★第26轮#1：同 StartGrabFor —— 停采也须在 _cameraLock 内取句柄并下发，
+                //   否则与重连的 Close/Destroy 并发即打在死句柄上；弹框移出锁外。
+                lock (_cameraLock)
+                {
+                    SetCameraGrabbing(index, false);
+                    var cam = _cameraCtrl.Cameras[index];
+                    if (cam == null)
+                    {
+                        _logger.WriteLog("相机" + (index + 1) + "未打开，跳过停止采集");
+                        return;
+                    }
+                    nRet = cam.MV_CC_StopGrabbing_NET();
+                }
                 if (nRet != MyCamera.MV_OK)
                 {
                     ShowErrorMsg("Stop Grabbing Fail!", nRet);
@@ -12334,6 +12506,12 @@ namespace WindowsFormsApplication1
                 m_stFrameInfo[nIndex] = pFrameInfo;
 
                 CameraPixelFormat srcFmt = CameraPixelFormatHelper.FromHik(pFrameInfo.enPixelType);
+                // ★第26轮#22：EnsureConvertBuffer 内部对共享转换缓冲做 FreeHGlobal+AllocHGlobal，
+                //   停采/关窗清理路径也会释放同一指针，原来三方都无同步——最坏情况"回调正往已释放的
+                //   非托管内存里写像素"（随机崩溃/坏图）。现整段（格式转换 → 复制成独立位图）
+                //   持该槽位的 m_BufForSaveImageLock，释放路径同持此锁。
+                lock (m_BufForSaveImageLock[nIndex])
+                {
                 if (srcFmt == CameraPixelFormat.Unknown)
                 {
                     if (pFrameInfo.nFrameLen == 0)
@@ -12378,6 +12556,7 @@ namespace WindowsFormsApplication1
                 // ③ 不再用 pData 零拷贝包装中间 Bitmap，省掉每帧一次 Bitmap 分配
                 owned = CameraPixelFormatHelper.BuildOwnedBitmap(
                     pData, pFrameInfo.nWidth, pFrameInfo.nHeight, srcFmt, _grayPalette);
+                }
                 if (owned == null)
                 {
                     _logger.WriteLog("相机" + (nIndex + 1) + " 构造图像失败");
@@ -12445,14 +12624,29 @@ namespace WindowsFormsApplication1
         
         private string GetLostFrame(int nIndex)
         {
-            if (_cameraCtrl.Cameras[nIndex] == null)
+            // ★第26轮建议1：传输层类型按槽位读（原来读 m_pDeviceInfo[nIndex]，而该数组按枚举序号写入，
+            //   槽位稀疏/乱序时判错分支 → 丢帧恒 0）
+            UInt32 tLayer = m_slotTLayerType[nIndex];
+            if (tLayer != MyCamera.MV_GIGE_DEVICE && tLayer != MyCamera.MV_USB_DEVICE)
                 return "0";
+            // ★第26轮#1：全程持 _cameraLock（与开/关/重连互斥，防打在已销毁句柄上）。
+            //   本方法由后台丢帧采样线程每 ~105ms 调一次，用 TryEnter(50ms)：重连持锁可达数秒，
+            //   拿不到锁就沿用上次缓存值，采样线程绝不被阻塞。
+            bool lockTaken = false;
+            Monitor.TryEnter(_cameraLock, 50, ref lockTaken);
+            if (!lockTaken) return _lostFrameCache[nIndex];
+            MyCamera camera = _cameraCtrl.Cameras[nIndex];
+            if (camera == null)
+            {
+                Monitor.Exit(_cameraLock);
+                return "0";
+            }
 
             MyCamera.MV_ALL_MATCH_INFO pstInfo = new MyCamera.MV_ALL_MATCH_INFO();
             IntPtr allocated = IntPtr.Zero;   // 记录实际分配，finally 中统一释放，避免中途异常泄漏
             try
             {
-                if (m_pDeviceInfo[nIndex].nTLayerType == MyCamera.MV_GIGE_DEVICE)
+                if (tLayer == MyCamera.MV_GIGE_DEVICE)
                 {
                     MyCamera.MV_MATCH_INFO_NET_DETECT MV_NetInfo = new MyCamera.MV_MATCH_INFO_NET_DETECT();
                     pstInfo.nInfoSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(MyCamera.MV_MATCH_INFO_NET_DETECT));
@@ -12462,12 +12656,12 @@ namespace WindowsFormsApplication1
                     allocated = pstInfo.pInfo;
                     Marshal.StructureToPtr(MV_NetInfo, pstInfo.pInfo, false);
 
-                    _cameraCtrl.Cameras[nIndex].MV_CC_GetAllMatchInfo_NET(ref pstInfo);
+                    camera.MV_CC_GetAllMatchInfo_NET(ref pstInfo);
                     MV_NetInfo = (MyCamera.MV_MATCH_INFO_NET_DETECT)Marshal.PtrToStructure(pstInfo.pInfo, typeof(MyCamera.MV_MATCH_INFO_NET_DETECT));
 
                     return MV_NetInfo.nLostFrameCount.ToString();
                 }
-                else if (m_pDeviceInfo[nIndex].nTLayerType == MyCamera.MV_USB_DEVICE)
+                else
                 {
                     MyCamera.MV_MATCH_INFO_USB_DETECT MV_NetInfo = new MyCamera.MV_MATCH_INFO_USB_DETECT();
                     pstInfo.nInfoSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(MyCamera.MV_MATCH_INFO_USB_DETECT));
@@ -12477,20 +12671,17 @@ namespace WindowsFormsApplication1
                     allocated = pstInfo.pInfo;
                     Marshal.StructureToPtr(MV_NetInfo, pstInfo.pInfo, false);
 
-                    _cameraCtrl.Cameras[nIndex].MV_CC_GetAllMatchInfo_NET(ref pstInfo);
+                    camera.MV_CC_GetAllMatchInfo_NET(ref pstInfo);
                     MV_NetInfo = (MyCamera.MV_MATCH_INFO_USB_DETECT)Marshal.PtrToStructure(pstInfo.pInfo, typeof(MyCamera.MV_MATCH_INFO_USB_DETECT));
 
                     return MV_NetInfo.nErrorFrameCount.ToString();
-                }
-                else
-                {
-                    return "0";
                 }
             }
             finally
             {
                 if (allocated != IntPtr.Zero)
                     Marshal.FreeHGlobal(allocated);
+                Monitor.Exit(_cameraLock);
             }
         }
         // ch:去除自定义的像素格式 | en:Remove custom pixel formats
@@ -12600,11 +12791,13 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog("bnClose：等待回调静止超时(2s)，仍继续释放缓冲（设备已关、无新回调，窗口已极小）");
                 for (int i = 0; i < 12; i++)
                 {
-                    FreeDriverBuffer(i);
-                    if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                    lock (m_BufForSaveImageLock[i])   // ★#22：与回调侧"转换+复制"同锁，防释放中仍有回调往该缓冲写像素
                     {
-                        try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
-                        m_pSaveImageBuf[i] = IntPtr.Zero;
+                        if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                        {
+                            try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
+                            m_pSaveImageBuf[i] = IntPtr.Zero;
+                        }
                     }
                 }
                 // ch:重置成员变量 | en:Reset member variable
@@ -12714,6 +12907,7 @@ namespace WindowsFormsApplication1
             //   m_bTimerFlag = false;
             m_hDisplayHandle = new IntPtr[12];
             m_pDeviceInfo = new MyCamera.MV_CC_DEVICE_INFO[12];
+            Array.Clear(m_slotTLayerType, 0, m_slotTLayerType.Length);   // ★第26轮建议1：按槽位传输层同步复位
         }
 
         // 各相机“通讯触发”下拉框编号（设计器命名非连续）；相机9-12 无通讯触发项为 -1

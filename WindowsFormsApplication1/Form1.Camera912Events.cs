@@ -846,39 +846,8 @@ namespace WindowsFormsApplication1
 
         private void comboBox43_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob9.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox43.Text == "连续运行")
-                    {
-                        _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger9.Enabled = false;
-                        bnTriggerExec9.Enabled = false;
-                    }
-                    else if (comboBox43.Text == "触发拍照" || comboBox43.Text == "通讯触发")
-                    {
-                        _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-                        if (comboBox43.Text == "触发拍照")
-                        {
-                            _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                            cbSoftTrigger9.Enabled = false;
-                            bnTriggerExec9.Enabled = false;
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing9)
-                            {
-                                cbSoftTrigger9.Enabled = true;
-                                bnTriggerExec9.Enabled = true;
-                            }
-                        }
-                    }
-                }
-                catch { }
-                _jobs.myjob9.triggerMode = comboBox43.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(8, comboBox43);
         }
 
         private void comboBox44_SelectedIndexChanged(object sender, EventArgs e)
@@ -920,39 +889,8 @@ namespace WindowsFormsApplication1
 
         private void comboBox47_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob10.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox47.Text == "连续运行")
-                    {
-                        _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger10.Enabled = false;
-                        bnTriggerExec10.Enabled = false;
-                    }
-                    else if (comboBox47.Text == "触发拍照" || comboBox47.Text == "通讯触发")
-                    {
-                        _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-                        if (comboBox47.Text == "触发拍照")
-                        {
-                            _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                            cbSoftTrigger10.Enabled = false;
-                            bnTriggerExec10.Enabled = false;
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing10)
-                            {
-                                cbSoftTrigger10.Enabled = true;
-                                bnTriggerExec10.Enabled = true;
-                            }
-                        }
-                    }
-                }
-                catch { }
-                _jobs.myjob10.triggerMode = comboBox47.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(9, comboBox47);
         }
 
         private void comboBox48_SelectedIndexChanged(object sender, EventArgs e)
@@ -994,39 +932,8 @@ namespace WindowsFormsApplication1
 
         private void comboBox51_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob11.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox51.Text == "连续运行")
-                    {
-                        _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger11.Enabled = false;
-                        bnTriggerExec11.Enabled = false;
-                    }
-                    else if (comboBox51.Text == "触发拍照" || comboBox51.Text == "通讯触发")
-                    {
-                        _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-                        if (comboBox51.Text == "触发拍照")
-                        {
-                            _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                            cbSoftTrigger11.Enabled = false;
-                            bnTriggerExec11.Enabled = false;
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing11)
-                            {
-                                cbSoftTrigger11.Enabled = true;
-                                bnTriggerExec11.Enabled = true;
-                            }
-                        }
-                    }
-                }
-                catch { }
-                _jobs.myjob11.triggerMode = comboBox51.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(10, comboBox51);
         }
 
         private void comboBox52_SelectedIndexChanged(object sender, EventArgs e)
@@ -1068,39 +975,8 @@ namespace WindowsFormsApplication1
 
         private void comboBox55_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob12.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox55.Text == "连续运行")
-                    {
-                        _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger12.Enabled = false;
-                        bnTriggerExec12.Enabled = false;
-                    }
-                    else if (comboBox55.Text == "触发拍照" || comboBox55.Text == "通讯触发")
-                    {
-                        _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-                        if (comboBox55.Text == "触发拍照")
-                        {
-                            _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                            cbSoftTrigger12.Enabled = false;
-                            bnTriggerExec12.Enabled = false;
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing12)
-                            {
-                                cbSoftTrigger12.Enabled = true;
-                                bnTriggerExec12.Enabled = true;
-                            }
-                        }
-                    }
-                }
-                catch { }
-                _jobs.myjob12.triggerMode = comboBox55.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(11, comboBox55);
         }
 
         // ListBox SelectedIndexChanged handlers

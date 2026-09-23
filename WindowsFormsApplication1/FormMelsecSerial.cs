@@ -491,6 +491,23 @@ namespace WindowsFormsApplication1
         // 压力测试，开3个线程，每个线程进行读写操作，看使用时间
         private void button3_Click( object sender, EventArgs e )
         {
+            // ★第26轮#31（与 FormModbus 压力测试同构站点）：
+            //   原实现三线程 500 轮直打串口，无任何门控/异常保护——
+            //   ①端口未开或已被"断开"按钮关掉时，后台线程内 Hsl 抛异常 = 未处理线程异常直接杀进程；
+            //   ②压测期间关窗，thread_end 的裸 Invoke 抛 InvalidOperationException 同样杀进程；
+            //   ③failed 由 3 个线程共享，普通 ++ 互相覆盖，报告的失败数不可信。
+            //   本窗体没有与 FormModbus 等价的 _ioSync（曲线控件 userControlCurve1 也在同一串口上定时读写），
+            //   故此处只做"知情确认 + 让出 + 不崩"三件事，不做假承诺的互斥。
+            if (!button2.Enabled || melsecSerial == null)
+            {
+                MessageBox.Show( "串口未打开，无法开始压力测试。", "提示" );
+                return;
+            }
+            if (MessageBox.Show(
+                    "压力测试会向地址【D100】连续写入固定值 1234 共 1500 次（3 线程 × 500 轮），"
+                    + "将覆盖该地址在生产 PLC 中的真实数据，且期间串口被大量占用。\n\n确认该地址当前可被随意覆盖吗？",
+                    "压力测试确认", MessageBoxButtons.YesNo, MessageBoxIcon.Warning ) != DialogResult.Yes )
+                return;
             thread_status = 3;
             failed = 0;
             thread_time_start = DateTime.Now;
@@ -503,12 +520,20 @@ namespace WindowsFormsApplication1
         private void thread_test2( )
         {
             int count = 500;
-            while (count > 0)
+            try
             {
-                if (!melsecSerial.Write( "D100", (short)1234 ).IsSuccess) failed++;
-                if (!melsecSerial.ReadInt16( "D100" ).IsSuccess) failed++;
-                count--;
+                while (count > 0)
+                {
+                    bool okW = melsecSerial.Write( "D100", (short)1234 ).IsSuccess;
+                    bool okR = melsecSerial.ReadInt16( "D100" ).IsSuccess;
+                    // ★#31：口径同原版（写/读失败各计一次），但改为 Interlocked 防三线程互相覆盖
+                    if (!okW) Interlocked.Increment( ref failed );
+                    if (!okR) Interlocked.Increment( ref failed );
+                    Thread.Sleep( 1 );   // ★#31：让出串口，避免 1500 次连打把曲线控件/手动读写饿死
+                    count--;
+                }
             }
+            catch { Interlocked.Increment( ref failed ); }   // ★#31：单轮异常只记失败，绝不让后台线程带未处理异常杀进程
             thread_end( );
         }
 
@@ -516,12 +541,17 @@ namespace WindowsFormsApplication1
         {
             if (Interlocked.Decrement( ref thread_status ) == 0)
             {
-                // 执行完成
-                Invoke( new Action( ( ) =>
+                // ★#31：压测期间窗体可能已关闭/释放——原裸 Invoke 会抛 InvalidOperationException（后台线程未处理=杀进程）
+                try
                 {
-                    button3.Enabled = true;
-                    MessageBox.Show( "Spend：" + (DateTime.Now - thread_time_start).TotalSeconds + Environment.NewLine + " Failed Count：" + failed );
-                } ) );
+                    if (IsHandleCreated && !IsDisposed)
+                        Invoke( new Action( ( ) =>
+                        {
+                            button3.Enabled = true;
+                            MessageBox.Show( "Spend：" + (DateTime.Now - thread_time_start).TotalSeconds + Environment.NewLine + " Failed Count：" + failed );
+                        } ) );
+                }
+                catch { }
             }
         }
 

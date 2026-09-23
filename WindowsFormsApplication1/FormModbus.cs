@@ -100,6 +100,7 @@ namespace WindowsFormsApplication1
         public int PollInterval { get { return (int)lunxun_time; } }
         public bool IsPollEnabled { get { return fins_lunxunen; } }
         public bool IsCommEnabled { get { return fins_en; } }
+        public bool IsReconnecting { get { return System.Threading.Volatile.Read(ref _reconnecting) != 0; } }   // ★#32：把真实重连状态暴露给 per-link 轮询门控
         public int AddressBase { get { return (int)address_qishi; } }
         public Dictionary<string, string[]> FinsBlocks { get { return fins_dic; } }
         public Dictionary<int, string[]> CameraBindings { get { return camera_dic; } }
@@ -1049,6 +1050,14 @@ namespace WindowsFormsApplication1
                 MessageBox.Show("通讯未就绪（未连接或正在重连），无法开始压力测试。", "提示");
                 return;
             }
+            // ★第26轮#31：本测试按 Hsl 示例往固定地址硬写 1234（3 线程 × 500 轮 = 1500 次），
+            //   对生产 PLC 就是真实覆盖写（该地址若参与联锁/计数会直接改产线状态）。
+            //   启动前必须让操作员知情确认，取消即不启动。
+            if (MessageBox.Show(
+                    "压力测试会向地址【100】连续写入固定值 1234 共 1500 次（3 线程 × 500 轮），"
+                    + "将覆盖该地址在生产 PLC 中的真实数据。\n\n确认该地址当前可被随意覆盖吗？",
+                    "压力测试确认", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
             thread_status = 3;
             failed = 0;
             thread_time_start = DateTime.Now;
@@ -1073,12 +1082,17 @@ namespace WindowsFormsApplication1
                         okW = busTcpClient.Write( "100", (short)1234 ).IsSuccess;
                         okR = busTcpClient.ReadInt16( "100" ).IsSuccess;
                     }
-                    if (!okW) failed++;
-                    if (!okR) failed++;
+                    // ★第26轮#31：failed 由 3 个线程共享，普通 ++ 会互相覆盖（少报失败数）→ Interlocked
+                    //   （口径与原版一致：写失败、读失败各计一次）
+                    if (!okW) Interlocked.Increment( ref failed );
+                    if (!okR) Interlocked.Increment( ref failed );
+                    // ★第26轮#31：每轮让出一次锁——原先 1500 次连打把 _ioSync 独占，
+                    //   同链路的轮询/心跳/触发回执会被饿死（现场表现为压测期间 PLC 触发脉冲丢失）。
+                    Thread.Sleep( 1 );
                     count--;
                 }
             }
-            catch { failed++; }
+            catch { Interlocked.Increment( ref failed ); }
             thread_end( );
         }
 
@@ -1305,7 +1319,7 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void SetParamControlsEnabled(bool enable)
         {
-            foreach (var name in new[] { "textBox1", "textBox2", "textBox15", "textBox16", "comboBox1", "numericUpDown1", "numericUpDown2", "numericUpDown3" })
+            foreach (var name in new[] { "textBox1", "textBox2", "textBox15", "textBox16", "comboBox1", "checkBox1", "numericUpDown1", "numericUpDown2", "numericUpDown3" })
             {
                 var c = this.Controls.Find(name, true);
                 if (c.Length > 0) c[0].Enabled = enable;
@@ -2140,6 +2154,11 @@ namespace WindowsFormsApplication1
                     {
                         lock (_ioSync)   // ★与成功/失败回执的“设[4][5]+写出”互斥：防两组槽值交叠后发错通道
                         {
+                            // ★第26轮#34：门控原先只在 UI 线程 Tick 判一次——入队到此刻之间操作员可取消
+                            //   心跳勾、点断开、或自动重连已启动，残余任务仍会把心跳值写进反馈槽并打向
+                            //   已关链路（异常虽被吞，但反馈通道已被污染一帧）。持锁后按同一组条件复查。
+                            if (!_heartbeatEnabled || !fins_en || _reconnecting != 0 || !chushihua
+                                || _modbusLink == null || !_modbusLink.IsConnected) return;
                             camera_dic[13][4] = val;
                             camera_dic[13][5] = chan;
                             xie(val);

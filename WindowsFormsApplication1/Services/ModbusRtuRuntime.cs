@@ -95,6 +95,7 @@ namespace WindowsFormsApplication1
                     // ★A2 修复：只有线程确实退出才释放引用。Join 超时仍存活时保留引用，
                     // 否则"旧线程还在跑却失去引用"，再次 Start 会起出第二条轮询线程（重复触发）。
                     if (!t.IsAlive) _host.PollThread = null;
+                    else LogStopTimeout();   // ★#33：超时不再静默
                 }
             }
             else
@@ -105,8 +106,19 @@ namespace WindowsFormsApplication1
                 {
                     try { t.Join(1000); } catch { }
                     if (!t.IsAlive) _pollThread = null;
+                    else LogStopTimeout();   // ★#33：超时不再静默
                 }
             }
+        }
+
+        /// <summary>
+        /// ★第26轮#33：Join(1000) 超时说明线程还卡在一次阻塞的 PLC 读写里。引用按 A2 规则保留
+        /// （防再起第二条轮询线程），但原实现不留任何痕迹，事后无法解释"已停止却仍有读写"。
+        /// </summary>
+        private void LogStopTimeout()
+        {
+            try { new ErrorLog().WriteLog("[" + Name + "] 停止轮询等待 1 秒超时：线程仍卡在阻塞读写中（引用已保留，Start 不会另起第二条）"); }
+            catch { }
         }
 
         public void Close()
@@ -125,6 +137,12 @@ namespace WindowsFormsApplication1
         /// 由原 Fins_duxie 逐行 port：配置经 Context 实时读取，状态收口到本实例，
         /// 窗体级副作用（UI/事件/回写/切换/日志/重连）全部经 Context 回调，保持与改造前一致。
         /// 仅在 Context 非空（多连接并联）时被 Start 调用。
+        ///
+        /// ★第26轮#32 遗留前置条件（接线启用前必须落实，本轮只修了门控）：
+        ///   现网 Fins_duxie 每次读都持 _ioSync（读/写/重连同一把锁串行）；本循环内 _link.Client 的读写
+        ///   与上下文 OnReconnect 的重连**不共任何锁**。启用多连接并联时须给每条连接一把专属 I/O 锁，
+        ///   读、写、重连三处同锁。本上下文的回写仍委托宿主连接 1 的客户端，直接复用宿主 _ioSync
+        ///   只会得到"看似加锁、实则不同对象"的假安全，故不在本轮半套插桩。
         /// </summary>
         private void PollLoop()
         {
@@ -140,7 +158,10 @@ namespace WindowsFormsApplication1
                 {
                     if (ctx.IsInitialized)
                     {
-                        if (_reconnecting != 0)
+                        // ★#32 修复（第26轮）：本实例的 _reconnecting 从无人置位（重连由 Context 侧发起并维护），
+                        //   原"重连中不读写"门控形同虚设。改读 ctx.IsReconnecting（宿主窗体/本连接上下文各自的真实标志）。
+                        int reconnecting = (_reconnecting != 0 || ctx.IsReconnecting) ? 1 : 0;
+                        if (reconnecting != 0)
                             continue;
                         if (ctx.IsPollEnabled)
                         {
@@ -246,7 +267,7 @@ namespace WindowsFormsApplication1
                             if (fins_temp.Contains("Failed") || fins_temp.Contains("corrent"))
                             {
                                 if (CommReconnectHelper.ShouldTriggerReconnect(
-                                    ref _commFailCount, ctx.IsCommEnabled, _reconnecting, ref _lastReconnectAttemptTicks))
+                                    ref _commFailCount, ctx.IsCommEnabled, reconnecting, ref _lastReconnectAttemptTicks))
                                 {
                                     ctx.OnReconnect();
                                 }

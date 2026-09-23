@@ -1225,6 +1225,57 @@ namespace WindowsFormsApplication1
 
 
         }
+        // ★第26轮#24：存图文件名消毒 + 同秒防覆盖。
+        //   原名 = cuowuma + hhmmss + "#" + JobNumber，cuowuma 直接取 VisionPro
+        //   block.Outputs["tishi"] 自由文本（Form1.cs:4714）。含 ':' '/' 换行等非法字符时
+        //   CogImageFileBMP.Open 必抛，而整个方法只有一个大 try→写一行日志，NG 图从此永不落盘
+        //   且界面毫无提示（质量追溯断链）。另外连续运行模式下 JobNumber(numberng) 不递增，
+        //   同一秒内多帧文件名完全相同→后帧覆盖前帧，同样丢 NG 图。
+        //   NG 原因统计表仍用原始 tishi 文本（Form1.cs:5014），此处只改文件名不改统计口径。
+        private static readonly char[] _invalidNameChars = BuildInvalidNameChars();
+
+        private static char[] BuildInvalidNameChars()
+        {
+            var cs = new List<char>(Path.GetInvalidFileNameChars());
+            if (!cs.Contains('/')) cs.Add('/');
+            return cs.ToArray();
+        }
+
+        // 写方与回构方（chatu_fangfa、相机2 列表打开）必须用同一规则，否则按名找不到图。
+        private static string SafeNamePart(string raw)
+        {
+            string s = (raw ?? "").Trim();
+            if (s.Length == 0) return "NG";
+            var sb = new StringBuilder(s.Length);
+            foreach (char c in s)
+                sb.Append(c < 32 || Array.IndexOf(_invalidNameChars, c) >= 0 ? '_' : c);
+            // Windows 会静默剥离文件名尾部的点和空格，不剥会让"写入名"与"回构名"不一致
+            string r = sb.ToString().TrimEnd('.', ' ');
+            if (r.Length == 0) return "NG";
+            return r.Length > 50 ? r.Substring(0, 50) : r;
+        }
+
+        // ★第26轮#25：存图失败不再静默——累计计数 + 30 秒限流的日志与界面提示。
+        //   原实现仅 _logger.WriteLog("存图方法"+msg)，磁盘满/共享路径断开时可连续数小时
+        //   一张图都不落盘，操作员完全不知情。
+        private long _cuntuFailTotal;
+        private int _cuntuLastAlertTick;
+
+        private void NoteSaveImageFailure(Exception ex, string Jobpath, string cuowuma)
+        {
+            long total = Interlocked.Increment(ref _cuntuFailTotal);
+            int now = Environment.TickCount;
+            int last = Volatile.Read(ref _cuntuLastAlertTick);
+            if (last != 0 && unchecked(now - last) < 30000) return;
+            // 并发多路只允许一路抢到本次告警窗口
+            if (Interlocked.CompareExchange(ref _cuntuLastAlertTick, now, last) != last) return;
+            string hint = SafeNamePart(cuowuma);
+            _logger.WriteLog("存图失败(累计 " + total + " 张，请检查磁盘空间/路径可写性/文件名合法性) 目录="
+                + Jobpath + " 名称前缀=" + hint + " 错误=" + ex.Message);
+            string txt = "存图失败：图像未落盘(累计" + total + "张)，请检查磁盘空间与存图路径";
+            try { SafeBeginInvoke(new Action(() => { try { label133.Text = txt; } catch { } })); } catch { }
+        }
+
         private void cuntu_fangfa(CogImageFileBMP cogbmp, int FileLength, int JobNumber, string Jobpath, string cuowuma, string temptime, ICogImage cogimage)
         {
             // 2026-09-06：cogbmp 是 myjob.Cogbmp 共享实例，多帧 Task 并发会 Open/Append/Close 冲突。
@@ -1233,12 +1284,19 @@ namespace WindowsFormsApplication1
             {
                 string[] time111 = temptime.Split(':');
                 int ttt1 = int.Parse(time111[0] + time111[1] + time111[2]);
+                string dir = Jobpath + day1;
+                if (!Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);   // 原目录缺失时 GetFileSystemEntries/Open 直接抛→整段被吞
+                string stem = SafeNamePart(cuowuma) + ttt1 + "#" + JobNumber;
+                string fullName = dir + "\\" + stem + ".bmp";
+                for (int seq = 1; File.Exists(fullName) && seq <= 999; seq++)
+                    fullName = dir + "\\" + stem + "+" + seq + ".bmp";
                 using (var writer = new CogImageFileBMP())
                 {
                     if (FileLength < zhangshu || cuntu == 1)
                     {
                         // _jobs.myjob3.number = 1;
-                        writer.Open(Jobpath + day1 + "\\" + cuowuma + ttt1 + "#" + JobNumber + ".bmp", CogImageFileModeConstants.Write);
+                        writer.Open(fullName, CogImageFileModeConstants.Write);
                         writer.Append(cogimage);
                     }
                     else
@@ -1248,7 +1306,7 @@ namespace WindowsFormsApplication1
                         double dt3 = 0;
                         string ffff = "f";
                         DateTime dt1;
-                        foreach (string f in Directory.GetFileSystemEntries(Jobpath + day1))
+                        foreach (string f in Directory.GetFileSystemEntries(dir))
                         {
                             if (File.Exists(f))
                             {
@@ -1267,14 +1325,14 @@ namespace WindowsFormsApplication1
                         //如果有子文件删除文件
                         if (ffff != "f")
                             File.Delete(ffff);
-                        writer.Open(Jobpath + day1 + "\\" + cuowuma + ttt1 + "#" + JobNumber + ".bmp", CogImageFileModeConstants.Write);
+                        writer.Open(fullName, CogImageFileModeConstants.Write);
                         writer.Append(cogimage);
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.WriteLog("存图方法" + ex.Message);
+                NoteSaveImageFailure(ex, Jobpath, cuowuma);
             }
         }
         private void chatu_fangfa(int jobhao, Myjob myjob, string list_time)
@@ -1288,7 +1346,7 @@ namespace WindowsFormsApplication1
                     string ttt2 = time111[3];
                     int ttt3 = int.Parse(time111[4]);
                     Process myProc = null;
-                    myProc = Process.Start(myjob.pathhead_ng + day1 + "\\" + ttt2 + ttt1 + "#" + ttt3 + ".bmp");//开启一个进程
+                    myProc = Process.Start(myjob.pathhead_ng + day1 + "\\" + SafeNamePart(ttt2) + ttt1 + "#" + ttt3 + ".bmp");//开启一个进程
                     try
                     {
                         myProc.Kill();//关闭一个进程

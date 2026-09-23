@@ -40,7 +40,8 @@ public class Myjob
         public CogToolBlock block;
         public int sum;
         public int oksum;
-        public int ngsum;
+        // ★第26轮#30：原 ngsum 字段已删除——全仓从未自增过（NG 数界面按 sum-oksum 计算），
+        //   留着只会让人误以为它是可信的 NG 计数来源。
         public float rate;
         public int number;
         public int numberng;
@@ -101,7 +102,9 @@ public class Myjob
         public bool IO;
         public FolderBrowserDialog dlg;
         public int IOyanshi;
-        public string state;
+        // ★第26轮#2：默认空串——守卫里 `job.state.Contains("相")` 在 InitializeJobManager 赋值前
+        //   就可能被下拉框初始化触发，null 直接 NRE。
+        public string state = "";
         public Stopwatch timewatch;
         public long time;
         public bool roi;

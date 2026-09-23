@@ -514,49 +514,8 @@ namespace WindowsFormsApplication1
 
         private void comboBox4_SelectedIndexChanged_1(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob2.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox4.Text == "连续运行")
-                    {
-                        _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger2.Enabled = false;
-                        bnTriggerExec2.Enabled = false;
-                    }
-                    else if (comboBox4.Text == "触发拍照" || comboBox4.Text == "通讯触发")
-                    {
-
-                        _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-
-                        // ch:触发源选择:0 - Line0; | en:Trigger source select:0 - Line0;
-                        //           1 - Line1;
-                        //           2 - Line2;
-                        //           3 - Line3;
-                        //           4 - Counter;
-                        //           7 - Software;
-                        if (cbSoftTrigger2.Checked || comboBox4.Text == "通讯触发")
-                        {
-                            _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing2)
-                            {
-                                bnTriggerExec2.Enabled = true;
-                            }
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                        }
-                        cbSoftTrigger2.Enabled = true;
-
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog(ex.Message + "触发切换2");
-                }
-                _jobs.myjob2.triggerMode = comboBox4.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(1, comboBox4);
         }
 
         private void checkBox10_CheckedChanged(object sender, EventArgs e)
@@ -662,7 +621,8 @@ namespace WindowsFormsApplication1
                     string ttt2 = time111[3];
                     int ttt3 = int.Parse(time111[4]);
                     Process myProc = null;
-                    myProc = Process.Start(_jobs.myjob2.pathhead_ng + day1 + "\\" + ttt1 + ttt2 + "#" + ttt3 + ".bmp");//开启一个进程
+                    // ★第26轮#24 附带修正：原拼接顺序与写方(错误码+hhmmss#序号)相反,回构名恒不匹配→该入口从来打不开图
+                    myProc = Process.Start(_jobs.myjob2.pathhead_ng + day1 + "\\" + SafeNamePart(ttt2) + ttt1 + "#" + ttt3 + ".bmp");//开启一个进程
                     try
                     {
                         myProc.Kill();//关闭一个进程
@@ -770,96 +730,14 @@ namespace WindowsFormsApplication1
 
         private void comboBox5_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob3.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox5.Text == "连续运行")
-                    {
-                        _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger3.Enabled = false;
-                        bnTriggerExec3.Enabled = false;
-                    }
-                    else if (comboBox5.Text == "触发拍照" || comboBox5.Text == "通讯触发")
-                    {
-
-                        _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-
-                        // ch:触发源选择:0 - Line0; | en:Trigger source select:0 - Line0;
-                        //           1 - Line1;
-                        //           2 - Line2;
-                        //           3 - Line3;
-                        //           4 - Counter;
-                        //           7 - Software;
-                        if (cbSoftTrigger3.Checked || comboBox5.Text == "通讯触发")
-                        {
-                            _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing3)
-                            {
-                                bnTriggerExec3.Enabled = true;
-                            }
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                        }
-                        cbSoftTrigger3.Enabled = true;
-
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog(ex.Message + "触发切换3");
-                }
-                _jobs.myjob3.triggerMode = comboBox5.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(2, comboBox5);
         }
 
         private void comboBox8_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (frm5.mark == 1 || _jobs.myjob4.state.Contains("相"))
-            {
-                try
-                {
-                    if (comboBox8.Text.Contains("连续运行"))
-                    {
-                        _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
-                        cbSoftTrigger4.Enabled = false;
-                        bnTriggerExec4.Enabled = false;
-                    }
-                    else if (comboBox8.Text.Contains("触发拍照") || comboBox8.Text.Contains("通讯触发"))
-                    {
-
-                        _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-
-                        // ch:触发源选择:0 - Line0; | en:Trigger source select:0 - Line0;
-                        //           1 - Line1;
-                        //           2 - Line2;
-                        //           3 - Line3;
-                        //           4 - Counter;
-                        //           7 - Software;
-                        if (cbSoftTrigger4.Checked || comboBox8.Text.Contains("通讯触发"))
-                        {
-                            _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            if (m_bGrabbing4)
-                            {
-                                bnTriggerExec4.Enabled = true;
-                            }
-                        }
-                        else
-                        {
-                            _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
-                        }
-                        cbSoftTrigger4.Enabled = true;
-
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog(ex.Message + "触发切换4");
-                }
-                _jobs.myjob4.triggerMode = comboBox8.Text;
-            }
+            // ★第26轮#2/#4：改为统一入口（持 _cameraLock 下发 + 未授权回滚 UI + 模式变化清待处理记录）
+            ApplyTriggerModeSelection(3, comboBox8);
         }
 
         private void listBox8_SelectedIndexChanged_1(object sender, EventArgs e)
@@ -1038,23 +916,17 @@ namespace WindowsFormsApplication1
             if (f1.Visible == false)
             {
                 f1.block_1 = _jobs.myjob1.block;
-                if (manager1.JobCount > 1)
-                {
-                    f1.temp = 1;
-                    f1.block_2 = _jobs.myjob2.block;
-                }
-                if (manager1.JobCount > 2)
-                    f1.block_3 = _jobs.myjob3.block;
-                if (manager1.JobCount > 3)
-                    f1.block_4 = _jobs.myjob4.block;
-                if (manager1.JobCount > 4)
-                    f1.block_5 = _jobs.myjob5.block;
-                if (manager1.JobCount > 5)
-                    f1.block_6 = _jobs.myjob6.block;
-                if (manager1.JobCount > 6)
-                    f1.block_7 = _jobs.myjob7.block;
-                if (manager1.JobCount > 7)
-                    f1.block_8 = _jobs.myjob8.block;
+                // ★第26轮#15：原先按 `manager1.JobCount > N` 才赋值，切到流程数变少的方案时
+                //   block_3..8 仍钉着上一方案已 Shutdown 的块，SubSet 写回打到死块。
+                //   现无条件取当前各路 block（切换时 ReleaseAllMyjobVisionObjects 已把未绑定路置 null）。
+                f1.block_2 = _jobs.myjob2.block;
+                f1.block_3 = _jobs.myjob3.block;
+                f1.block_4 = _jobs.myjob4.block;
+                f1.block_5 = _jobs.myjob5.block;
+                f1.block_6 = _jobs.myjob6.block;
+                f1.block_7 = _jobs.myjob7.block;
+                f1.block_8 = _jobs.myjob8.block;
+                f1.temp = (manager1 != null && manager1.JobCount > 1) ? 1 : 0;
                 f1.path = path_1;
                 f1.Myjob = manager1;
                 f1.Visible = true;
@@ -1143,55 +1015,22 @@ namespace WindowsFormsApplication1
 
         private void button4_Click_2(object sender, EventArgs e)
         {
-            _jobs.myjob1.sum = 0;
-            _jobs.myjob1.oksum = 0;
-            _jobs.myjob1.ngsum = 0;
-            _jobs.myjob1.rate = 0;
-            _jobs.myjob2.sum = 0;
-            _jobs.myjob2.oksum = 0;
-            _jobs.myjob2.ngsum = 0;
-            _jobs.myjob2.rate = 0;
-            _jobs.myjob3.sum = 0;
-            _jobs.myjob3.oksum = 0;
-            _jobs.myjob3.ngsum = 0;
-            _jobs.myjob3.rate = 0;
-            _jobs.myjob4.sum = 0;
-            _jobs.myjob4.oksum = 0;
-            _jobs.myjob4.ngsum = 0;
-            _jobs.myjob4.rate = 0;
-            _jobs.myjob5.sum = 0;
-            _jobs.myjob5.oksum = 0;
-            _jobs.myjob5.ngsum = 0;
-            _jobs.myjob5.rate = 0;
-            _jobs.myjob6.sum = 0;
-            _jobs.myjob6.oksum = 0;
-            _jobs.myjob6.ngsum = 0;
-            _jobs.myjob6.rate = 0;
-            _jobs.myjob7.sum = 0;
-            _jobs.myjob7.oksum = 0;
-            _jobs.myjob7.ngsum = 0;
-            _jobs.myjob7.rate = 0;
-            _jobs.myjob8.sum = 0;
-            _jobs.myjob8.oksum = 0;
-            _jobs.myjob8.ngsum = 0;
-            _jobs.myjob8.rate = 0;
-            // ★清单②修复（2026-09-20）：原实现只清到 myjob8——9~12 路统计漏清（点"清零"后 9-12 仍显示旧值）
-            _jobs.myjob9.sum = 0;
-            _jobs.myjob9.oksum = 0;
-            _jobs.myjob9.ngsum = 0;
-            _jobs.myjob9.rate = 0;
-            _jobs.myjob10.sum = 0;
-            _jobs.myjob10.oksum = 0;
-            _jobs.myjob10.ngsum = 0;
-            _jobs.myjob10.rate = 0;
-            _jobs.myjob11.sum = 0;
-            _jobs.myjob11.oksum = 0;
-            _jobs.myjob11.ngsum = 0;
-            _jobs.myjob11.rate = 0;
-            _jobs.myjob12.sum = 0;
-            _jobs.myjob12.oksum = 0;
-            _jobs.myjob12.ngsum = 0;
-            _jobs.myjob12.rate = 0;
+            // ★第26轮#29：检测线程用 Interlocked.Increment 累加 sum/oksum，原清零是裸 `= 0`——
+            //   两者并发时清零瞬间正在累加的那一帧计数被吞（点"清零"当刻的数量少算）。改为
+            //   Interlocked.Exchange 同一口径。#30：ngsum 全仓从未自增过（NG 数界面按 sum-oksum
+            //   算），是死字段，清零一并删除。
+            var jobs = _jobs;
+            if (jobs != null && jobs.Myjobs != null)
+            {
+                for (int i = 0; i < 12 && i < jobs.Myjobs.Length; i++)
+                {
+                    var job = jobs.Myjobs[i];
+                    if (job == null) continue;
+                    Interlocked.Exchange(ref job.sum, 0);
+                    Interlocked.Exchange(ref job.oksum, 0);
+                    job.rate = 0f;
+                }
+            }
             for (int i = 0; i < 12; ++i)
             {
                 m_nFrames[i] = 0;

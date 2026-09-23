@@ -62,14 +62,20 @@ namespace demo
         private static void InvalidateSection(FileCache fc, string section)
         {
             if (fc == null) return;
-            string prefix = section + "\0";
-            var toRemove = new List<string>();
-            foreach (var k in fc.Values.Keys)
-                if (k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                    toRemove.Add(k);
-            foreach (var k in toRemove) fc.Values.Remove(k);
-            fc.SectionIdents.Remove(section);
-            fc.AllSections = null;
+            // ★第26轮#16：读写入口均在 _cacheLock 内访问这三个字典，本方法原先无锁枚举+删除，
+            //   与并发读交错会损坏 Dictionary 内部结构（丢条目甚至死循环）。monitor 可重入，
+            //   已持锁的外层调用方无影响。
+            lock (_cacheLock)
+            {
+                string prefix = section + "\0";
+                var toRemove = new List<string>();
+                foreach (var k in fc.Values.Keys)
+                    if (k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        toRemove.Add(k);
+                foreach (var k in toRemove) fc.Values.Remove(k);
+                fc.SectionIdents.Remove(section);
+                fc.AllSections = null;
+            }
         }
 
         // ★ 缓存按文件写入时间(mtime)失效：原前提"本进程是唯一写者"不成立时(其它进程/

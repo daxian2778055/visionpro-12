@@ -115,94 +115,15 @@ namespace WindowsFormsApplication1
             }
         }
 
-        private IntPtr GetDriverBuffer(int camIndex)
+        // ★第26轮#23：原 GetDriverBuffer / EnsureDriverBuffer / FreeDriverBuffer 三个方法已删除。
+        //   EnsureDriverBuffer 每次按 PayloadSize Marshal.AllocHGlobal 一块缓冲，但取帧走 SDK
+        //   回调 / GetImageBuffer 路径，指针全仓从未被读用（12 路 × 5~25MB 纯占非托管内存，
+        //   还要在关窗/停采路径配套 FreeDriverBuffer）。现只保留这条链路的真实用途：记录当前
+        //   PayloadSize（m_nBufSizeForDriver 仍有读取方），不再分配/释放任何非托管内存。
+        private void NoteDriverPayloadSize(int camIndex, uint payloadSize)
         {
-            switch (camIndex)
-            {
-                case 0: return m_BufForDriver1;
-                case 1: return m_BufForDriver2;
-                case 2: return m_BufForDriver3;
-                case 3: return m_BufForDriver4;
-                case 4: return m_BufForDriver5;
-                case 5: return m_BufForDriver6;
-                case 6: return m_BufForDriver7;
-                case 7: return m_BufForDriver8;
-                case 8: return m_BufForDriver9;
-                case 9: return m_BufForDriver10;
-                case 10: return m_BufForDriver11;
-                case 11: return m_BufForDriver12;
-                default: return IntPtr.Zero;
-            }
-        }
-
-        private bool EnsureDriverBuffer(int camIndex, uint payloadSize)
-        {
-            if (payloadSize > m_nBufSizeForDriver[camIndex] || GetDriverBuffer(camIndex) == IntPtr.Zero)
-            {
-                IntPtr oldBuf = IntPtr.Zero;
-                switch (camIndex)
-                {
-                    case 0: oldBuf = m_BufForDriver1; break;
-                    case 1: oldBuf = m_BufForDriver2; break;
-                    case 2: oldBuf = m_BufForDriver3; break;
-                    case 3: oldBuf = m_BufForDriver4; break;
-                    case 4: oldBuf = m_BufForDriver5; break;
-                    case 5: oldBuf = m_BufForDriver6; break;
-                    case 6: oldBuf = m_BufForDriver7; break;
-                    case 7: oldBuf = m_BufForDriver8; break;
-                    case 8: oldBuf = m_BufForDriver9; break;
-                    case 9: oldBuf = m_BufForDriver10; break;
-                    case 10: oldBuf = m_BufForDriver11; break;
-                    case 11: oldBuf = m_BufForDriver12; break;
-                }
-                if (oldBuf != IntPtr.Zero)
-                    Marshal.FreeHGlobal(oldBuf);
-                m_nBufSizeForDriver[camIndex] = payloadSize;
-                IntPtr newBuf = Marshal.AllocHGlobal((int)m_nBufSizeForDriver[camIndex]);
-                switch (camIndex)
-                {
-                    case 0: m_BufForDriver1 = newBuf; break;
-                    case 1: m_BufForDriver2 = newBuf; break;
-                    case 2: m_BufForDriver3 = newBuf; break;
-                    case 3: m_BufForDriver4 = newBuf; break;
-                    case 4: m_BufForDriver5 = newBuf; break;
-                    case 5: m_BufForDriver6 = newBuf; break;
-                    case 6: m_BufForDriver7 = newBuf; break;
-                    case 7: m_BufForDriver8 = newBuf; break;
-                    case 8: m_BufForDriver9 = newBuf; break;
-                    case 9: m_BufForDriver10 = newBuf; break;
-                    case 10: m_BufForDriver11 = newBuf; break;
-                    case 11: m_BufForDriver12 = newBuf; break;
-                }
-            }
-            return GetDriverBuffer(camIndex) != IntPtr.Zero;
-        }
-
-        /// <summary>
-        /// 释放单个相机的驱动缓冲（AllocHGlobal 分配，必须用 FreeHGlobal 释放），释放后置零防止重复释放。
-        /// </summary>
-        private void FreeDriverBuffer(int i)
-        {
-            IntPtr buf = IntPtr.Zero;
-            switch (i)
-            {
-                case 0: buf = m_BufForDriver1; m_BufForDriver1 = IntPtr.Zero; break;
-                case 1: buf = m_BufForDriver2; m_BufForDriver2 = IntPtr.Zero; break;
-                case 2: buf = m_BufForDriver3; m_BufForDriver3 = IntPtr.Zero; break;
-                case 3: buf = m_BufForDriver4; m_BufForDriver4 = IntPtr.Zero; break;
-                case 4: buf = m_BufForDriver5; m_BufForDriver5 = IntPtr.Zero; break;
-                case 5: buf = m_BufForDriver6; m_BufForDriver6 = IntPtr.Zero; break;
-                case 6: buf = m_BufForDriver7; m_BufForDriver7 = IntPtr.Zero; break;
-                case 7: buf = m_BufForDriver8; m_BufForDriver8 = IntPtr.Zero; break;
-                case 8: buf = m_BufForDriver9; m_BufForDriver9 = IntPtr.Zero; break;
-                case 9: buf = m_BufForDriver10; m_BufForDriver10 = IntPtr.Zero; break;
-                case 10: buf = m_BufForDriver11; m_BufForDriver11 = IntPtr.Zero; break;
-                case 11: buf = m_BufForDriver12; m_BufForDriver12 = IntPtr.Zero; break;
-            }
-            if (buf != IntPtr.Zero)
-            {
-                try { Marshal.FreeHGlobal(buf); } catch { }
-            }
+            if (camIndex < 0 || camIndex >= m_nBufSizeForDriver.Length) return;
+            m_nBufSizeForDriver[camIndex] = payloadSize;
         }
 
         /// <summary>
@@ -265,7 +186,26 @@ namespace WindowsFormsApplication1
                 _logger.WriteLog("相机" + (cameraIndex + 1) + "未采集，跳过软触发");
                 return -1;
             }
-            return _cameraCtrl.Cameras[cameraIndex].MV_CC_SetCommandValue_NET("TriggerSoftware");
+            // ★第26轮#1：硬件写入收进 _cameraLock（与打开/关闭/重连的 Close/Destroy 互斥）。
+            //   用 TryEnter(200ms) 而非 lock：重连持锁可达数秒，触发线程绝不能排在它后面——
+            //   拿不到锁即判本次触发失败（该路本就在恢复中，上层会按未收帧处理）。
+            bool lockTaken = false;
+            try
+            {
+                Monitor.TryEnter(_cameraLock, 200, ref lockTaken);
+                if (!lockTaken)
+                {
+                    _logger.WriteLog("相机" + (cameraIndex + 1) + "相机域忙（开/关/重连中），跳过本次软触发");
+                    return -1;
+                }
+                var cam = _cameraCtrl.Cameras[cameraIndex];
+                if (cam == null) return -1;
+                return cam.MV_CC_SetCommandValue_NET("TriggerSoftware");
+            }
+            finally
+            {
+                if (lockTaken) Monitor.Exit(_cameraLock);
+            }
         }
 
         private bool ShouldProcessImageCallback(int slot)
@@ -385,6 +325,42 @@ namespace WindowsFormsApplication1
             }
         }
 
+        // ★第26轮#2/#4：12 路触发模式下拉框的统一入口（原来每个 handler 各自内联一份绕锁硬件写入）。
+        private bool _triggerModeRollbackBusy;
+
+        /// <summary>
+        /// 触发模式下拉框统一入口。原实现的整段守卫是 `frm5.mark == 1 || job.state.Contains("相")`，
+        /// 登录 30s 超时后 mark 归 0 → 操作工改模式被静默整段跳过：下拉框显示新模式、硬件仍是旧模式、
+        /// job.triggerMode 也不更新（UI 与硬件背离且无任何提示）。现在未授权一律把下拉框回滚到
+        /// 硬件实际生效模式并记日志；授权则统一走持 _cameraLock 的 ApplyTriggerModeToCameraHardware。
+        /// 另：任何一次模式变化都清该路通讯触发待处理记录（原来只在切进"通讯触发"时清，
+        /// 切出/平级切换时残留记录会串接旧的 CommTriggerSource，导致回执发错连接）。
+        /// </summary>
+        private void ApplyTriggerModeSelection(int slot, ComboBox cb)
+        {
+            if (slot < 0 || slot >= 12 || cb == null) return;
+            if (_triggerModeRollbackBusy) return;   // 回滚赋值自身引发的重入
+            Myjob job = _jobs.Myjobs[slot];
+            if (job == null) return;
+            string oldMode = job.triggerMode ?? "";
+            string newMode = cb.Text;
+            bool authorized = frm5 != null && (frm5.mark == 1 || (job.state ?? "").Contains("相"));
+            if (!authorized)
+            {
+                if (newMode == oldMode) return;
+                _triggerModeRollbackBusy = true;
+                try { cb.Text = oldMode; }
+                finally { _triggerModeRollbackBusy = false; }
+                _logger.WriteLog("相机" + (slot + 1) + "触发模式修改未生效（未登录授权），下拉框已回滚为「" + oldMode + "」");
+                return;
+            }
+            if (newMode == oldMode) return;   // 同一模式重复选择：不重复下发
+            job.triggerMode = newMode;
+            ApplyTriggerModeToCameraHardware(slot);
+            try { _jobs.ClearCommTriggerPending(slot); }
+            catch (Exception exP) { _logger.WriteLog("相机" + (slot + 1) + "清理通讯触发待处理异常：" + exP.Message); }
+        }
+
         private void ApplyTriggerModesForOpenedCameras()
         {
             if (manager1 == null) return;
@@ -406,6 +382,8 @@ namespace WindowsFormsApplication1
                 try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
                 try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
                 _cameraCtrl.Cameras[slot] = null;
+                m_slotTLayerType[slot] = 0;   // ★第26轮建议1：句柄已销毁 → 槽位传输层与丢帧缓存一并复位
+                _lostFrameCache[slot] = "0";
             }
             _jobs.ClearCommTriggerPending(slot);
             switch (nnn)
@@ -527,11 +505,7 @@ namespace WindowsFormsApplication1
                 _logger.WriteLog("相机" + (camIndex + 1) + " Get PayloadSize failed:" + nRet);
                 return false;
             }
-            if (!EnsureDriverBuffer(camIndex, stParam.nCurValue))
-            {
-                _logger.WriteLog("相机" + (camIndex + 1) + " 缓存分配失败");
-                return false;
-            }
+            NoteDriverPayloadSize(camIndex, stParam.nCurValue);   // ★#23：仅记录 PayloadSize，不再分配非托管缓冲
             m_stFrameInfo[camIndex].nFrameLen = 0;
             m_stFrameInfo[camIndex].enPixelType = MyCamera.MvGvspPixelType.PixelType_Gvsp_Undefined;
             SetCameraGrabbing(camIndex, true);

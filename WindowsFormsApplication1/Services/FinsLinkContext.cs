@@ -83,6 +83,9 @@ namespace WindowsFormsApplication1
         public int PollInterval { get { return (int)_cfg.LunxunTime; } }
         public bool IsPollEnabled { get { return _cfg.FinsLunxunen; } }
         public bool IsCommEnabled { get { return _cfg.FinsEn; } }
+        // ★#32：重连由本上下文的 OnReconnect 发起，Runtime 侧的 _reconnecting 永不被置位——
+        //   把本连接真实重连状态经接口暴露，轮询循环才拦得住"重连期间继续读写"。
+        public bool IsReconnecting { get { return Interlocked.CompareExchange(ref _reconnecting, 0, 0) != 0; } }
         public int AddressBase { get { return (int)_cfg.Qishi; } }
         public Dictionary<string, string[]> FinsBlocks { get { return _finsDic; } }
         public Dictionary<int, string[]> CameraBindings { get { return _cameraDic; } }
