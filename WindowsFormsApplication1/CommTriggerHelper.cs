@@ -7,6 +7,17 @@ namespace WindowsFormsApplication1
     /// </summary>
     public static class CommTriggerHelper
     {
+        /// <summary>
+        /// ★R11（第25轮）：读结果文本是否为“读取失败”文案（DemoUtils.ReadResultRender1 失败时输出
+        /// “Read Failed”/“not corrent”）。失败文案不能当作 PLC 值参与触发/切型判定，
+        /// 否则网络抖动会造成同值重复触发 + 每圈向 PLC 反复回写反馈。
+        /// </summary>
+        public static bool IsReadFailureText(string resultText)
+        {
+            if (string.IsNullOrEmpty(resultText)) return false;
+            return resultText.Contains("Failed") || resultText.Contains("corrent");
+        }
+
         public static string FormatTrigValDisplay(string mode, string val1, string val2)
         {
             if (mode == "范围")

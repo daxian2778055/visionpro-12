@@ -1083,6 +1083,7 @@ namespace WindowsFormsApplication1
         // ★P2：线程池线程（InitializeForm 末尾 Task.Run）写 true，轮询线程（Fins_duxie）读；加 volatile 保证跨线程可见性
         public volatile bool chushihua = false;
         private readonly System.Collections.Concurrent.ConcurrentDictionary<int, bool> _triggerLatch = new System.Collections.Concurrent.ConcurrentDictionary<int, bool>();
+        private int _lastTrigReadFailLogTick; // ★R11：读失败跳过触发判定的限流日志时戳
         private int _commFailCount = 0;
         private int _reconnecting = 0;
         private long _lastReconnectAttemptTicks = 0;
@@ -1604,6 +1605,7 @@ namespace WindowsFormsApplication1
                                             continue;
                                         }
                                         shuju_temp = "";
+                                        bool blockReadFailed = false; // ★R11：本块任一次读失败即置真，失败文案不得当“值”
                                         for (int j = 0; j < blkChangdu; j++)
                                         {
                                             if (par.Value[4] == "int")
@@ -1613,6 +1615,7 @@ namespace WindowsFormsApplication1
                                                 // 读取short变量
                                                 DemoUtils.ReadResultRender1(ReadLocked(() => omronFinsNet.ReadInt16("D" + (int.Parse(par.Value[1]) + j).ToString())), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
                                             else if (par.Value[4] == "string")
@@ -1621,6 +1624,7 @@ namespace WindowsFormsApplication1
                                                 // 读取字符串
                                                 DemoUtils.ReadResultRender1(ReadLocked(() => omronFinsNet.ReadString("D" + (int.Parse(par.Value[1]) + j).ToString(), 1)), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
                                             else if (par.Value[4] == "long" && j % 2 == 0)
@@ -1629,6 +1633,7 @@ namespace WindowsFormsApplication1
                                                 // 读取字符串
                                                 DemoUtils.ReadResultRender1(ReadLocked(() => omronFinsNet.ReadInt32("D" + (int.Parse(par.Value[1]) + j).ToString())), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
                                             else if (par.Value[4] == "float" && j % 2 == 0)
@@ -1637,8 +1642,22 @@ namespace WindowsFormsApplication1
                                                 // 读取字符串
                                                 DemoUtils.ReadResultRender1(ReadLocked(() => omronFinsNet.ReadFloat("D" + (int.Parse(par.Value[1]) + j).ToString())), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                                 CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
+                                        }
+                                        if (par.Value[3] == "触发" && blockReadFailed)
+                                        {
+                                            // ★R11（第25轮）：本块任一寄存器读取失败时，shuju_temp 混有“Read Failed”等文案，
+                                            //   原实现把它当“值”判定：反馈不等→每圈向 PLC 回写；条件误命中/锁存被 else 误复位→
+                                            //   网络恢复后同值重复触发。失败轮整块跳过判定（锁存原样保留），读恢复后再判。
+                                            int nowF = Environment.TickCount;
+                                            if (nowF - _lastTrigReadFailLogTick > 5000)
+                                            {
+                                                _lastTrigReadFailLogTick = nowF;
+                                                Log("数据块 " + par.Key + " 本轮读取失败，已跳过触发/切型判定与回写（防读失败文案被当作值）");
+                                            }
+                                            continue;
                                         }
                                         if (par.Value[3] == "触发")
                                         {

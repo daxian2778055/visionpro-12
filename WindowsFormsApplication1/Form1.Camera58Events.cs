@@ -421,7 +421,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob5, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger5_temp = 1;
-                    timer13.Interval = int.Parse(textBox21.Text);
+                    ApplyReplayInterval(timer13, textBox21);
                     timer13.Enabled = true;
                 }
             }
@@ -446,7 +446,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob6, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger6_temp = 1;
-                    timer14.Interval = int.Parse(textBox27.Text);
+                    ApplyReplayInterval(timer14, textBox27);
                     timer14.Enabled = true;
                 }
             }
@@ -471,7 +471,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob7, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger7_temp = 1;
-                    timer15.Interval = int.Parse(textBox33.Text);
+                    ApplyReplayInterval(timer15, textBox33);
                     timer15.Enabled = true;
                 }
             }
@@ -496,7 +496,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob8, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger8_temp = 1;
-                    timer16.Interval = int.Parse(textBox39.Text);
+                    ApplyReplayInterval(timer16, textBox39);
                     timer16.Enabled = true;
                 }
             }
@@ -5239,24 +5239,26 @@ namespace WindowsFormsApplication1
 
         }
 
+        // ★R8（第25轮）：原实现在 timer17_Tick（WinForms Timer=UI 线程）里 Thread.Sleep(job.timespace)，
+        //   勾选 checkBox69 后每个周期把界面连同消息驱动的检测线程一起卡最长数秒。
+        //   改为两段式：写低电平后把 Interval 临时缩短为 timespace，下一拍写高电平并恢复设计间隔(1000ms)。
+        //   波形占空比与原一致（低=timespace，高=1000ms），全程不阻塞任何线程。
+        private int _timer17Phase; // 0=写低电平 1=待写高电平 2=待写低电平（高电平间隔已恢复）
+        private const int Timer17BaseIntervalMs = 1000; // 与 Designer timer17.Interval 一致
+
         private void timer17_Tick(object sender, EventArgs e)
         {
-            if (!_jobs.yunxing)
+            if (_jobs.yunxing)
             {
-                // ★修复：outputok/outputng 直写绕开 SetOk/SetNg 的 locker 约定，与检测线程
-                //   的输出翻转竞争会产生半套状态(ok2 与 ok 不一致)。成对加锁，语义与原一致。
-                var job = _jobs.myjob1;
-                lock (job.locker_ok)
-                {
-                    job.outputok2 = -1;
-                    job.outputok = 0;
-                }
-                lock (job.locker_ng)
-                {
-                    job.outputng2 = -1;
-                    job.outputng = 0;
-                }
-                Thread.Sleep(job.timespace);
+                // 与原版一致：运行中整段跳过（不写输出），并复位相位/间隔
+                _timer17Phase = 0;
+                timer17.Interval = Timer17BaseIntervalMs;
+                return;
+            }
+            var job = _jobs.myjob1;
+            if (_timer17Phase == 1)
+            {
+                // 高电平拍：写回 1/1 对，恢复基础间隔（低电平已持续 timespace）
                 lock (job.locker_ok)
                 {
                     job.outputok2 = 1;
@@ -5267,11 +5269,35 @@ namespace WindowsFormsApplication1
                     job.outputng2 = 1;
                     job.outputng = 1;
                 }
+                _timer17Phase = 2;
+                timer17.Interval = Timer17BaseIntervalMs;
+            }
+            else
+            {
+                // 低电平拍（首拍或高电平后的下一拍）：写 -1/0 对，下一拍 timespace 后写高
+                lock (job.locker_ok)
+                {
+                    job.outputok2 = -1;
+                    job.outputok = 0;
+                }
+                lock (job.locker_ng)
+                {
+                    job.outputng2 = -1;
+                    job.outputng = 0;
+                }
+                _timer17Phase = 1;
+                int ts = job.timespace;
+                if (ts < 1) ts = 1;
+                if (ts > 65535) ts = 65535; // WinForms Timer 上限保护
+                timer17.Interval = ts;
             }
         }
 
         private void checkBox69_CheckedChanged(object sender, EventArgs e)
         {
+            // ★R8：重新勾选从"低电平拍"干净起步；解除勾选时同步恢复设计间隔（防上次停在缩短态）
+            _timer17Phase = 0;
+            try { timer17.Interval = Timer17BaseIntervalMs; } catch { }
             if (checkBox69.CheckState == CheckState.Checked)
             {
                 timer17.Enabled = true;

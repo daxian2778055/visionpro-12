@@ -209,7 +209,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob9, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger9_temp = 1;
-                    timer9.Interval = int.Parse(textBox42.Text);
+                    ApplyReplayInterval(timer9, textBox42);
                     timer9.Enabled = true;
                 }
             }
@@ -281,7 +281,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob10, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger10_temp = 1;
-                    timer18.Interval = int.Parse(textBox45.Text);
+                    ApplyReplayInterval(timer18, textBox45);
                     timer18.Enabled = true;
                 }
             }
@@ -353,7 +353,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob11, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger11_temp = 1;
-                    timer19.Interval = int.Parse(textBox48.Text);
+                    ApplyReplayInterval(timer19, textBox48);
                     timer19.Enabled = true;
                 }
             }
@@ -425,7 +425,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob12, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger12_temp = 1;
-                    timer20.Interval = int.Parse(textBox51.Text);
+                    ApplyReplayInterval(timer20, textBox51);
                     timer20.Enabled = true;
                 }
             }

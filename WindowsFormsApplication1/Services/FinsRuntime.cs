@@ -26,6 +26,7 @@ namespace WindowsFormsApplication1
 
         // 每连接运行时状态（阶段 3-C 起收口到实例，避免多连接共享窗体字段）
         private readonly Dictionary<int, bool> _triggerLatch = new Dictionary<int, bool>();
+        private int _lastTrigReadFailLogTick; // ★R11：读失败跳过触发判定的限流日志时戳
         private int _commFailCount = 0;
         private int _reconnecting = 0;
         private long _lastReconnectAttemptTicks = 0;
@@ -152,6 +153,7 @@ namespace WindowsFormsApplication1
                                 foreach (var par in ctx.FinsBlocks)
                                 {
                                     shuju_temp = "";
+                                    bool blockReadFailed = false; // ★R11：本块任一次读失败即置真，失败文案不得当“值”
                                     for (int j = 0; j < int.Parse(par.Value[2]); j++)
                                     {
                                         if (par.Value[4] == "int")
@@ -159,6 +161,7 @@ namespace WindowsFormsApplication1
                                             xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
                                             DemoUtils.ReadResultRender1(_link.Client.ReadInt16("D" + (int.Parse(par.Value[1]) + j).ToString()), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                             ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }
                                         else if (par.Value[4] == "string")
@@ -166,6 +169,7 @@ namespace WindowsFormsApplication1
                                             xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
                                             DemoUtils.ReadResultRender1(_link.Client.ReadString("D" + (int.Parse(par.Value[1]) + j).ToString(), 1), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                             ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }
                                         else if (par.Value[4] == "long" && j % 2 == 0)
@@ -173,6 +177,7 @@ namespace WindowsFormsApplication1
                                             xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
                                             DemoUtils.ReadResultRender1(_link.Client.ReadInt32("D" + (int.Parse(par.Value[1]) + j).ToString()), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                             ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }
                                         else if (par.Value[4] == "float" && j % 2 == 0)
@@ -180,8 +185,21 @@ namespace WindowsFormsApplication1
                                             xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
                                             DemoUtils.ReadResultRender1(_link.Client.ReadFloat("D" + (int.Parse(par.Value[1]) + j).ToString()), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
                                             ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }
+                                    }
+                                    if (par.Value[3] == "触发" && blockReadFailed)
+                                    {
+                                        // ★R11（第25轮）：本块任一寄存器读取失败时，shuju_temp 混有“Read Failed”等文案，
+                                        //   不能当“值”判定（否则同值重复触发 + 每圈回写反馈）。失败轮整块跳过（锁存保留）。
+                                        int nowF = Environment.TickCount;
+                                        if (nowF - _lastTrigReadFailLogTick > 5000)
+                                        {
+                                            _lastTrigReadFailLogTick = nowF;
+                                            ctx.Log("数据块 " + par.Key + " 本轮读取失败，已跳过触发/切型判定与回写（防读失败文案被当作值）");
+                                        }
+                                        continue;
                                     }
                                     if (par.Value[3] == "触发")
                                     {

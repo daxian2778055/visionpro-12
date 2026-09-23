@@ -2218,38 +2218,50 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog("无流程2");
                 }
                 decimal devalue;
+                // ★R7（第25轮）：ini 手改越界值(0/超大)或解析失败(devalue=0)原先直接赋给 Value，
+                //   越界抛 ArgumentOutOfRangeException 落在启动巨型 try 里 = 后续初始化(12路绑定/开相机)被静默整体跳过。
+                //   统一就近钳位（UI 与派生变量同取钳后值）。
                 decimal.TryParse(_config.ReadString("camera", "yanshi", "5"), out devalue);
+                devalue = ClampToNud(numericUpDown1, devalue);
                 numericUpDown1.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name1", "1"), out devalue);
+                devalue = ClampToNud(numericUpDown9, devalue);
                 camera_name[0] = devalue.ToString();
                 numericUpDown9.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name2", "2"), out devalue);
+                devalue = ClampToNud(numericUpDown10, devalue);
                 camera_name[1] = devalue.ToString();
                 numericUpDown10.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name3", "3"), out devalue);
+                devalue = ClampToNud(numericUpDown11, devalue);
                 camera_name[2] = devalue.ToString();
                 numericUpDown11.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name4", "4"), out devalue);
+                devalue = ClampToNud(numericUpDown12, devalue);
                 camera_name[3] = devalue.ToString();
                 numericUpDown12.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name5", "5"), out devalue);
+                devalue = ClampToNud(numericUpDown13, devalue);
                 camera_name[4] = devalue.ToString();
                 numericUpDown13.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name6", "6"), out devalue);
+                devalue = ClampToNud(numericUpDown14, devalue);
                 camera_name[5] = devalue.ToString();
                 numericUpDown14.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name7", "7"), out devalue);
+                devalue = ClampToNud(numericUpDown15, devalue);
                 camera_name[6] = devalue.ToString();
                 numericUpDown15.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name8", "8"), out devalue);
+                devalue = ClampToNud(numericUpDown16, devalue);
                 camera_name[7] = devalue.ToString();
                 numericUpDown16.Value = devalue;
 
@@ -2681,13 +2693,16 @@ namespace WindowsFormsApplication1
                     checkBox93.CheckState = CheckState.Unchecked;
 
                 decimal.TryParse(_config.ReadString("time", "feng", "100"), out devalue);
+                devalue = ClampToNud(numericUpDown22, devalue); // ★R7：同上钳位
                 numericUpDown22.Value = devalue;
                 feng = double.Parse(devalue.ToString());
 
                 decimal.TryParse(_config.ReadString("time", "IOyanshi", "0"), out devalue);
+                devalue = ClampToNud(numericUpDown5, devalue); // ★R7：同上钳位
                 numericUpDown5.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("cuntu", "zhangshu", "200"), out devalue);
+                devalue = ClampToNud(numericUpDown4, devalue); // ★R7：同上钳位
                 zhangshu = devalue;
                 numericUpDown4.Value = devalue;
 
@@ -2695,6 +2710,7 @@ namespace WindowsFormsApplication1
 
                 //this.FormBorderStyle = FormBorderStyle.FixedSingle;
                 decimal.TryParse(_config.ReadString("time", "NG", "1000"), out devalue);
+                devalue = ClampToNud(numericUpDown2, devalue); // ★R7：同上钳位
                 jiankongshijian = (double)devalue;
                 numericUpDown2.Value = devalue;
 
@@ -4449,14 +4465,25 @@ namespace WindowsFormsApplication1
                     _lastRecordBusyLogTick = now;
                     try { _logger.WriteLog("getrecord：相机流程(" + (myjob.path_number ?? "") + ")忙（检测/回图占用中），本次调用丢弃"); } catch { }
                 }
+                // ★R9（第25轮）：未消费的提前返回必须回滚回图标志——trriger 粘滞 1 时，回图按钮的
+                //   `if (trriger == 0)` 门槛会短路此后所有回图点击（该路永久无法回图，只能重启）。
+                myjob.trriger = 0;
                 return;
             }
             try
             {
-                if (!_inspectionLifecycle.TryEnter()) return;
+                if (!_inspectionLifecycle.TryEnter())
+                {
+                    if (myjob != null) myjob.trriger = 0; // ★R9：同上，暂停丢弃也回滚（img 保留，下次点击覆盖时释放）
+                    return;
+                }
                 try
                 {
-                    if (_switchingScheme || _disposingFlag) return;
+                    if (_switchingScheme || _disposingFlag)
+                    {
+                        if (myjob != null) myjob.trriger = 0; // ★R9：同上
+                        return;
+                    }
                     GetRecordCore(myjob, payload, frameSrc, acquisitionFailed);
                 }
                 finally { _inspectionLifecycle.Exit(); }
@@ -4594,6 +4621,7 @@ namespace WindowsFormsApplication1
                                 {
                                     AssignBlockInputImage(myjob.block, myjob.img, myjob.Color);
                                     myjob.img.Dispose();
+                                    myjob.img = null; // ★R9（第25轮）：消费即置空——残留已释放引用会被后续路径再触（拿死位图判 NG）
                                 }
                                 catch (Exception exIn)
                                 {
@@ -8760,7 +8788,7 @@ namespace WindowsFormsApplication1
                         getrecord(_jobs.myjob1, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger1_temp = 1;
-                    timer7.Interval = int.Parse(textBox6.Text);
+                    ApplyReplayInterval(timer7, textBox6);
                     timer7.Enabled = true;
                 }
             }
@@ -8785,10 +8813,34 @@ namespace WindowsFormsApplication1
                         getrecord(myjob, default(System.Collections.Generic.KeyValuePair<string, string>));
                     }
                     trriger_temp = 1;
-                    tim.Interval = int.Parse(text.Text);
+                    ApplyReplayInterval(tim, text);
                     tim.Enabled = true;
                 }
             }
+        }
+        // ★R10（第25轮）：回图间隔文本框原先全走 int.Parse 直达 Timer.Interval——操作员输错（空/小数/非数字/0）
+        //   即抛未捕获异常 = 程序崩溃弹 minidump。统一安全入口：非法则保持当前间隔、只记日志，永不抛。
+        private void ApplyReplayInterval(System.Windows.Forms.Timer tim, TextBox text)
+        {
+            int ms;
+            if (!int.TryParse((text.Text ?? "").Trim(), out ms) || ms < 1)
+            {
+                try { _logger.WriteLog("回图间隔输入非法（需 ≥1 的整数毫秒），保持当前值: \"" + (text.Text ?? "") + "\""); } catch { }
+                return;
+            }
+            try { tim.Interval = ms; }
+            catch (ArgumentOutOfRangeException)
+            {
+                try { _logger.WriteLog("回图间隔超出 Timer 允许范围，保持当前值: " + ms); } catch { }
+            }
+        }
+        // ★R7（第25轮）：ini→NumericUpDown 回写统一就近钳位到该控件 [Minimum,Maximum]，
+        //   越界不再抛 ArgumentOutOfRangeException 打断启动巨型 try（表现为静默半初始化）。
+        private static decimal ClampToNud(NumericUpDown nud, decimal v)
+        {
+            if (v < nud.Minimum) return nud.Minimum;
+            if (v > nud.Maximum) return nud.Maximum;
+            return v;
         }
         CogPMAlignTool pma;//PMA工具全局变量
         private void 设置ROIToolStripMenuItem_Click(object sender, EventArgs e)
