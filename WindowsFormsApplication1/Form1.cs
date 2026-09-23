@@ -3479,21 +3479,11 @@ namespace WindowsFormsApplication1
                             {
                                 this.Invoke(new Action(() =>
                                 {
-                                    for (int i = 0; i < frm6.Count; i++)
-                                    {
-                                        frm6[i].Close();
-                                    }
-                                    frm6.Clear();
-                                    // ★低危修复（2026-09-20）：同步关闭工具窗 Form9——切方案/重启运行时旧块已废弃，
-                                    //   原实现只关 Form6，旧 Form9 仍开着，写回会打到废弃块却提示已写回。
-                                    if (f9 != null)
-                                    {
-                                        for (int i = 0; i < f9.Length; i++)
-                                        {
-                                            try { if (f9[i] != null && !f9[i].IsDisposed) f9[i].Close(); } catch { }
-                                            f9[i] = null;   // 置空：下次打开会 new（Camera58Events 每次打开都重建）
-                                        }
-                                    }
+                                    // ★第28轮③：与切方案收尾合并为同一辅助方法。原实现 frm6[i].Close() 无 try 包裹，
+                                    //   一路抛异常就中断整个 Invoke（后面的 f9 关闭与统计列表清理都跑不到），
+                                    //   且 f9 无条件置 null 会把 Close 失败、仍然存活的窗口引用丢掉=孤儿窗口继续
+                                    //   钉着已废弃的 CogToolBlock。现改为逐个兜住、只有确认释放才丢引用。
+                                    CloseStaleAuxWindows("重运行收尾:");
                                 }));
                             }
                         });
@@ -7464,6 +7454,58 @@ namespace WindowsFormsApplication1
         private readonly int[] _lastOutputResetBusyTick = new int[12];
 
         /// <summary>
+        /// ★第28轮②：某路流程绑定中途抛异常时，把该路打回"未绑定"空态（与 ReleaseAllMyjobVisionObjects 一致）。
+        /// 第27轮把 12 路绑定改成逐路 try 后，失败路不再连带让后续路空绑定，而 flowBindOk 只查 job/block 非空——
+        /// 若异常发生在 <c>job.block = ...</c> 之后（典型如 <c>block.Inputs["Input"]</c> 键不存在），
+        /// 该路 job/block 均非空、Color/tishi/biaotou/zidongbaoguang/output3 却仍是上一方案的值，
+        /// 校验判通过并回 PLC"切换成功"= 带错标志开始检测（质量逃逸）。置空后回执必被抑制。
+        /// </summary>
+        private static void InvalidateRouteBinding(Myjob job)
+        {
+            if (job == null) return;
+            job.job = null;
+            job.block = null;
+        }
+
+        /// <summary>
+        /// ★第28轮③：关闭仍钉着上一方案块的辅助窗体（切方案成功收尾与重运行收尾两处共用，原来两处各写一份且口径不一）。
+        /// Close() 抛异常的窗体很可能仍然存活（如 FormClosing 里再访问已释放对象），此时**保留引用**等下次收尾重试——
+        /// 提前丢引用等于造出一个没人能关的孤儿窗口，它继续钉着已 Shutdown 的 CogToolBlock，正是本项要修的问题本身。
+        /// </summary>
+        private void CloseStaleAuxWindows(string where)
+        {
+            try
+            {
+                if (frm6 != null)
+                {
+                    for (int _fw = frm6.Count - 1; _fw >= 0; _fw--)
+                    {
+                        Form6 w6 = frm6[_fw];
+                        if (w6 == null) { frm6.RemoveAt(_fw); continue; }
+                        try { if (!w6.IsDisposed) w6.Close(); }
+                        catch (Exception exC) { _logger.WriteLog(where + "关闭Form6异常（引用已保留，下次收尾重试）：" + exC.Message); }
+                        if (w6.IsDisposed) frm6.RemoveAt(_fw);
+                    }
+                }
+                if (f9 != null)
+                {
+                    for (int _f9 = 0; _f9 < f9.Length; _f9++)
+                    {
+                        Form9 w9 = f9[_f9];
+                        if (w9 == null) continue;
+                        try { if (!w9.IsDisposed) w9.Close(); }
+                        catch (Exception exC) { _logger.WriteLog(where + "关闭Form9异常（引用已保留，下次打开前重试）：" + exC.Message); }
+                        if (w9.IsDisposed) f9[_f9] = null;   // 置空：下次打开会 new
+                    }
+                }
+                // f1 的 block_1..8 只在"当前不可见"时才重读各路 block（Camera18Events 的 Visible 守卫），
+                // 隐藏即可让下次打开重读当前方案，不必销毁。
+                if (f1 != null && !f1.IsDisposed && f1.Visible) f1.Visible = false;
+            }
+            catch (Exception exWin) { _logger.WriteLog(where + "关闭辅助窗体异常：" + exWin.Message); }
+        }
+
+        /// <summary>
         /// 停止所有通讯窗体的轮询线程（程序关闭前调用，避免后台线程在进程退出时操作半释放资源）
         /// </summary>
         private void StopAllCommPolling()
@@ -10938,7 +10980,11 @@ namespace WindowsFormsApplication1
                             // 第27轮②：12 路流程绑定改为逐路独立捕获。原实现整段共用一个 try/catch，任一路
                             //   中途抛（块内缺 CogToolBlock1、VisionTool 不是 ToolGroup 等）就连带跳过其后所有路
                             //   的绑定，而下游 flowBindOk 只看结果不看过程，现场只能从末段各路全为 null 倒推第一
-                            //   个异常点。逐路捕获后其余路照常绑定，失败路汇总记日志后仍由绑定校验抑制回执。
+                            //   个异常点。逐路捕获后其余路照常绑定，失败路汇总记日志。
+                            // 第28轮②：但"后续路全空"原本是隐式 fail-safe——逐路捕获后它只对"block 赋值之前"抛的
+                            //   路成立；在 block 赋值之后抛（如 Inputs["Input"] 键不存在）该路 job/block 仍非空、
+                            //   Color/tishi/biaotou/output3 却停在上一方案值上，flowBindOk 判通过并回 PLC"切换成功"。
+                            //   故各路 catch 内显式 InvalidateRouteBinding：把失败路打回未绑定空态，让抑制回执重新必然成立。
                             var bindFail = new System.Collections.Generic.List<string>();
                             try
                             {
@@ -10993,7 +11039,7 @@ namespace WindowsFormsApplication1
                                 }
                             }
                             }
-                            catch (Exception exB1) { bindFail.Add("相机1: " + exB1.Message); }
+                            catch (Exception exB1) { bindFail.Add("相机1: " + exB1.Message); InvalidateRouteBinding(_jobs.myjob1); }
                             if (manager1.JobCount > 1)
                             {
                             try
@@ -11051,7 +11097,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB2) { bindFail.Add("相机2: " + exB2.Message); }
+                            catch (Exception exB2) { bindFail.Add("相机2: " + exB2.Message); InvalidateRouteBinding(_jobs.myjob2); }
                             }
                             if (manager1.JobCount > 2)
                             {
@@ -11111,7 +11157,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB3) { bindFail.Add("相机3: " + exB3.Message); }
+                            catch (Exception exB3) { bindFail.Add("相机3: " + exB3.Message); InvalidateRouteBinding(_jobs.myjob3); }
                             }
                             if (manager1.JobCount > 3)
                             {
@@ -11167,7 +11213,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB4) { bindFail.Add("相机4: " + exB4.Message); }
+                            catch (Exception exB4) { bindFail.Add("相机4: " + exB4.Message); InvalidateRouteBinding(_jobs.myjob4); }
                             }
                             if (manager1.JobCount > 4)
                             {
@@ -11228,7 +11274,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB5) { bindFail.Add("相机5: " + exB5.Message); }
+                            catch (Exception exB5) { bindFail.Add("相机5: " + exB5.Message); InvalidateRouteBinding(_jobs.myjob5); }
                             }
                             if (manager1.JobCount > 5)
                             {
@@ -11289,7 +11335,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB6) { bindFail.Add("相机6: " + exB6.Message); }
+                            catch (Exception exB6) { bindFail.Add("相机6: " + exB6.Message); InvalidateRouteBinding(_jobs.myjob6); }
                             }
                             if (manager1.JobCount > 6)
                             {
@@ -11350,7 +11396,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB7) { bindFail.Add("相机7: " + exB7.Message); }
+                            catch (Exception exB7) { bindFail.Add("相机7: " + exB7.Message); InvalidateRouteBinding(_jobs.myjob7); }
                             }
                             if (manager1.JobCount > 7)
                             {
@@ -11402,7 +11448,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB8) { bindFail.Add("相机8: " + exB8.Message); }
+                            catch (Exception exB8) { bindFail.Add("相机8: " + exB8.Message); InvalidateRouteBinding(_jobs.myjob8); }
                             }
                             if (manager1.JobCount > 8)
                             {
@@ -11445,7 +11491,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB9) { bindFail.Add("相机9: " + exB9.Message); }
+                            catch (Exception exB9) { bindFail.Add("相机9: " + exB9.Message); InvalidateRouteBinding(_jobs.myjob9); }
                             }
                             if (manager1.JobCount > 9)
                             {
@@ -11488,7 +11534,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB10) { bindFail.Add("相机10: " + exB10.Message); }
+                            catch (Exception exB10) { bindFail.Add("相机10: " + exB10.Message); InvalidateRouteBinding(_jobs.myjob10); }
                             }
                             if (manager1.JobCount > 10)
                             {
@@ -11531,7 +11577,7 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB11) { bindFail.Add("相机11: " + exB11.Message); }
+                            catch (Exception exB11) { bindFail.Add("相机11: " + exB11.Message); InvalidateRouteBinding(_jobs.myjob11); }
                             }
                             if (manager1.JobCount > 11)
                             {
@@ -11574,14 +11620,14 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
-                            catch (Exception exB12) { bindFail.Add("相机12: " + exB12.Message); }
+                            catch (Exception exB12) { bindFail.Add("相机12: " + exB12.Message); InvalidateRouteBinding(_jobs.myjob12); }
                             }
                             
 
                             for (int _bf = 0; _bf < bindFail.Count; _bf++)
-                                _logger.WriteLog("切换方案: 流程绑定异常（仅跳过该路）" + bindFail[_bf]);
+                                _logger.WriteLog("切换方案: 流程绑定异常（该路已打回未绑定，其余路继续）" + bindFail[_bf]);
                             if (bindFail.Count > 0)
-                                _logger.WriteLog("切换方案: 本次共 " + bindFail.Count + " 路绑定异常，未绑定路由下游校验抑制回执");
+                                _logger.WriteLog("切换方案: 本次共 " + bindFail.Count + " 路绑定异常，这些路已置空 job/block，下方绑定校验将判不完整并抑制 PLC 回执");
                         }));
                         }
                         catch (Exception exBind)
@@ -11800,10 +11846,11 @@ namespace WindowsFormsApplication1
                                 {
                                     button1.Visible = true;
                                     display();
-                                    // ★C2 修复：ACK 前逐路校验 job/block 绑定完整性——12 路重建共用一个 try，
-                                    //   某路异常（如缺 CogToolBlock1）时该路及后续路 block 为 null，但原实现
-                                    //   照发"切换完成"回执 → PLC 开始触发而后段相机静默不检测（质量逃逸）。
-                                    //   任一应加载路未绑定成功即抑制回执（PLC 靠超时判 NG）。
+                                    // ★C2 修复：ACK 前逐路校验 job/block 绑定完整性——某路绑定异常（如缺 CogToolBlock1）时
+                                    //   该路 block 为 null，但原实现照发"切换完成"回执 → PLC 开始触发而后段相机静默不检测
+                                    //   （质量逃逸）。任一应加载路未绑定成功即抑制回执（PLC 靠超时判 NG）。
+                                    //   ★第28轮②：绑定段第27轮起已改逐路 try（不再是"该路及其后各路全空"的隐式兜底），
+                                    //   失败路由各路 catch 里的 InvalidateRouteBinding 显式置空 job/block，本校验照样拦得住。
                                     bool flowBindOk = true;
                                     int _jc = (manager1 != null) ? manager1.JobCount : 0;
                                     // ★第26轮#10：空方案（JobCount<=0）原来零次循环 → flowBindOk 恒 true，
@@ -11838,30 +11885,14 @@ namespace WindowsFormsApplication1
                                                 + (_armed ? "部分相机流程未绑定" : "检测未就绪/Arm 超时") + "），请立即检查，详见日志";
                                     }
                                     catch { }
-                                    // ★第27轮③：切方案收尾必须关掉仍钉着上一方案块的辅助窗体。
+                                    // ★第27轮③ + 第28轮③：切方案收尾必须关掉仍钉着上一方案块的辅助窗体。
                                     //   button1_Click（重运行）路径已有同样的 frm6/f9 关闭段，但 PLC 切方案路径没有：
                                     //   旧 Form6/Form9 继续开着 → 写回打到 ReleaseAllMyjobVisionObjects 已 Shutdown 的块
                                     //   却提示"已写回"；参数调整界面 f1 的 block_1..8 只在"当前不可见"时才重新取
                                     //   （Camera18Events:916 的 Visible 守卫），切完仍开着就是全套死引用。
-                                    //   统一按重运行同口径处置：关 frm6/f9、隐藏 f1 让下次打开重读当前各路 block。
-                                    try
-                                    {
-                                        for (int _fw = 0; _fw < frm6.Count; _fw++)
-                                        {
-                                            try { if (frm6[_fw] != null && !frm6[_fw].IsDisposed) frm6[_fw].Close(); } catch { }
-                                        }
-                                        frm6.Clear();
-                                        if (f9 != null)
-                                        {
-                                            for (int _f9 = 0; _f9 < f9.Length; _f9++)
-                                            {
-                                                try { if (f9[_f9] != null && !f9[_f9].IsDisposed) f9[_f9].Close(); } catch { }
-                                                f9[_f9] = null;   // 置空：下次打开会 new
-                                            }
-                                        }
-                                        if (f1 != null && f1.Visible) f1.Visible = false;
-                                    }
-                                    catch (Exception exWin) { _logger.WriteLog("切换方案收尾关闭辅助窗体异常：" + exWin.Message); }
+                                    //   第28轮③：两处合并为 CloseStaleAuxWindows——Close() 抛异常的窗体保留引用待下次重试，
+                                    //   不再无条件 Clear()/置 null 而留下无人可关的孤儿窗口。
+                                    CloseStaleAuxWindows("切换方案收尾:");
                                 }));
                             }
                             catch (Exception exArm)

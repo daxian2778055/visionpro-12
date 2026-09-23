@@ -298,28 +298,38 @@ namespace WindowsFormsApplication1
             try
             {
                 bool softChecked = GetSoftTriggerChecked(slot);
+                // ★第28轮①：模式串来自 vpp 输入或 ini，可能带空格/残留 \0。写侧本轮已补齐 DisplaySettings 里
+                //   漏去 \0 的 6 处（相机4/8/9/10/11/12），这里再统一 NormalizeTriggerMode 兜底（Trim + 历史 ini 值）。
+                //   原先用裸 == 比较，"连续运行 "这类值两个分支都不命中 → 一个参数都没下发、nRet 恒 MV_OK、
+                //   方法返回 true 假报"已下发"，回滚路径据此宣称"硬件已回滚"而硬件其实停在半套新参数上。
+                //   现未命中任何分支明确返回 false，由调用方按下发失败处理。
+                string mode = NormalizeTriggerMode(job.triggerMode);
+                bool isComm = IsCommTriggerMode(mode);
                 int nRet = MyCamera.MV_OK;
-                if (job.triggerMode == "连续运行")
+                if (mode == "连续运行")
                 {
                     job.trrigerEn = false;
                     nRet = _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                     SetSoftTriggerEnabled(slot, false);
                     SetTriggerExecEnabled(slot, false);
                 }
-                else if (job.triggerMode == "触发拍照" || IsCommTriggerMode(job.triggerMode))
+                else if (mode == "触发拍照" || isComm)
                 {
                     job.trrigerEn = true;
                     nRet = _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
                     if (nRet == MyCamera.MV_OK)
                     {
-                        if (softChecked || IsCommTriggerMode(job.triggerMode))
+                        if (softChecked || isComm)
                         {
                             nRet = _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                            SetTriggerExecEnabled(slot, IsCameraGrabbing(slot));
+                            // ★第28轮①(b)：写失败时不该把"手动触发"按钮放行（软件触发实际不会生效）。
+                            SetTriggerExecEnabled(slot, nRet == MyCamera.MV_OK && IsCameraGrabbing(slot));
                             // ★第27轮⑧：软触发勾选把该路的"触发拍照"从 Line0 硬触发改成了 SOFTWARE。统一 12 路口径是
                             //   有意的（原 9~12 路 handler 强制 Line0 并禁用勾选框），但现场若按 Line0 接线必须能看出来：
                             //   只在"勾选框改变了结果"时记一条（通讯触发本来就恒 SOFTWARE，不打）。
-                            if (softChecked && !IsCommTriggerMode(job.triggerMode))
+                            // ★第28轮①(a)：挪进 nRet==MV_OK —— 原先写失败也先打"触发源下发 SOFTWARE"，紧接着再打失败行，
+                            //   现场翻日志先被误导一行。
+                            if (softChecked && !isComm && nRet == MyCamera.MV_OK)
                                 _logger.WriteLog("相机" + (slot + 1) + "「触发拍照」已勾选软触发 → 触发源下发 SOFTWARE（非 Line0），外部硬触发信号将不起作用");
                         }
                         else
@@ -328,8 +338,18 @@ namespace WindowsFormsApplication1
                         }
                     }
                     SetSoftTriggerEnabled(slot, true);
-                    if (IsCommTriggerMode(job.triggerMode))
+                    // ★第28轮①(c)：清待处理记录也等本次下发真成功——否则本次失败回滚到旧的通讯触发模式时，
+                    //   旧模式下该收的触发回执已被清掉。
+                    if (isComm && nRet == MyCamera.MV_OK)
                         _jobs.ClearCommTriggerPending(slot);
+                }
+                else
+                {
+                    // 空模式是启动期"连接早于 trriger_set 载入"的常见中间态，逐路连接会 12 行刷屏 → 只静默返回 false；
+                    // 非空却不认识（vpp 里写了别的字串、ini 手改错）是真配置错误，记日志。
+                    if (mode.Length > 0)
+                        _logger.WriteLog("相机" + (slot + 1) + "触发模式「" + job.triggerMode + "」无法识别，未向硬件下发任何触发参数");
+                    return false;
                 }
                 if (nRet != MyCamera.MV_OK)
                 {
@@ -377,7 +397,15 @@ namespace WindowsFormsApplication1
             }
             if (newMode == oldMode) return;   // 同一模式重复选择：不重复下发
             job.triggerMode = newMode;
-            if (!ApplyTriggerModeToCameraHardware(slot))
+            if (ApplyTriggerModeToCameraHardware(slot))
+            {
+                // ★第26轮：任何一次成功的模式变化都清该路通讯触发待处理记录（原来只在切进"通讯触发"时清，
+                //   切出/平级切换时残留记录会串接旧的 CommTriggerSource，导致回执发错连接）。
+                // ★第28轮①：挪进成功分支——本次下发失败时模式已回滚，旧模式下待收的触发记录不该一起清掉。
+                try { _jobs.ClearCommTriggerPending(slot); }
+                catch (Exception exP) { _logger.WriteLog("相机" + (slot + 1) + "清理通讯触发待处理异常：" + exP.Message); }
+            }
+            else
             {
                 // ★第27轮①：SDK 写失败——回退 job.triggerMode 并把硬件按旧模式回写一次，
                 //   再回滚下拉框，避免"显示新模式、硬件仍是旧模式"。回退本身也可能失败（只记日志）。
@@ -389,8 +417,6 @@ namespace WindowsFormsApplication1
                 _logger.WriteLog("相机" + (slot + 1) + "触发模式「" + newMode + "」下发失败，界面与硬件已回滚为「" + oldMode + "」"
                     + (hwRestored ? "" : "（硬件回写同样失败，请检查相机连接后手动重设）"));
             }
-            try { _jobs.ClearCommTriggerPending(slot); }
-            catch (Exception exP) { _logger.WriteLog("相机" + (slot + 1) + "清理通讯触发待处理异常：" + exP.Message); }
         }
 
         private void ApplyTriggerModesForOpenedCameras()
