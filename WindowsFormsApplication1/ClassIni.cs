@@ -22,8 +22,8 @@ namespace demo
         // 读 INI 走 kernel32 P/Invoke，频繁读取（尤其保存相机绑定时成百上千次）
         // 会造成明显卡顿。这里按"规范化全路径"维护一份进程内读缓存，所有指向同一
         // 文件的 ClassIni 实例共享；任意实例的写/删/清段都会同步失效对应条目。
-        // 前提：本进程是 test.ini 的唯一写者（不被外部实时编辑），故缓存不会读到陈旧值；
-        //       若文件被外部修改需主动作废，可调用 ClearCache()。
+        //       外部修改(其它进程/手工编辑)由读入口的 mtime 比对自动整文件失效，
+        //       也可调用 ClearCache() 主动作废。
         private static readonly object _cacheLock = new object();
         private static readonly Dictionary<string, FileCache> _fileCaches =
             new Dictionary<string, FileCache>(StringComparer.OrdinalIgnoreCase);
@@ -38,6 +38,8 @@ namespace demo
                 new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             // 该文件全部 section 名（已 Trim）；null 表示未缓存
             public List<string> AllSections;
+            // ★文件最后写入时间快照：外部(其它进程/手工编辑)改动后自动失效整份缓存；MinValue=尚未快照
+            public DateTime MtimeUtc = DateTime.MinValue;
         }
 
         private static string CacheKey(string section, string ident) => section + "\0" + ident;
@@ -68,6 +70,41 @@ namespace demo
             foreach (var k in toRemove) fc.Values.Remove(k);
             fc.SectionIdents.Remove(section);
             fc.AllSections = null;
+        }
+
+        // ★ 缓存按文件写入时间(mtime)失效：原前提"本进程是唯一写者"不成立时(其它进程/
+        //   资源管理器手工编辑 test.ini)，读缓存会永久读到陈旧值。每次读入口比对一次
+        //   GetLastWriteTimeUtc(一次 stat，远便宜于 P/Invoke 解析)，变化即整文件作废。
+        private void ValidateCacheAgainstFile()
+        {
+            var fc = GetCache(FileName);
+            if (fc == null) return;
+            DateTime mtime;
+            try { mtime = File.GetLastWriteTimeUtc(FileName); }
+            catch { return; }
+            lock (_cacheLock)
+            {
+                if (fc.MtimeUtc == DateTime.MinValue) { fc.MtimeUtc = mtime; return; }
+                if (fc.MtimeUtc != mtime)
+                {
+                    fc.Values.Clear();
+                    fc.SectionIdents.Clear();
+                    fc.AllSections = null;
+                    fc.MtimeUtc = mtime;
+                }
+            }
+        }
+
+        // 本进程写入后刷新 mtime 快照，防止自家写触发误失效
+        private void TouchCacheMtime(FileCache fc)
+        {
+            if (fc == null) return;
+            try
+            {
+                DateTime mtime = File.GetLastWriteTimeUtc(FileName);
+                lock (_cacheLock) fc.MtimeUtc = mtime;
+            }
+            catch { }
         }
 
         //类的构造函数，传递INI文件名
@@ -122,6 +159,7 @@ namespace demo
                     fc.SectionIdents.Remove(Section); // ident 集合可能新增/变化
                     fc.AllSections = null;            // 段集合可能新增
                 }
+                TouchCacheMtime(fc);   // ★自家写：刷新 mtime，避免下次读误判为外部改动
             }
         }
 
@@ -130,6 +168,8 @@ namespace demo
         {
             if (string.IsNullOrEmpty(FileName))
                 return Default;
+
+            ValidateCacheAgainstFile();   // ★外部改动检测(mtime)，变化则整文件缓存作废
 
             // 整段/整文件查询（section 或 ident 为空）无法走单键缓存，直接 P/Invoke
             if (string.IsNullOrEmpty(Section) || string.IsNullOrEmpty(Ident))
@@ -225,6 +265,8 @@ namespace demo
             if (string.IsNullOrEmpty(FileName))
                 return;
 
+            ValidateCacheAgainstFile();   // ★外部改动检测(mtime)
+
             var fc = GetCache(FileName);
             List<string> cached = null;
             lock (_cacheLock)
@@ -276,6 +318,8 @@ namespace demo
             if (string.IsNullOrEmpty(FileName))
                 return;
 
+            ValidateCacheAgainstFile();   // ★外部改动检测(mtime)
+
             var fc = GetCache(FileName);
             List<string> cached = null;
             lock (_cacheLock)
@@ -323,6 +367,7 @@ namespace demo
                 throw new ApplicationException("无法清除Ini文件中的Section: " + Section);
             }
             InvalidateSection(GetCache(FileName), Section);
+            TouchCacheMtime(GetCache(FileName));   // ★自家写：刷新 mtime
         }
 
         //删除某个Section下的键
@@ -337,6 +382,7 @@ namespace demo
                     fc.Values.Remove(CacheKey(Section, Ident));
                     fc.SectionIdents.Remove(Section);
                 }
+                TouchCacheMtime(fc);   // ★自家写：刷新 mtime
             }
         }
 

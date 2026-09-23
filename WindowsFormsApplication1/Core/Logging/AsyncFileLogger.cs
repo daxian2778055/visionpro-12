@@ -35,6 +35,7 @@ namespace WindowsFormsApplication1.Core.Logging
         }
 
         private const int MaxArchivePerDay = 9;
+        private const int HistoryRetentionDays = 30;   // ★日志按天分文件但从不删除历史——长期运行目录无限增长，保留最近 30 天
 
         private readonly BlockingCollection<LogEntry> _queue;
         private readonly object _fileLock = new object();
@@ -222,6 +223,12 @@ namespace WindowsFormsApplication1.Core.Logging
                     WriteEntry(_writer, entry.Category, entry.Message, entry.Time);
                     _estimatedBytes += ((long)entry.Message.Length + 64L) * 2L;
                 }
+                else
+                {
+                    // ★EnsureWriter 失败（磁盘不可写等）时条目并未落盘——计入丢弃数，
+                    //   否则日志"静默消失"且 ReportDroppedIfAny 也无法反映真实损失
+                    Interlocked.Increment(ref _dropped);
+                }
 
                 if (DateTime.UtcNow - _lastFlushUtc >= _flushInterval)
                     FlushInternal();
@@ -316,6 +323,8 @@ namespace WindowsFormsApplication1.Core.Logging
 
                 FileInfo fi = new FileInfo(path);
                 _estimatedBytes = fi.Exists ? fi.Length : 0;
+
+                CleanupOldLogs(now);
             }
             catch
             {
@@ -327,6 +336,47 @@ namespace WindowsFormsApplication1.Core.Logging
         private string BuildLogPath(DateTime time)
         {
             return Path.Combine(_directory, time.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".txt");
+        }
+
+        private DateTime _lastCleanupUtc;
+
+        /// <summary>
+        /// ★ 删除超过保留期的历史日志文件（主文件与 .1~.9 归档）。文件名即日期(yyyy-MM-dd[.N].txt)，
+        /// 解析失败的回退按最后写入时间判断。每小时最多执行一次，调用方需持有 _fileLock。
+        /// </summary>
+        private void CleanupOldLogs(DateTime now)
+        {
+            if (now.ToUniversalTime() - _lastCleanupUtc < TimeSpan.FromHours(1)) return;
+            _lastCleanupUtc = now.ToUniversalTime();
+
+            try
+            {
+                DateTime cutoff = now.Date.AddDays(-HistoryRetentionDays);
+                string[] files = Directory.GetFiles(_directory, "*.txt");
+                for (int i = 0; i < files.Length; i++)
+                {
+                    string name = Path.GetFileNameWithoutExtension(files[i]);
+                    int dot = name.IndexOf('.');
+                    string datePart = dot > 0 ? name.Substring(0, dot) : name;
+
+                    DateTime fileDate;
+                    bool parsed = DateTime.TryParseExact(datePart, "yyyy-MM-dd",
+                        CultureInfo.InvariantCulture, DateTimeStyles.None, out fileDate);
+                    if (!parsed)
+                    {
+                        try { fileDate = File.GetLastWriteTime(files[i]); }
+                        catch { continue; }
+                    }
+                    if (fileDate < cutoff)
+                    {
+                        try { File.Delete(files[i]); } catch { }
+                    }
+                }
+            }
+            catch
+            {
+                // 清理失败不影响写入
+            }
         }
 
         /// <summary>把当日日志文件归档为 .1.txt ~ .9.txt（滚动复用）。调用方需持有 _fileLock。</summary>

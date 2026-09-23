@@ -684,6 +684,13 @@ namespace WindowsFormsApplication1
                     }
                 }
             }));
+            // ★G4 修复（2026-09-23）：trriger_set 由启动后台线程调用（Form1.cs 启动线程 try{trriger_set();}），
+            //   下面 12 路"SDK 触发参数写 + cbSoftTriggerN/bnTriggerExecN 控件"原是裸跨线程代码——
+            //   Debug 版一触控件即抛并被逐路 catch 吞：TriggerMode 已写 ON、TriggerSource/按钮态却没执行，
+            //   相机静默半瘫（等触发永不采图）。整段收口到 UI 线程执行（三个调用点语义不变，
+            //   启动/切方案/bnOpen 均无与本线程并发的开关相机动作，SDK 写不加 _cameraLock 维持原样）。
+            this.Invoke(new Action(() =>
+            {
             if (!dahua)
             {
                 if (manager1.JobCount > 0)
@@ -1194,6 +1201,7 @@ namespace WindowsFormsApplication1
                         }
                     }
             }
+            }));   // ★G4：UI 线程收口 lambda 结尾（对应上面 this.Invoke(new Action(() => {）
             // ★C8 修复：原实现 12 路共用一个 try + 空 catch——任一路（如某路 block 缺 triggerZifu
             //   输入口）抛异常会让其后所有路都不再执行、静默沿用旧触发字符，通讯触发整链无声失配。
             //   改为逐路独立 try + 日志，单路异常不影响其它路；并先用 Inputs.Contains 做存在性检查。
@@ -1302,12 +1310,15 @@ namespace WindowsFormsApplication1
         }
         private void jiankong_Huamian(Myjob myjob)
         {
-            foreach (Control item in this.panel1.Controls)
+            // ★G4 修复（2026-09-23）：ControlCollection 枚举器不做版本校验——循环内 Close() 会把窗体从
+            //   panel1.Controls 移除，原 foreach 会静默跳过后一个元素（≥2 个嵌入式子窗时永远关不干净、
+            //   旧 Form8 逐次堆积）。先快照收集再逐个关闭，并各自 try 防单窗关闭异常中断整轮。
+            var formsToClose = new System.Collections.Generic.List<Form>();
+            for (int ci = 0; ci < panel1.Controls.Count; ci++)
+                if (panel1.Controls[ci] is Form) formsToClose.Add(panel1.Controls[ci] as Form);
+            foreach (Form f in formsToClose)
             {
-                if (item is Form)
-                {
-                    ((Form)item).Close();
-                }
+                try { f.Close(); } catch { }
             }
             Form8 frm8 = new Form8(myjob.block);
             frm8.TopLevel = false;

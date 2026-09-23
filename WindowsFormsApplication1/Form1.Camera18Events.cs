@@ -488,7 +488,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob2.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob2, item.filePath);
                     if (_jobs.myjob2.trriger == 0)
                     {
                         _jobs.myjob2.trriger = 1;
@@ -567,9 +567,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox5.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob2.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图：上一次 trriger==1 未消费完时 img 仍被 timer 重试使用
+                    SetReplayImg(_jobs.myjob2, item.filePath);
                     if (_jobs.myjob2.trriger == 0)
                     {
                         _jobs.myjob2.trriger = 1;
@@ -643,7 +644,7 @@ namespace WindowsFormsApplication1
 
         private void 配置相机2ToolStripMenuItem_Click_1(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob2.block));
+            ShowForm6For(_jobs.myjob2);
             frm6[frm6.Count - 1].Show();
         }
 
@@ -692,7 +693,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob3.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob3, item.filePath);
                     if (_jobs.myjob3.trriger == 0)
                     {
                         _jobs.myjob3.trriger = 1;
@@ -717,7 +718,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob4.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob4, item.filePath);
                     if (_jobs.myjob4.trriger == 0)
                     {
                         _jobs.myjob4.trriger = 1;
@@ -864,9 +865,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox8.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob3.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob3, item.filePath);
                     if (_jobs.myjob3.trriger == 0)
                     {
                         _jobs.myjob3.trriger = 1;
@@ -883,9 +885,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox9.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob4.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob4, item.filePath);
                     if (_jobs.myjob4.trriger == 0)
                     {
                         _jobs.myjob4.trriger = 1;
@@ -970,13 +973,13 @@ namespace WindowsFormsApplication1
 
         private void 配置相机3ToolStripMenuItem_Click_1(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob3.block));
+            ShowForm6For(_jobs.myjob3);
             frm6[frm6.Count - 1].Show();
         }
 
         private void 配置相机4ToolStripMenuItem_Click_1(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob4.block));
+            ShowForm6For(_jobs.myjob4);
             frm6[frm6.Count - 1].Show();
         }
 

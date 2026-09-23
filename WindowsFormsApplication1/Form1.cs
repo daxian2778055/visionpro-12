@@ -900,7 +900,7 @@ namespace WindowsFormsApplication1
                         //   path_1 随后会写进 Menu.ini 历史（菜单留下可点必败的坏项）、显示到界面，
                         //   并污染后续 Path.GetDirectoryName 等用途。现 path_1 保持纯净，提示走日志与界面。
                         managerState = ManagerState.Failed;
-                        _logger.WriteLog(ex.Message + "方案加载失败!");
+                        _logger.WriteLog(ex.ToString() + "方案加载失败!");
                     }
                     finally
                     {
@@ -918,6 +918,9 @@ namespace WindowsFormsApplication1
                 int _yanshiMs;
                 if (!int.TryParse(_config.ReadString("camera", "yanshi", "5"), out _yanshiMs))
                     _yanshiMs = 5;
+                // ★G5-①修复：配置为负值时 Sleep 抛 ArgumentOutOfRangeException 被外层 catch("111") 吞掉
+                //   → 其后 12 路作业绑定整段跳过（假运行）；超大值则把启动线程睡死。钳制到 0~2000ms。
+                _yanshiMs = Math.Max(0, Math.Min(2000, _yanshiMs));
                 Thread.Sleep(_yanshiMs);
                 StreamReader sr = null;
                 // ★N6：菜单项增删属 UI 操作，整段收口到 UI 线程——原实现后台线程裸操作 DropDownItems（Debug 抛跨线程异常/Release 竞态；F1 围栏未覆盖此段）
@@ -1264,12 +1267,27 @@ namespace WindowsFormsApplication1
             }
             catch (Exception ex)
             {
-                _logger.WriteLog(ex.Message + "111");
+                _logger.WriteLog(ex.ToString() + "111");
+                // ★G5-⑤修复：Loaded/Failed 赋值之前抛异常（读配置/建目录/枚举阶段）时 managerState
+                //   永久停在 Loading → WaitForManagerLoaded 只会空转超时。异常出口兜底收敛为 Failed。
+                if (managerState == ManagerState.Loading) managerState = ManagerState.Failed;
             };
             UpdateSplashProgress(35, "正在初始化UI配置...");
             // ★ 安全网：无论方案是否加载成功，都投递 initialize_FormSet，同时设置超时兜底
+            // ★G5-②修复：本方法在后台线程、可能跑在 Application.Run 建句柄之前，而 SafeBeginInvoke
+            //   对"句柄未创建"是静默丢弃 → initialize_FormSet 永不被执行，只能等 10 秒超时兜底。
+            //   先有界等待句柄创建（最多 5s）再投递，投递失败/丢弃记日志。
+            for (int wh = 0; wh < 50 && !this.IsHandleCreated && !_disposingFlag; wh++) Thread.Sleep(100);
             initialize_form initialize_form1 = new initialize_form(initialize_FormSet);
-            SafeBeginInvoke(initialize_form1);
+            if (this.IsHandleCreated && !_disposingFlag && !this.IsDisposed)
+            {
+                try { this.BeginInvoke(initialize_form1); }
+                catch (Exception exDel) { _logger.WriteLog("initialize_FormSet 投递失败(转由超时兜底): " + exDel.Message); }
+            }
+            else
+            {
+                _logger.WriteLog("initialize_FormSet 未投递(句柄未创建或已释放)，转由 10s 超时兜底解除阻塞");
+            }
             try
             {
                 int waitMs = 0;
@@ -1286,11 +1304,13 @@ namespace WindowsFormsApplication1
                     qiehuanzhong = 0;
                 }
                 UpdateSplashProgress(40, "正在配置相机触发...");
-                trriger_set();
+                // ★G5-③修复：trriger_set 内部有裸控件/SDK 访问，一旦抛异常原实现把后面的
+                //   UI_monitor 启动与 bnClose 置可用一并跳过（Debug 版几乎必抛）→ 界面统计永久冻结。
+                //   拆开独立 try：触发配置失败只记日志，UI_monitor 必须起。
+                try { trriger_set(); }
+                catch (Exception exTrig) { _logger.WriteLog("启动 trriger_set 失败(UI_monitor 继续启动): " + exTrig.Message); }
                 Thread.Sleep(50);
-                Thread ui = new Thread(new ThreadStart(UI_monitor));
-                ui.IsBackground = true;
-                ui.Start();
+                EnsureUiMonitorRunning();
                 // comboBox8_SelectedIndexChanged(null, null);
                 // ★修复（2026-09-20）：同 988——本方法在后台线程且 Debug 开启跨线程校验，
                 //   直接设置控件属性会抛"线程间操作无效"，抛出后将跳过本 try 剩余步骤（打开相机等）。改线程安全投递。
@@ -1300,7 +1320,7 @@ namespace WindowsFormsApplication1
 
             catch (Exception ex)
             {
-                _logger.WriteLog(ex.Message + "222");
+                _logger.WriteLog(ex.ToString() + "222");
             };
             // ★F5 修复（2026-09-20）：启动侧补"方案绑定诊断"日志（与切型侧同款）——
             //   原启动侧无绑定诊断，出现"Form6 空白/Form9 崩溃/运行结果缺组"时无法从日志判断
@@ -4415,13 +4435,48 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void getrecord(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc = null, bool acquisitionFailed = false)
         {
-            if (!_inspectionLifecycle.TryEnter()) return;
+            // ★G1 修复：每槽 recordBusy CAS 互斥——UI 手动回图(~24处)与检测线程都汇流到本方法→block.Run，
+            //   _inspectionLifecycle.TryEnter 只是暂停门+计数（允许多个并发进入），挡不住同 block 双线程 Run。
+            //   占用中则丢弃本次：通讯触发帧由 PLC 超时判 NG（既有约定），手动回图提示后重点即可。
+            bool busyClaimed = false;
+            if (myjob != null)
+                busyClaimed = System.Threading.Interlocked.CompareExchange(ref myjob.recordBusy, 1, 0) == 0;
+            if (myjob != null && !busyClaimed)
+            {
+                int now = Environment.TickCount;
+                if (now - _lastRecordBusyLogTick > 5000)
+                {
+                    _lastRecordBusyLogTick = now;
+                    try { _logger.WriteLog("getrecord：相机流程(" + (myjob.path_number ?? "") + ")忙（检测/回图占用中），本次调用丢弃"); } catch { }
+                }
+                return;
+            }
             try
             {
-                if (_switchingScheme || _disposingFlag) return;
-                GetRecordCore(myjob, payload, frameSrc, acquisitionFailed);
+                if (!_inspectionLifecycle.TryEnter()) return;
+                try
+                {
+                    if (_switchingScheme || _disposingFlag) return;
+                    GetRecordCore(myjob, payload, frameSrc, acquisitionFailed);
+                }
+                finally { _inspectionLifecycle.Exit(); }
             }
-            finally { _inspectionLifecycle.Exit(); }
+            finally
+            {
+                if (busyClaimed) myjob.recordBusy = 0;
+            }
+        }
+        private int _lastRecordBusyLogTick;
+
+        // ★手动回图位图泄漏修复：myjob.img 只在使用后(getrecord 消费)或本次覆盖时释放。
+        //   注意不能在 getrecord 提前返回(忙/暂停)时释放——trriger==1 时 timer 会重试 getrecord，img 必须存活到真正消费。
+        //   仅在选择新图覆盖旧图这一刻 Dispose 旧图是安全的(回图操作限定 yunxing==false，无并发消费者)。
+        private void SetReplayImg(Myjob job, string filePath)
+        {
+            if (job == null) return;
+            Bitmap old = job.img;
+            job.img = new Bitmap(filePath);
+            try { if (old != null) old.Dispose(); } catch { }
         }
 
         private void GetRecordCore(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc, bool acquisitionFailed)
@@ -4504,7 +4559,7 @@ namespace WindowsFormsApplication1
                             catch (Exception ex)
                             {
                                 inputOk = false;
-                                _logger.WriteLog(ex.Message + "相机" + myjob.path_number + "取图");
+                                _logger.WriteLog(ex.ToString() + "相机" + myjob.path_number + "取图");
                             };
 
                         }
@@ -5202,7 +5257,7 @@ namespace WindowsFormsApplication1
             catch (Exception ex)
             {
 
-                _logger.WriteLog(ex.Message + "相机" + myjob.path_number);
+                _logger.WriteLog(ex.ToString() + "相机" + myjob.path_number);
             };
         }
 
@@ -5214,6 +5269,26 @@ namespace WindowsFormsApplication1
         /// <summary>
         /// 界面监控：35ms 周期刷新各相机状态/丢帧数/统计显示
         /// </summary>
+        private Thread _uiMonitorThread;
+
+        /// <summary>
+        /// ★G5-④修复：UI_monitor 以 _disposingFlag 为退出条件——"取消关闭"回滚路径复位标志后
+        ///   线程已退出，不会自己复活（界面统计/丢帧采样永久冻结）。提供幂等重启入口：
+        ///   存活则不动作（含标志翻转瞬间旧线程恰好继续跑的竞态，不会双开）。
+        /// </summary>
+        private void EnsureUiMonitorRunning()
+        {
+            try
+            {
+                if (_uiMonitorThread != null && _uiMonitorThread.IsAlive) return;
+                _uiMonitorThread = new Thread(new ThreadStart(UI_monitor));
+                _uiMonitorThread.IsBackground = true;
+                _uiMonitorThread.Name = "UI_monitor";
+                _uiMonitorThread.Start();
+            }
+            catch (Exception ex) { _logger.WriteLog("UI_monitor 启动失败: " + ex.Message); }
+        }
+
         private void UI_monitor()
         {
             while (!_disposingFlag)
@@ -5447,7 +5522,7 @@ namespace WindowsFormsApplication1
                 }
                 catch (Exception ex)
                 {
-                    _logger.WriteLog(ex.Message + "相机" + (slot + 1) + "record");
+                    _logger.WriteLog(ex.ToString() + "相机" + (slot + 1) + "record");
                 }
                 try
                 {
@@ -7023,6 +7098,7 @@ namespace WindowsFormsApplication1
                             _inspectionLifecycle.Resume();
                             _disposingFlag = false;
                             StartInspectWorkers();
+                            EnsureUiMonitorRunning(); // ★G5-④：标志置 true 期间 UI_monitor 已自退，回滚必须复活
                             _isFormClosing = false;
                             e.Cancel = true;
                             MessageBox.Show("已取消关闭：检测已恢复运行。", "关闭已取消");
@@ -7033,6 +7109,7 @@ namespace WindowsFormsApplication1
                             //    保持停检态；但必须复位 _disposingFlag 让界面恢复刷新，并明确告知需重启，
                             //    避免"窗口看似正常、实则已停止检测"的欺骗状态。
                             _disposingFlag = false;
+                            EnsureUiMonitorRunning(); // ★G5-④：界面已恢复刷新，统计监控线程同步复活
                             _isFormClosing = false;
                             e.Cancel = true;
                             MessageBox.Show("关闭已取消。注意：检测线程尚未结束，系统当前处于停止状态且无法自动恢复，请稍候再次关闭，或重启软件。", "关闭已取消");
@@ -7957,8 +8034,9 @@ namespace WindowsFormsApplication1
 
         private void DataChange(object sender, Form3.SelectionChangedEventArgs e)
         {
-
-            textBox1.Text = e.Selection;
+            // ★G6 修复（2026-09-23）：本事件由 Form3 串口/TCP 接收线程发出，原首行裸写 textBox1.Text——
+            //   Debug 版必抛"线程间操作无效"并把异常打回接收线程（该连接接收中断），Release 版与 UI 竞写。
+            SafeBeginInvoke(new Action(() => { textBox1.Text = e.Selection; }));
             // 阶段：无协议连接 2~4 触发经主窗宿主转发，事件内已通过 e.LinkId 携带“原始来源链路号”，
             // 记录到相机使检测结果能回到发出触发的那条无协议连接（修复结果串到连接 1）。
             int nopSrcLink = e.LinkId;
@@ -8250,7 +8328,10 @@ namespace WindowsFormsApplication1
                     _comm.Omron.qiehuanzhong = 0;
                 }
             }
-            this.Invoke(new Action(() =>
+            // ★G6 修复（2026-09-23）：本事件处理器跑在协议轮询线程上，原裸同步 this.Invoke——
+            //   句柄未建/销毁中直接抛，异常沿事件链打回轮询循环（该连接本轮全部触发/回写丢失）；
+            //   且每次触发都让轮询线程阻塞等 UI。此段纯显示返回值，改守护式异步投递（最坏丢启动期一帧显示）。
+            SafeBeginInvoke(new Action(() =>
             {
                 textBox1.Text = e.Selection;
             }));
@@ -8350,7 +8431,7 @@ namespace WindowsFormsApplication1
                     _comm.Modbustcp.qiehuanzhong = 0;
                 }
             }
-            this.Invoke(new Action(() =>
+            SafeBeginInvoke(new Action(() =>   // ★G6：同 FINS 处理器尾部——轮询线程禁裸同步 Invoke，改守护式异步投递
             {
                 textBox1.Text = e.Selection;
             }));
@@ -8448,7 +8529,7 @@ namespace WindowsFormsApplication1
                     _comm.ModbusRtu.qiehuanzhong = 0;
                 }
             }
-            this.Invoke(new Action(() =>
+            SafeBeginInvoke(new Action(() =>   // ★G6：同 FINS 处理器尾部——轮询线程禁裸同步 Invoke，改守护式异步投递
             {
                 textBox1.Text = e.Selection;
             }));
@@ -8536,9 +8617,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox4.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob1.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（未消费的 img 仍可能被重试使用）
+                    SetReplayImg(_jobs.myjob1, item.filePath);
                     _jobs.myjob1.trriger = 1;
                     getrecord(_jobs.myjob1, default(System.Collections.Generic.KeyValuePair<string, string>));
                 }
@@ -8570,7 +8652,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob1.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob1, item.filePath);
                     if (_jobs.myjob1.trriger == 0)
                     {
                         _jobs.myjob1.trriger = 1;
@@ -8595,7 +8677,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    myjob.img = new Bitmap(item.filePath);
+                    SetReplayImg(myjob, item.filePath);
                     if (myjob.trriger == 0)
                     {
                         myjob.trriger = 1;
@@ -8825,8 +8907,25 @@ namespace WindowsFormsApplication1
             try
             {
                 保存ToolStripMenuItem.Enabled = false;
-                SanitizeSchemeImagesForSave();
-                CogSerializer.SaveObjectToFile(manager1, path_1);
+                // ★G4 修复（2026-09-23）：检测线程 block.Run 与 Sanitize 的 block.Inputs 读写会和
+                //   SaveObjectToFile 序列化并发 → 存出损坏/半改写方案或 COM 异常。复用切方案同款
+                //   "关门排空"：StopAccepting → WaitForIdle 再序列化；若别的流程已关门则不再重复关门/开门。
+                bool saveNeedResume = !_inspectionLifecycle.IsPaused;
+                if (saveNeedResume)
+                {
+                    _inspectionLifecycle.StopAccepting();
+                    if (!_inspectionLifecycle.WaitForIdle(5000))
+                        _logger.WriteLog("保存方案：等待在途检测静止超时(5s)，仍继续序列化（有并发损坏风险，建议空闲期保存）");
+                }
+                try
+                {
+                    SanitizeSchemeImagesForSave();
+                    CogSerializer.SaveObjectToFile(manager1, path_1);
+                }
+                finally
+                {
+                    if (saveNeedResume) _inspectionLifecycle.Resume();
+                }
                 MessageBox.Show("保存方案成功!");
             }
             catch (Exception ex)
@@ -10013,9 +10112,24 @@ namespace WindowsFormsApplication1
                 return;
             try
             {
-                SanitizeSchemeImagesForSave();
-                CogSerializer.SaveObjectToFile(manager1, path_1);
-                _config.WriteString("path", "path_1", path_1);
+                // ★G4 修复（2026-09-23）：同"保存"菜单——序列化前排空在途检测，防止与 block.Run 并发损坏方案
+                bool saveNeedResume = !_inspectionLifecycle.IsPaused;
+                if (saveNeedResume)
+                {
+                    _inspectionLifecycle.StopAccepting();
+                    if (!_inspectionLifecycle.WaitForIdle(5000))
+                        _logger.WriteLog("另存为方案：等待在途检测静止超时(5s)，仍继续序列化（有并发损坏风险，建议空闲期保存）");
+                }
+                try
+                {
+                    SanitizeSchemeImagesForSave();
+                    CogSerializer.SaveObjectToFile(manager1, path_1);
+                    _config.WriteString("path", "path_1", path_1);
+                }
+                finally
+                {
+                    if (saveNeedResume) _inspectionLifecycle.Resume();
+                }
             }
             catch (Exception ex)
             {
@@ -10379,7 +10493,7 @@ namespace WindowsFormsApplication1
                                 _jobs.JobManager = null;
                                 label75.Text = label75.Text + "方案已损坏";
                                 label173.Text = path_1;
-                                _logger.WriteLog(ex.Message + "加载方案失败");
+                                _logger.WriteLog(ex.ToString() + "加载方案失败");
                             }
                         }
                         if (manager1 != null && managerState == ManagerState.Loaded)
@@ -11012,7 +11126,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
-                        _logger.WriteLog(ex.Message + "切换方案1:" + bbtemp);
+                        _logger.WriteLog(ex.ToString() + "切换方案1:" + bbtemp);
                     };
                     try
                     {
@@ -11211,7 +11325,7 @@ namespace WindowsFormsApplication1
                             button1.Visible = true;
                             display();
                         }));
-                        _logger.WriteLog(ex.Message + "切换方案2");
+                        _logger.WriteLog(ex.ToString() + "切换方案2");
                     };
                 });
             }
@@ -11224,14 +11338,14 @@ namespace WindowsFormsApplication1
         private void 配置工具ToolStripMenuItem_Click(object sender, EventArgs e)
         {
 
-            frm6.Add(new Form6(_jobs.myjob1.block));
+            ShowForm6For(_jobs.myjob1);
             frm6[frm6.Count - 1].Show();
         }
 
         private void 配置相机2ToolStripMenuItem_Click(object sender, EventArgs e)
         {
 
-            frm6.Add(new Form6(_jobs.myjob2.block));
+            ShowForm6For(_jobs.myjob2);
             frm6[frm6.Count - 1].Show();
 
         }
@@ -12087,6 +12201,13 @@ namespace WindowsFormsApplication1
             _cameraReconnectEnabled = false;
             try { timer2.Enabled = false; } catch { }
             for (int w = 0; w < 40 && chonglianzhong; w++) Thread.Sleep(50);   // 最多等 2 秒（有界）
+            // ★G2 修复：原 WaitForIdle(2000) 放在 Close/Destroy 循环之后——拆除期间 TryEnter 仍放行新帧，
+            //   在途回调与 MV_CC_CloseDevice/DestroyDevice 并发=回调访问已销毁句柄（A2 只保护了 FreeHGlobal，
+            //   没保护设备销毁本身）。现先 StopAccepting 关门（新回调直接拒收）→ WaitForIdle 排空在途回调，
+            //   再执行设备拆除；清理完毕在方法尾 Resume 放门（bnOpen 重开相机后需恢复进帧）。
+            _inspectionLifecycle.StopAccepting();
+            if (!_inspectionLifecycle.WaitForIdle(2000))
+                _logger.WriteLog("bnClose：拆除前等待回调静止超时(2s)，仍继续拆除设备（在途回调访问已销毁句柄的窗口，极窄）");
             for (int i = 0; i < 12; ++i)
             {
                 int nRet;
@@ -12152,6 +12273,9 @@ namespace WindowsFormsApplication1
             m_bGrabbing12 = false;
             m_nCanOpenDeviceNum = 0;
             m_nDevNum = 0;
+            // ★G2 修复配套：拆除+缓冲释放已完成，重新放门——bnOpen 重开相机后回调需能进帧；
+            //   若正在退出（_disposingFlag）回调/检测入口自有判断，放门无副作用。
+            _inspectionLifecycle.Resume();
 
             //try
             //{

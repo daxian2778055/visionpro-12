@@ -940,6 +940,31 @@ namespace WindowsFormsApplication1
         }
 
 
+        // ★G6 修复（2026-09-23）：手动"写入/批量读/报文读"测试按钮原为裸调（写入组仅有 try 但无锁、
+        //   无重连门控——与轮询读写/心跳/自动重连并发抢同一串口；button25/26 连 try 都没有）。
+        //   与 FINS/ModbusTCP 同款收口：门控 + _ioSync 串行 + 兜底提示。
+        private void ManualGuarded(Action op, string errorTitle)
+        {
+            if (_reconnecting != 0)
+            {
+                MessageBox.Show("通讯正在重连，请稍候再试。", "提示");
+                return;
+            }
+            if (busRtuClient == null)
+            {
+                MessageBox.Show("尚未连接 PLC，请先连接。", "提示");
+                return;
+            }
+            try
+            {
+                lock (_ioSync) { op(); }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, errorTitle);
+            }
+        }
+
         #endregion
 
         #region 单数据写入测试
@@ -948,133 +973,63 @@ namespace WindowsFormsApplication1
         private void button24_Click( object sender, EventArgs e )
         {
             // bool写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.WriteCoil( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.WriteCoil( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button22_Click( object sender, EventArgs e )
         {
             // short写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , short.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , short.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button21_Click( object sender, EventArgs e )
         {
             // ushort写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , ushort.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , ushort.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button20_Click( object sender, EventArgs e )
         {
             // int写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , int.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , int.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button19_Click( object sender, EventArgs e )
         {
             // uint写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , uint.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , uint.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button18_Click( object sender, EventArgs e )
         {
             // long写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , long.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , long.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button17_Click( object sender, EventArgs e )
         {
             // ulong写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , ulong.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , ulong.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button16_Click( object sender, EventArgs e )
         {
             // float写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , float.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , float.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button15_Click( object sender, EventArgs e )
         {
             // double写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , double.Parse( textBox7.Text ) ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , double.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button14_Click( object sender, EventArgs e )
         {
             // string写入
-            try
-            {
-                DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , textBox7.Text ), textBox8.Text );
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show( ex.Message );
-            }
+            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , textBox7.Text ), textBox8.Text ), "写入出错");
         }
 
         
@@ -1084,7 +1039,7 @@ namespace WindowsFormsApplication1
 
         private void button25_Click( object sender, EventArgs e )
         {
-            DemoUtils.BulkReadRenderResult( busRtuClient, textBox6, textBox9, textBox10 );
+            ManualGuarded(() => DemoUtils.BulkReadRenderResult( busRtuClient, textBox6, textBox9, textBox10 ), "读取出错");
         }
 
 
@@ -1096,15 +1051,19 @@ namespace WindowsFormsApplication1
 
         private void button26_Click( object sender, EventArgs e )
         {
-            OperateResult<byte[]> read = busRtuClient.ReadBase( HslCommunication.Serial.SoftCRC16.CRC16( HslCommunication.BasicFramework.SoftBasic.HexStringToBytes( textBox13.Text ) ) );
-            if (read.IsSuccess)
+            // ★G6：原实现无 try 无锁——串口异常/空引用直接把 UI 打崩
+            ManualGuarded(() =>
             {
-                textBox11.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
-            }
-            else
-            {
-                MessageBox.Show( "Read Failed：" + read.ToMessageShowString( ) );
-            }
+                OperateResult<byte[]> read = busRtuClient.ReadBase( HslCommunication.Serial.SoftCRC16.CRC16( HslCommunication.BasicFramework.SoftBasic.HexStringToBytes( textBox13.Text ) ) );
+                if (read.IsSuccess)
+                {
+                    textBox11.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
+                }
+                else
+                {
+                    MessageBox.Show( "Read Failed：" + read.ToMessageShowString( ) );
+                }
+            }, "读取出错");
         }
 
 
@@ -3206,7 +3165,18 @@ namespace WindowsFormsApplication1
                                                             {
                                                                 qiehuanzhong = 1;
                                                                 SelectionChangedEventArgs E = new SelectionChangedEventArgs(shuju_temp, pap.Key.ToString(), "0", _linkId);
-                                                                getData(this, E);
+                                                                // ★G6：订阅者异常/无人订阅时原样上抛会打断轮询，且 qiehuanzhong 永久 1 锁死该通道切型
+                                                                try
+                                                                {
+                                                                    var hSw = getData;
+                                                                    if (hSw == null) qiehuanzhong = 0;
+                                                                    else hSw(this, E);
+                                                                }
+                                                                catch (Exception exSw)
+                                                                {
+                                                                    qiehuanzhong = 0;
+                                                                    Log("切型事件派发异常(已复位切换标志): " + exSw.Message);
+                                                                }
                                                             }
                                                             else
                                                             {
@@ -3241,9 +3211,20 @@ namespace WindowsFormsApplication1
                                                         {
                                                             if (!_triggerLatch.TryGetValue(pap.Key, out bool latched) || !latched)
                                                             {
-                                                                _triggerLatch[pap.Key] = true;
-                                                                SelectionChangedEventArgs E = new SelectionChangedEventArgs(dataVal, pap.Key.ToString(), pap.Key.ToString(), _linkId);
-                                                                getData(this, E);
+                                                                // ★G6：触发事件"派发成功才置锁存"（同 FINS）——原先置锁存再发事件，
+                                                                //   事件没送达也会永久锁死该路同值触发；异常上抛还会打断本轮轮询。
+                                                                bool trigOk = false;
+                                                                try
+                                                                {
+                                                                    var hTrig = getData;
+                                                                    if (hTrig != null)
+                                                                    {
+                                                                        hTrig(this, new SelectionChangedEventArgs(dataVal, pap.Key.ToString(), pap.Key.ToString(), _linkId));
+                                                                        trigOk = true;
+                                                                    }
+                                                                }
+                                                                catch (Exception exTrig) { Log("相机" + pap.Key + " 触发事件派发异常: " + exTrig.Message); }
+                                                                if (trigOk) _triggerLatch[pap.Key] = true;
                                                             }
                                                         }
                                                         else

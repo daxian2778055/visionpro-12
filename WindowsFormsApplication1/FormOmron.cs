@@ -851,6 +851,32 @@ namespace WindowsFormsApplication1
         }
 
 
+        // ★G6 修复（2026-09-23）：下面"单数据写入/批量读取/报文读取"测试按钮原是裸调——
+        //   ① 重连中/未连接时 Hsl 在关闭中的 socket 上抛异常 → UI 线程未处理异常整个程序崩；
+        //   ② 与轮询读写/心跳/自动重连的 ConnectClose 并发抢同一 socket（BUG1 同根因）；
+        //   ③ bool.Parse 等非法输入异常也直接上抛。统一收口：门控 + _ioSync 串行 + 兜底提示。
+        private void ManualGuarded(Action op, string errorTitle)
+        {
+            if (_reconnecting != 0)
+            {
+                MessageBox.Show("通讯正在重连，请稍候再试。", "提示");
+                return;
+            }
+            if (omronFinsNet == null)
+            {
+                MessageBox.Show("尚未连接 PLC，请先连接。", "提示");
+                return;
+            }
+            try
+            {
+                lock (_ioSync) { op(); }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message, errorTitle);
+            }
+        }
+
         #endregion
 
         #region 单数据写入测试
@@ -859,63 +885,63 @@ namespace WindowsFormsApplication1
         private void button24_Click( object sender, EventArgs e )
         {
             // bool写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button22_Click( object sender, EventArgs e )
         {
             // short写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, short.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, short.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button21_Click( object sender, EventArgs e )
         {
             // ushort写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, ushort.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, ushort.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button20_Click( object sender, EventArgs e )
         {
             // int写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, int.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, int.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button19_Click( object sender, EventArgs e )
         {
             // uint写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, uint.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, uint.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button18_Click( object sender, EventArgs e )
         {
             // long写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, long.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, long.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button17_Click( object sender, EventArgs e )
         {
             // ulong写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, ulong.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, ulong.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button16_Click( object sender, EventArgs e )
         {
             // float写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, float.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, float.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button15_Click( object sender, EventArgs e )
         {
             // double写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, double.Parse( textBox7.Text ) ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, double.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button14_Click( object sender, EventArgs e )
         {
             // string写入
-            DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, textBox7.Text ), textBox8.Text );
+            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, textBox7.Text ), textBox8.Text ), "写入出错");
         }
         
         #endregion
@@ -924,7 +950,7 @@ namespace WindowsFormsApplication1
 
         private void button25_Click( object sender, EventArgs e )
         {
-            DemoUtils.BulkReadRenderResult( omronFinsNet, textBox6, textBox9, textBox10 );
+            ManualGuarded(() => DemoUtils.BulkReadRenderResult( omronFinsNet, textBox6, textBox9, textBox10 ), "读取出错");
         }
 
 
@@ -936,15 +962,19 @@ namespace WindowsFormsApplication1
 
         private void button26_Click( object sender, EventArgs e )
         {
-            OperateResult<byte[]> read = omronFinsNet.ReadFromCoreServer( HslCommunication.BasicFramework.SoftBasic.HexStringToBytes( textBox13.Text ) );
-            if (read.IsSuccess)
+            // ★G6：原实现无 try 无锁——读失败/空引用直接把 UI 打崩
+            ManualGuarded(() =>
             {
-                textBox11.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
-            }
-            else
-            {
-                MessageBox.Show( "Read Failed：" + read.ToMessageShowString( ) );
-            }
+                OperateResult<byte[]> read = omronFinsNet.ReadFromCoreServer( HslCommunication.BasicFramework.SoftBasic.HexStringToBytes( textBox13.Text ) );
+                if (read.IsSuccess)
+                {
+                    textBox11.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
+                }
+                else
+                {
+                    MessageBox.Show( "Read Failed：" + read.ToMessageShowString( ) );
+                }
+            }, "读取出错");
         }
 
 
@@ -1619,7 +1649,19 @@ namespace WindowsFormsApplication1
                                                                 {
                                                                     qiehuanzhong = 1;
                                                                     SelectionChangedEventArgs E = new SelectionChangedEventArgs(shuju_temp, pap.Key.ToString()) { SchemePath = lujing };
-                                                                    getData(this, E);
+                                                                    // ★G6：订阅者异常/无人订阅时原样上抛会打断轮询，且 qiehuanzhong 永久 1
+                                                                    //   把该通道切型锁死。投递失败即复位标志（PLC 可重发），并记日志。
+                                                                    try
+                                                                    {
+                                                                        var hSw = getData;
+                                                                        if (hSw == null) qiehuanzhong = 0;
+                                                                        else hSw(this, E);
+                                                                    }
+                                                                    catch (Exception exSw)
+                                                                    {
+                                                                        qiehuanzhong = 0;
+                                                                        Log("切型事件派发异常(已复位切换标志): " + exSw.Message);
+                                                                    }
                                                                 }
                                                                 else
                                                                 {
@@ -1660,9 +1702,21 @@ namespace WindowsFormsApplication1
                                                         {
                                                             if (!_triggerLatch.TryGetValue(pap.Key, out bool latched) || !latched)
                                                             {
-                                                                _triggerLatch[pap.Key] = true;
-                                                                SelectionChangedEventArgs E = new SelectionChangedEventArgs(dataVal, pap.Key.ToString());
-                                                                getData(this, E);
+                                                                // ★G6：触发事件"派发成功才置锁存"——无人订阅/订阅者抛异常时
+                                                                //   原实现先把锁存置 true 再发事件：事件其实没送达，该路同值却永久不再触发；
+                                                                //   且异常上抛打断本轮轮询。改为守护投递 + 成功后置锁存，失败下轮可重试。
+                                                                bool trigOk = false;
+                                                                try
+                                                                {
+                                                                    var hTrig = getData;
+                                                                    if (hTrig != null)
+                                                                    {
+                                                                        hTrig(this, new SelectionChangedEventArgs(dataVal, pap.Key.ToString()));
+                                                                        trigOk = true;
+                                                                    }
+                                                                }
+                                                                catch (Exception exTrig) { Log("相机" + pap.Key + " 触发事件派发异常: " + exTrig.Message); }
+                                                                if (trigOk) _triggerLatch[pap.Key] = true;
                                                             }
                                                         }
                                                         else

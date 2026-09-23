@@ -414,7 +414,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob5.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob5, item.filePath);
                     if (_jobs.myjob5.trriger == 0)
                     {
                         _jobs.myjob5.trriger = 1;
@@ -439,7 +439,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob6.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob6, item.filePath);
                     if (_jobs.myjob6.trriger == 0)
                     {
                         _jobs.myjob6.trriger = 1;
@@ -464,7 +464,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob7.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob7, item.filePath);
                     if (_jobs.myjob7.trriger == 0)
                     {
                         _jobs.myjob7.trriger = 1;
@@ -489,7 +489,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob8.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob8, item.filePath);
                     if (_jobs.myjob8.trriger == 0)
                     {
                         _jobs.myjob8.trriger = 1;
@@ -720,9 +720,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox10.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob5.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（未消费的 img 仍被 timer 重试使用）
+                    SetReplayImg(_jobs.myjob5, item.filePath);
                     if (_jobs.myjob5.trriger == 0)
                     {
                         _jobs.myjob5.trriger = 1;
@@ -739,9 +740,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox11.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob6.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob6, item.filePath);
                     if (_jobs.myjob6.trriger == 0)
                     {
                         _jobs.myjob6.trriger = 1;
@@ -758,9 +760,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox12.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob7.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob7, item.filePath);
                     if (_jobs.myjob7.trriger == 0)
                     {
                         _jobs.myjob7.trriger = 1;
@@ -777,9 +780,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox13.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob8.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob8, item.filePath);
                     if (_jobs.myjob8.trriger == 0)
                     {
                         _jobs.myjob8.trriger = 1;
@@ -4851,88 +4855,80 @@ namespace WindowsFormsApplication1
 
         }
 
+        // ★修复(重开遗留窗口)：原实现直接 new 覆盖 f9[slot]，旧 Form9 不关闭——每点一次多一个
+        //   找不回、关不掉的孤儿工具块窗口(且仍挂在任务栏)。现重开前先关旧窗。
+        private void ShowCameraToolWindow(int slot, Cognex.VisionPro.ToolBlock.CogToolBlock block, string title)
+        {
+            if (f9 == null || slot < 0 || slot >= f9.Length) return;
+            try
+            {
+                Form9 old = f9[slot];
+                if (old != null && !old.IsDisposed) old.Close();
+            }
+            catch { }
+            f9[slot] = new Form9(block);
+            f9[slot].Show();
+            f9[slot].label2.Text = title;
+        }
+
         private void 相机1ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[0] = new Form9(_jobs.myjob1.block);
-            f9[0].Show();
-            f9[0].label2.Text = "相机一";
+            ShowCameraToolWindow(0, _jobs.myjob1.block, "相机一");
         }
 
         private void 相机2ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[1] = new Form9(_jobs.myjob2.block);
-            f9[1].Show();
-            f9[1].label2.Text = "相机二";
+            ShowCameraToolWindow(1, _jobs.myjob2.block, "相机二");
         }
 
         private void 相机3ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[2] = new Form9(_jobs.myjob3.block);
-            f9[2].Show();
-            f9[2].label2.Text = "相机三";
+            ShowCameraToolWindow(2, _jobs.myjob3.block, "相机三");
         }
 
         private void 相机4ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[3] = new Form9(_jobs.myjob4.block);
-            f9[3].Show();
-            f9[3].label2.Text = "相机四";
+            ShowCameraToolWindow(3, _jobs.myjob4.block, "相机四");
         }
 
         private void 相机5ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[4] = new Form9(_jobs.myjob5.block);
-            f9[4].Show();
-            f9[4].label2.Text = "相机五";
+            ShowCameraToolWindow(4, _jobs.myjob5.block, "相机五");
         }
 
         private void 相机6ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[5] = new Form9(_jobs.myjob6.block);
-            f9[5].Show();
-            f9[5].label2.Text = "相机六";
+            ShowCameraToolWindow(5, _jobs.myjob6.block, "相机六");
         }
 
         private void 相机7ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[6] = new Form9(_jobs.myjob7.block);
-            f9[6].Show();
-            f9[6].label2.Text = "相机七";
+            ShowCameraToolWindow(6, _jobs.myjob7.block, "相机七");
         }
 
         private void 相机8ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[7] = new Form9(_jobs.myjob8.block);
-            f9[7].Show();
-            f9[7].label2.Text = "相机八";
+            ShowCameraToolWindow(7, _jobs.myjob8.block, "相机八");
         }
 
         private void 相机9ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[8] = new Form9(_jobs.myjob9.block);
-            f9[8].Show();
-            f9[8].label2.Text = "相机九";
+            ShowCameraToolWindow(8, _jobs.myjob9.block, "相机九");
         }
 
         private void 相机10ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[9] = new Form9(_jobs.myjob10.block);
-            f9[9].Show();
-            f9[9].label2.Text = "相机十";
+            ShowCameraToolWindow(9, _jobs.myjob10.block, "相机十");
         }
 
         private void 相机11ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[10] = new Form9(_jobs.myjob11.block);
-            f9[10].Show();
-            f9[10].label2.Text = "相机十一";
+            ShowCameraToolWindow(10, _jobs.myjob11.block, "相机十一");
         }
 
         private void 相机12ToolStripMenuItem1_Click(object sender, EventArgs e)
         {
-            f9[11] = new Form9(_jobs.myjob12.block);
-            f9[11].Show();
-            f9[11].label2.Text = "相机十二";
+            ShowCameraToolWindow(11, _jobs.myjob12.block, "相机十二");
         }
 
         private void cogRecordDisplay1_DoubleClick(object sender, EventArgs e)
@@ -5247,15 +5243,30 @@ namespace WindowsFormsApplication1
         {
             if (!_jobs.yunxing)
             {
-                _jobs.myjob1.outputok2 = -1;
-                _jobs.myjob1.outputok = 0;
-                _jobs.myjob1.outputng2 = -1;
-                _jobs.myjob1.outputng = 0;
-                Thread.Sleep(_jobs.myjob1.timespace);
-                _jobs.myjob1.outputok2 = 1;
-                _jobs.myjob1.outputok = 1;
-                _jobs.myjob1.outputng2 = 1;
-                _jobs.myjob1.outputng = 1;
+                // ★修复：outputok/outputng 直写绕开 SetOk/SetNg 的 locker 约定，与检测线程
+                //   的输出翻转竞争会产生半套状态(ok2 与 ok 不一致)。成对加锁，语义与原一致。
+                var job = _jobs.myjob1;
+                lock (job.locker_ok)
+                {
+                    job.outputok2 = -1;
+                    job.outputok = 0;
+                }
+                lock (job.locker_ng)
+                {
+                    job.outputng2 = -1;
+                    job.outputng = 0;
+                }
+                Thread.Sleep(job.timespace);
+                lock (job.locker_ok)
+                {
+                    job.outputok2 = 1;
+                    job.outputok = 1;
+                }
+                lock (job.locker_ng)
+                {
+                    job.outputng2 = 1;
+                    job.outputng = 1;
+                }
             }
         }
 
@@ -5268,10 +5279,18 @@ namespace WindowsFormsApplication1
             else
             {
                 timer17.Enabled = false;
-                _jobs.myjob1.outputok2 = -1;
-                _jobs.myjob1.outputok = 0;
-                _jobs.myjob1.outputng2 = -1;
-                _jobs.myjob1.outputng = 0;
+                // ★同 timer17_Tick：成对加锁，避免与检测线程输出写竞争
+                var job = _jobs.myjob1;
+                lock (job.locker_ok)
+                {
+                    job.outputok2 = -1;
+                    job.outputok = 0;
+                }
+                lock (job.locker_ng)
+                {
+                    job.outputng2 = -1;
+                    job.outputng = 0;
+                }
             }
         }
 
@@ -5604,7 +5623,7 @@ namespace WindowsFormsApplication1
         // Camera 9 side panel button handlers
         private void button118_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob9.block));
+            ShowForm6For(_jobs.myjob9);
             frm6[frm6.Count - 1].Show();
         }
 
@@ -5631,7 +5650,7 @@ namespace WindowsFormsApplication1
         // Camera 10 side panel button handlers
         private void button123_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob10.block));
+            ShowForm6For(_jobs.myjob10);
             frm6[frm6.Count - 1].Show();
         }
 
@@ -5658,7 +5677,7 @@ namespace WindowsFormsApplication1
         // Camera 11 side panel button handlers
         private void button128_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob11.block));
+            ShowForm6For(_jobs.myjob11);
             frm6[frm6.Count - 1].Show();
         }
 
@@ -5685,7 +5704,7 @@ namespace WindowsFormsApplication1
         // Camera 12 side panel button handlers
         private void button133_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob12.block));
+            ShowForm6For(_jobs.myjob12);
             frm6[frm6.Count - 1].Show();
         }
 
@@ -5710,21 +5729,44 @@ namespace WindowsFormsApplication1
         }
 
         List<Form6> frm6 = new List<Form6>();
+
+        // ★修复(frm6 只增不查重)：原实现每次点击都向列表 Add 一个新 Form6——同一相机重复点开
+        //   会层层叠窗、旧窗在列表中失联，已关闭窗口也残留引用。现以 Tag 记属主 job：
+        //   重开同一相机先关旧窗，并顺带清掉已 Dispose 的条目。
+        //   (调用点保留的 frm6[Count-1].Show() 作用于刚建的新窗，幂等无害。)
+        private void ShowForm6For(Myjob job)
+        {
+            if (job == null) return;
+            for (int i = frm6.Count - 1; i >= 0; i--)
+            {
+                Form6 f = frm6[i];
+                if (f == null || f.IsDisposed) { frm6.RemoveAt(i); continue; }
+                if (ReferenceEquals(f.Tag, job))
+                {
+                    try { f.Close(); } catch { }
+                    frm6.RemoveAt(i);
+                }
+            }
+            Form6 nf = new Form6(job.block);
+            nf.Tag = job;
+            frm6.Add(nf);
+            nf.Show();
+        }
         private void c11_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob1.block));
+            ShowForm6For(_jobs.myjob1);
             frm6[frm6.Count - 1].Show();
         }
 
         private void c21_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob2.block));
+            ShowForm6For(_jobs.myjob2);
             frm6[frm6.Count - 1].Show();
         }
 
         private void c31_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob3.block));
+            ShowForm6For(_jobs.myjob3);
             frm6[frm6.Count - 1].Show();
         }
 
@@ -5732,12 +5774,12 @@ namespace WindowsFormsApplication1
         {
             if (tableLayoutPanel5.Visible == false)
             {
-                frm6.Add(new Form6(_jobs.myjob3.block));
+                ShowForm6For(_jobs.myjob3);
                 frm6[frm6.Count - 1].Show();
             }
             else
             {
-                frm6.Add(new Form6(_jobs.myjob4.block));
+                ShowForm6For(_jobs.myjob4);
                 frm6[frm6.Count - 1].Show();
             }
         }
@@ -5746,31 +5788,31 @@ namespace WindowsFormsApplication1
         {
             if (tableLayoutPanel5.Visible == false)
             {
-                frm6.Add(new Form6(_jobs.myjob4.block));
+                ShowForm6For(_jobs.myjob4);
                 frm6[frm6.Count - 1].Show();
             }
             else
             {
-                frm6.Add(new Form6(_jobs.myjob5.block));
+                ShowForm6For(_jobs.myjob5);
                 frm6[frm6.Count - 1].Show();
             }
         }
 
         private void c61_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob6.block));
+            ShowForm6For(_jobs.myjob6);
             frm6[frm6.Count - 1].Show();
         }
 
         private void c71_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob7.block));
+            ShowForm6For(_jobs.myjob7);
             frm6[frm6.Count - 1].Show();
         }
 
         private void c81_Click(object sender, EventArgs e)
         {
-            frm6.Add(new Form6(_jobs.myjob8.block));
+            ShowForm6For(_jobs.myjob8);
             frm6[frm6.Count - 1].Show();
         }
 

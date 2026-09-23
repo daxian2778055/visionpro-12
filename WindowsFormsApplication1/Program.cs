@@ -63,7 +63,7 @@ namespace WindowsFormsApplication1
                 }
                 catch (Exception ex)
                 {
-                    GetErrorLog().WriteLog("入口点异常" + ex.Message);
+                    GetErrorLog().WriteLog("入口点异常" + ex.ToString());
                     MessageBox.Show("入口点异常" + ex.Message);
                 }
 

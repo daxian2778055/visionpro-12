@@ -202,7 +202,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob9.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob9, item.filePath);
                     if (_jobs.myjob9.trriger == 0)
                     {
                         _jobs.myjob9.trriger = 1;
@@ -274,7 +274,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob10.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob10, item.filePath);
                     if (_jobs.myjob10.trriger == 0)
                     {
                         _jobs.myjob10.trriger = 1;
@@ -346,7 +346,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob11.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob11, item.filePath);
                     if (_jobs.myjob11.trriger == 0)
                     {
                         _jobs.myjob11.trriger = 1;
@@ -418,7 +418,7 @@ namespace WindowsFormsApplication1
                 }
                 else
                 {
-                    _jobs.myjob12.img = new Bitmap(item.filePath);
+                    SetReplayImg(_jobs.myjob12, item.filePath);
                     if (_jobs.myjob12.trriger == 0)
                     {
                         _jobs.myjob12.trriger = 1;
@@ -1110,9 +1110,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox19.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob9.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（未消费的 img 仍被 timer 重试使用）
+                    SetReplayImg(_jobs.myjob9, item.filePath);
                     if (_jobs.myjob9.trriger == 0)
                     {
                         _jobs.myjob9.trriger = 1;
@@ -1129,9 +1130,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox20.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob10.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob10, item.filePath);
                     if (_jobs.myjob10.trriger == 0)
                     {
                         _jobs.myjob10.trriger = 1;
@@ -1148,9 +1150,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox21.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob11.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob11, item.filePath);
                     if (_jobs.myjob11.trriger == 0)
                     {
                         _jobs.myjob11.trriger = 1;
@@ -1167,9 +1170,10 @@ namespace WindowsFormsApplication1
             {
                 PictureListItem item = (PictureListItem)listBox22.SelectedItem;
                 if (item == null) return;
-                _jobs.myjob12.img = new Bitmap(item.filePath);
                 if (_jobs.yunxing == false)
                 {
+                    // ★运行中不覆盖回图（同上）
+                    SetReplayImg(_jobs.myjob12, item.filePath);
                     if (_jobs.myjob12.trriger == 0)
                     {
                         _jobs.myjob12.trriger = 1;

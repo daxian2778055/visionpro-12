@@ -679,6 +679,8 @@ namespace WindowsFormsApplication1
         {
             btn.Paint -= BtnDisabled_Paint;
             btn.Paint += BtnDisabled_Paint;
+            // ★皮肤每切换一次本方法就跑一遍：EnabledChanged 原缺 -=，委托列表无限增长(重复回调+泄漏)
+            btn.EnabledChanged -= BtnDisabled_EnabledChanged;
             btn.EnabledChanged += BtnDisabled_EnabledChanged;
         }
 

@@ -60,6 +60,10 @@ public class Myjob
         public bool cunok;
         public bool cunng;
         public ICogRecord newrecod;
+        // ★G1 修复：同一 CogToolBlock 双线程进入标记。UI 手动回图与检测线程都经 getrecord 汇流到
+        //   block.Run()，同一流程并发 Run 会破坏 VisionPro 工具内部状态（异常/垃圾结果/渲染错乱）。
+        //   每槽 CAS 互斥：占用中则本次调用丢弃（通讯帧由 PLC 超时判 NG，手动回图重试点一次即可）。
+        public int recordBusy;
         public int index;
         public int xianshi;
         public int fit;

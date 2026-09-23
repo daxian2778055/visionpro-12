@@ -1239,6 +1239,17 @@ namespace WindowsFormsApplication1
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // ★G3 修复：本类设计即"连接 2~4 实例常驻池，删除设备/程序关闭时才释放"（见类头注释），
+            //   原实现点 ✕（CloseReason.UserClosing）也走与进程退出相同的释放路径：
+            //   连接 2~4 被 ReleaseInstance+Dispose、子链路反注册 → PLC 侧轮询/反馈/切型路由被静默掐断，
+            //   而主界面与 ini 仍显示这些连接存在（假在线）。✕/Alt+F4 改为取消关闭+隐藏（菜单入口
+            //   对隐藏实例 Show()+Activate() 复用，Camera58Events:1973）；仅进程退出路径才真正释放。
+            if (e.CloseReason == CloseReason.UserClosing)
+            {
+                e.Cancel = true;
+                try { Hide(); } catch { }
+                return;
+            }
             // 程序关闭时释放全部连接 2~4 实例
             var list = new List<FormOmron>(_finsEditors.Values);
             foreach (var host in list)

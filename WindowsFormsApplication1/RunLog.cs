@@ -135,7 +135,7 @@ namespace WindowsFormsApplication1
                                 ? string.Empty
                                 : str + "," + (iok + ing) + "," + iok + "," + ing + "," + sOrg + "," + iok * 1.0f / (iok + ing);
 
-                            File.WriteAllLines(strCsvPath, lines, Encoding.Default);
+                            WriteAllLinesAtomic(strCsvPath, lines);
                         }
                         else if (CountNonEmptyLines(lines) < 35)
                         {
@@ -149,7 +149,7 @@ namespace WindowsFormsApplication1
                         {
                             // 超过 35 行且最后一行不是今天：保持旧实现"清空最后一行"的语义（该文件按行数滚动）
                             lines[lastIdx] = string.Empty;
-                            File.WriteAllLines(strCsvPath, lines, Encoding.Default);
+                            WriteAllLinesAtomic(strCsvPath, lines);
                         }
                     }
                     catch (Exception ex)
@@ -251,6 +251,21 @@ namespace WindowsFormsApplication1
                 if (!string.IsNullOrEmpty(lines[i])) n++;
             }
             return n;
+        }
+
+        /// <summary>
+        /// 原子重写整份 CSV：先写临时文件再替换正式文件。
+        /// 直接 WriteAllLines 会先清空目标文件，写入中途断电/异常会把统计数据清成半截或空文件；
+        /// 临时文件方案保证失败(如目标被 Excel 独占打开)时旧内容完好，异常交由调用方记日志。
+        /// </summary>
+        private static void WriteAllLinesAtomic(string path, string[] lines)
+        {
+            string tmp = path + ".tmp";
+            File.WriteAllLines(tmp, lines, Encoding.Default);
+            if (File.Exists(path))
+                File.Replace(tmp, path, null);
+            else
+                File.Move(tmp, path);
         }
     }
 }

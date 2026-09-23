@@ -150,77 +150,23 @@ namespace WindowsFormsApplication1
         private void comboBox5_SelectedIndexChanged(object sender, EventArgs e)
         {
 
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox5.Text]);
-            tempTool = tools[comboBox5.Text];
+            ShowToolInTree(comboBox5);   // ★G4
         }
 
         private void comboBox5_DropDown(object sender, EventArgs e)
         {
-            comboBox5.Items.Clear();
-            toolName.Clear();
-            tools.Clear();
-            block_11 = null;
-            int i = 0;
-            foreach (ICogTool tool in block_1.Tools)
-            {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") ||tool.Name.ToString().Contains("工具块")))
-                {
-                    tools.Add(tool.Name, tool);
-                    comboBox5.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock"+i) || tool.Name.ToString().Contains("工具块"+i))
-                {
-                    i++;
-                    if (block_11 == null)
-                        block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                            tools.Add("工具块"+i+"-"+tool1.Name, tool1);
-                            comboBox5.Items.Add(tools.Keys.Last());
-                    }
-                }
-            }
+            PopulateToolCombo(comboBox5, block_1);   // ★G4：原 25 行复制体现在守护/收口到公共方法
         }
 
         private void comboBox6_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox6.Text]);
-            tempTool = tools[comboBox6.Text];
+            ShowToolInTree(comboBox6);   // ★G4
 
         }
 
         private void comboBox6_DropDown(object sender, EventArgs e)
         {
-            comboBox6.Items.Clear();
-            toolName.Clear();
-            tools.Clear();
-            block_11 = null;
-            int i = 0;
-            foreach (ICogTool tool in block_2.Tools)
-            {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") || tool.Name.ToString().Contains("工具块")))
-                {
-                    // toolName.Add("初定位0", tool.Name.ToString());
-                    tools.Add(tool.Name, tool);
-                    comboBox6.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock" + i) || tool.Name.ToString().Contains("工具块" + i))
-                {
-                    i++;
-                    if (block_11 == null)
-                        block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                        tools.Add("工具块" + i + "-" + tool1.Name, tool1);
-                        // toolName.Add("斑点工具0-0", tool1.Name.ToString());
-                        comboBox6.Items.Add(tools.Keys.Last());
-                    }
-                }
-            }
+            PopulateToolCombo(comboBox6, block_2);   // ★G4
         }
 
         private void groupBox2_Enter(object sender, EventArgs e)
@@ -704,230 +650,121 @@ namespace WindowsFormsApplication1
 
         private void comboBox7_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox7.Text]);
-            tempTool = tools[comboBox7.Text];
+            ShowToolInTree(comboBox7);   // ★G4
         }
 
         private void comboBox8_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox8.Text]);
-            tempTool = tools[comboBox8.Text];
+            ShowToolInTree(comboBox8);   // ★G4
         }
 
         private void comboBox15_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox15.Text]);
-            tempTool = tools[comboBox15.Text];
+            ShowToolInTree(comboBox15);   // ★G4
         }
 
         private void comboBox13_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox13.Text]);
-            tempTool = tools[comboBox13.Text];
+            ShowToolInTree(comboBox13);   // ★G4
         }
 
         private void comboBox11_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox11.Text]);
-            tempTool = tools[comboBox11.Text];
+            ShowToolInTree(comboBox11);   // ★G4
         }
 
         private void comboBox9_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (tempTool != null)
-                cogToolTreeView1.RemoveToolNode(tempTool);
-            cogToolTreeView1.AddToolNode(tools[comboBox9.Text]);
-            tempTool = tools[comboBox9.Text];
+            ShowToolInTree(comboBox9);   // ★G4
         }
 
         private void comboBox7_DropDown(object sender, EventArgs e)
         {
-            comboBox7.Items.Clear();
-            toolName.Clear();
-            tools.Clear();
-            block_11 = null;
-            int i = 0;
-            foreach (ICogTool tool in block_3.Tools)
-            {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") || tool.Name.ToString().Contains("工具块")))
-                {
-                    // toolName.Add("初定位0", tool.Name.ToString());
-                    tools.Add(tool.Name, tool);
-                    comboBox7.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock" + i) || tool.Name.ToString().Contains("工具块" + i))
-                {
-                    i++;
-                    if (block_11 == null)
-                        block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                        tools.Add("工具块" + i + "-" + tool1.Name, tool1);
-                        // toolName.Add("斑点工具0-0", tool1.Name.ToString());
-                        comboBox7.Items.Add(tools.Keys.Last());
-                    }
-                }
-            }
+            PopulateToolCombo(comboBox7, block_3);   // ★G4
         }
 
         private void comboBox8_DropDown(object sender, EventArgs e)
         {
-            comboBox8.Items.Clear();
-            toolName.Clear();
-            tools.Clear();
-            block_11 = null;
-            int i = 0;
-            foreach (ICogTool tool in block_4.Tools)
-            {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") || tool.Name.ToString().Contains("工具块")))
-                {
-                    // toolName.Add("初定位0", tool.Name.ToString());
-                    tools.Add(tool.Name, tool);
-                    comboBox8.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock" + i) || tool.Name.ToString().Contains("工具块" + i))
-                {
-                    i++;
-                    if (block_11 == null)
-                        block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                        tools.Add("工具块" + i + "-" + tool1.Name, tool1);
-                        // toolName.Add("斑点工具0-0", tool1.Name.ToString());
-                        comboBox8.Items.Add(tools.Keys.Last());
-                    }
-                }
-            }
+            PopulateToolCombo(comboBox8, block_4);   // ★G4
         }
 
         private void comboBox15_DropDown(object sender, EventArgs e)
         {
-            comboBox15.Items.Clear();
-            toolName.Clear();
-            tools.Clear();
-            block_11 = null;
-            int i = 0;
-            foreach (ICogTool tool in block_5.Tools)
-            {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") || tool.Name.ToString().Contains("工具块")))
-                {
-                    // toolName.Add("初定位0", tool.Name.ToString());
-                    tools.Add(tool.Name, tool);
-                    comboBox15.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock" + i) || tool.Name.ToString().Contains("工具块" + i))
-                {
-                    i++;
-                    if (block_11 == null)
-                        block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                        tools.Add("工具块" + i + "-" + tool1.Name, tool1);
-                        // toolName.Add("斑点工具0-0", tool1.Name.ToString());
-                        comboBox15.Items.Add(tools.Keys.Last());
-                    }
-                }
-            }
+            PopulateToolCombo(comboBox15, block_5);   // ★G4
         }
 
         private void comboBox13_DropDown(object sender, EventArgs e)
         {
-            comboBox13.Items.Clear();
-            toolName.Clear();
-            tools.Clear();
-            block_11 = null;
-            int i = 0;
-            foreach (ICogTool tool in block_6.Tools)
-            {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") || tool.Name.ToString().Contains("工具块")))
-                {
-                    // toolName.Add("初定位0", tool.Name.ToString());
-                    tools.Add(tool.Name, tool);
-                    comboBox13.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock" + i) || tool.Name.ToString().Contains("工具块" + i))
-                {
-                    i++;
-                    if (block_11 == null)
-                        block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                        tools.Add("工具块" + i + "-" + tool1.Name, tool1);
-                        // toolName.Add("斑点工具0-0", tool1.Name.ToString());
-                        comboBox13.Items.Add(tools.Keys.Last());
-                    }
-                }
-            }
+            PopulateToolCombo(comboBox13, block_6);   // ★G4
         }
 
         private void comboBox11_DropDown(object sender, EventArgs e)
         {
-            comboBox11.Items.Clear();
-            toolName.Clear();
-            tools.Clear();
-            block_11 = null;
-            int i = 0;
-            foreach (ICogTool tool in block_7.Tools)
-            {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") || tool.Name.ToString().Contains("工具块")))
-                {
-                    // toolName.Add("初定位0", tool.Name.ToString());
-                    tools.Add(tool.Name, tool);
-                    comboBox11.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock" + i) || tool.Name.ToString().Contains("工具块" + i))
-                {
-                    i++;
-                    if (block_11 == null)
-                        block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                        tools.Add("工具块" + i + "-" + tool1.Name, tool1);
-                        // toolName.Add("斑点工具0-0", tool1.Name.ToString());
-                        comboBox11.Items.Add(tools.Keys.Last());
-                    }
-                }
-            }
+            PopulateToolCombo(comboBox11, block_7);   // ★G4
         }
 
         private void comboBox9_DropDown(object sender, EventArgs e)
         {
-            comboBox9.Items.Clear();
+            PopulateToolCombo(comboBox9, block_8);   // ★G4
+        }
+        // ★G4 修复（2026-09-23）：原 8 组 DropDown/SelectedIndexChanged 全部裸写且共用一个 tools 字典——
+        //   ① 方案流程数不足时 block_N 为 null → foreach 直接 NRE；
+        //   ② 方案内工具重名（或外层与子块同名）→ tools.Add 抛 ArgumentException，下拉即崩；
+        //   ③ 任一组合框展开会 tools.Clear() 重灌 → 其他组合框当前文本失效，SelectedIndexChanged 里
+        //      tools[Text] 抛 KeyNotFoundException——三者都在事件处理器且无任何 try，Debug/Release 均直接崩窗。
+        //   收口为两个带守护的公共方法，8 组事件只作转调。
+        private void PopulateToolCombo(ComboBox cb, CogToolBlock block)
+        {
+            cb.Items.Clear();
             toolName.Clear();
             tools.Clear();
             block_11 = null;
+            if (block == null) return;   // ★G4：该组在方案中不存在（流程数不足/未绑定）→ 空列表而非 NRE
             int i = 0;
-            foreach (ICogTool tool in block_8.Tools)
+            foreach (ICogTool tool in block.Tools)
             {
-                if (!(tool.Name.ToString().Contains("CogToolBlock") || tool.Name.ToString().Contains("工具块")))
-                {
-                    // toolName.Add("初定位0", tool.Name.ToString());
-                    tools.Add(tool.Name, tool);
-                    comboBox9.Items.Add(tools.Keys.Last());
-                }
-                if (tool.Name.ToString().Contains("CogToolBlock" + i) || tool.Name.ToString().Contains("工具块" + i))
+                string name = (tool.Name ?? "").ToString();
+                if (!(name.Contains("CogToolBlock") || name.Contains("工具块")))
+                    AddToolEntry(cb, name, tool);
+                if (name.Contains("CogToolBlock" + i) || name.Contains("工具块" + i))
                 {
                     i++;
                     if (block_11 == null)
                         block_11 = tool as CogToolBlock;
-                    foreach (ICogTool tool1 in block_11.Tools)
-                    {
-                        tools.Add("工具块" + i + "-" + tool1.Name, tool1);
-                        // toolName.Add("斑点工具0-0", tool1.Name.ToString());
-                        comboBox9.Items.Add(tools.Keys.Last());
-                    }
+                    if (block_11 != null)   // ★G4：名为工具块但实际不是 CogToolBlock 时原实现 NRE
+                        foreach (ICogTool tool1 in block_11.Tools)
+                            AddToolEntry(cb, "工具块" + i + "-" + (tool1.Name ?? "").ToString(), tool1);
                 }
             }
+        }
+        private void AddToolEntry(ComboBox cb, string key, ICogTool tool)
+        {
+            // ★G4：重名键去冲突（原 tools.Add 重复键直接抛）
+            if (tools.ContainsKey(key)) key = key + "#" + tools.Count;
+            tools[key] = tool;
+            cb.Items.Add(key);
+        }
+        private void ShowToolInTree(ComboBox cb)
+        {
+            try
+            {
+                ICogTool t;
+                if (!tools.TryGetValue(cb.Text, out t) || t == null)
+                {
+                    // ★G4：文本已失效（其他组下拉清空了共用字典）→ 撤下旧节点即可，不崩
+                    if (tempTool != null)
+                    {
+                        cogToolTreeView1.RemoveToolNode(tempTool);
+                        tempTool = null;
+                    }
+                    return;
+                }
+                if (tempTool != null)
+                    cogToolTreeView1.RemoveToolNode(tempTool);
+                cogToolTreeView1.AddToolNode(t);
+                tempTool = t;
+            }
+            catch { }
         }
         private bool front = false;
         private void timer1_Tick(object sender, EventArgs e)

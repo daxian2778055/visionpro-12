@@ -69,6 +69,7 @@ namespace WindowsFormsApplication1
             try
             {
                 Close();
+                ReleaseClient();   // ★B2对称(同 FinsLink)：丢弃旧客户端实例，避免反复建链泄漏
                 // COM 互斥防呆：先登记占用，被别的连接占用则直接给出明确提示，不再去打开串口反复失败
                 if (SerialPortGuard.IsComPort(PortName))
                 {
@@ -122,6 +123,17 @@ namespace WindowsFormsApplication1
             catch { }
             if (SerialPortGuard.IsComPort(PortName))
                 SerialPortGuard.Release(PortName, OwnerDesc);
+        }
+
+        /// <summary>★B2对称：释放并丢弃旧客户端（Close 只关串口，实例仍被 Client 引用到下次赋值）。</summary>
+        private void ReleaseClient()
+        {
+            ModbusRtu old = Client;
+            Client = null;
+            if (old == null) return;
+            try { old.Close(); } catch { }
+            var disposable = old as IDisposable;
+            if (disposable != null) { try { disposable.Dispose(); } catch { } }
         }
 
         /// <summary>重开串口：先关再开（重新确认占用登记）。等价于原 PerformReconnectCore 思路。</summary>

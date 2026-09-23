@@ -43,7 +43,22 @@ namespace WindowsFormsApplication1.Configuration
         public void SetVisionJobPath(string path)
         {
             if (string.IsNullOrWhiteSpace(path)) return;
-            try { File.WriteAllText(_iniPath, path.Trim()); }
+            try
+            {
+                // ★修复：原实现 File.WriteAllText 整文件覆盖——Menu.ini 首行以外的所有节/键
+                // 会被全部抹掉(与 VisionJobPath 读取"仅首行"的约定对应，写也必须只改首行)。
+                string[] lines = File.Exists(_iniPath) ? File.ReadAllLines(_iniPath) : new string[0];
+                if (lines.Length == 0)
+                {
+                    File.WriteAllText(_iniPath, path.Trim());
+                }
+                else
+                {
+                    lines[0] = path.Trim();
+                    File.WriteAllLines(_iniPath, lines);
+                }
+                ClassIni.ClearCache(_iniPath);   // 绕开 ClassIni 直接改文件，须作废其读缓存
+            }
             catch (Exception ex) { Log.Error("写入 VisionJobPath 失败: " + ex.Message); }
         }
 
