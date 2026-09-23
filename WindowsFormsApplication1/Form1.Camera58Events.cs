@@ -5241,9 +5241,13 @@ namespace WindowsFormsApplication1
 
         // ★R8（第25轮）：原实现在 timer17_Tick（WinForms Timer=UI 线程）里 Thread.Sleep(job.timespace)，
         //   勾选 checkBox69 后每个周期把界面连同消息驱动的检测线程一起卡最长数秒。
-        //   改为两段式：写低电平后把 Interval 临时缩短为 timespace，下一拍写高电平并恢复设计间隔(1000ms)。
-        //   波形占空比与原一致（低=timespace，高=1000ms），全程不阻塞任何线程。
-        private int _timer17Phase; // 0=写低电平 1=待写高电平 2=待写低电平（高电平间隔已恢复）
+        //   改为两段式：写低电平后把 Interval 临时缩短为 timespace，下一拍写高电平。
+        //   ★第25轮朋友复核修正节奏论证：原版（Interval 固定 1000，tick 内 low→sleep→high）实际波形为
+        //   周期≈1000ms、低=ts、高=1000−ts（handler 睡 ts 后，排队 WM_TIMER 恰好在本应触发的 t=1000 处返回，
+        //   ts>1000 时高电平被立即顶掉≈0）。我第一版高拍恢复整 1000ms 会把周期拉长为 ts+1000。
+        //   现高电平拍设 Max(1, 1000−ts)：周期/低/高三个量与原版一致（ts≥1000 时高=1ms≈原版被顶掉的≈0），且全程不阻塞任何线程。
+        private int _timer17Phase; // 0=写低电平 1=待写高电平 2=待写低电平
+        private int _timer17LowMs; // 本次低电平持续时长（高电平拍据此把周期补回 1000ms）
         private const int Timer17BaseIntervalMs = 1000; // 与 Designer timer17.Interval 一致
 
         private void timer17_Tick(object sender, EventArgs e)
@@ -5258,7 +5262,7 @@ namespace WindowsFormsApplication1
             var job = _jobs.myjob1;
             if (_timer17Phase == 1)
             {
-                // 高电平拍：写回 1/1 对，恢复基础间隔（低电平已持续 timespace）
+                // 高电平拍：写回 1/1 对；间隔补回"原周期剩余"，使 低=ts、高=1000−ts、周期≈1000ms 与原版一致
                 lock (job.locker_ok)
                 {
                     job.outputok2 = 1;
@@ -5270,7 +5274,7 @@ namespace WindowsFormsApplication1
                     job.outputng = 1;
                 }
                 _timer17Phase = 2;
-                timer17.Interval = Timer17BaseIntervalMs;
+                timer17.Interval = Math.Max(1, Timer17BaseIntervalMs - _timer17LowMs);
             }
             else
             {
@@ -5289,6 +5293,7 @@ namespace WindowsFormsApplication1
                 int ts = job.timespace;
                 if (ts < 1) ts = 1;
                 if (ts > 65535) ts = 65535; // WinForms Timer 上限保护
+                _timer17LowMs = ts;
                 timer17.Interval = ts;
             }
         }
