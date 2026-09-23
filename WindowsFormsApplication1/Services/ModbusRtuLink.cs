@@ -60,6 +60,12 @@ namespace WindowsFormsApplication1
 
         public bool IsConnected { get { return _connected; } }
 
+        // ★W5 配套（2026-09-23 第23轮）：本实例当前在 SerialPortGuard 实际登记占用的端口名。
+        //   Close/失败回滚原先按"当前 PortName 字段"释放——手动重连换口时字段已先被覆盖成 NEW，
+        //   旧口的登记永远还回去（Release 错键=空操作），导致旧口被自己钉死、别的连接也抢不到。
+        //   现登记/释放统一以 _guardPort 为准。
+        private string _guardPort;
+
         /// <summary>
         /// 用当前串口参数创建客户端并打开串口。等价于原 button1_Click 中的建链逻辑。
         /// dataFormat 传 null 表示不设置（保持底层默认值）。
@@ -76,6 +82,7 @@ namespace WindowsFormsApplication1
                     string busy;
                     if (!SerialPortGuard.TryAcquire(PortName, OwnerDesc, out busy))
                         return new OperateResult(SerialPortGuard.OccupiedMessage(PortName, busy));
+                    _guardPort = PortName;   // ★W5：登记成功才记账，释放按此键
                 }
                 var rtu = new ModbusRtu(Station);
                 rtu.AddressStartWithZero = AddressStartWithZero;
@@ -102,8 +109,9 @@ namespace WindowsFormsApplication1
             catch (Exception ex)
             {
                 _connected = false;
-                if (SerialPortGuard.IsComPort(PortName))
-                    SerialPortGuard.Release(PortName, OwnerDesc);
+                if (SerialPortGuard.IsComPort(_guardPort))
+                    SerialPortGuard.Release(_guardPort, OwnerDesc);   // ★W5：按实际登记键释放
+                _guardPort = null;
                 return new OperateResult(ex.Message);
             }
         }
@@ -121,8 +129,9 @@ namespace WindowsFormsApplication1
             if (Client == null) return;
             try { Client.Close(); }
             catch { }
-            if (SerialPortGuard.IsComPort(PortName))
-                SerialPortGuard.Release(PortName, OwnerDesc);
+            if (SerialPortGuard.IsComPort(_guardPort))
+                SerialPortGuard.Release(_guardPort, OwnerDesc);   // ★W5：按实际登记键释放，不受 PortName 被改写影响
+            _guardPort = null;
         }
 
         /// <summary>★B2对称：释放并丢弃旧客户端（Close 只关串口，实例仍被 Client 引用到下次赋值）。</summary>
@@ -149,6 +158,7 @@ namespace WindowsFormsApplication1
                     _connected = false;
                     return false;   // 串口已被其它连接占用，本次重开不执行
                 }
+                _guardPort = p;   // ★W5：同步账本，后续 Close/释放按登记键走
             }
             try { Client.Close(); }
             catch { }
@@ -161,8 +171,9 @@ namespace WindowsFormsApplication1
             catch
             {
                 _connected = false;
-                if (SerialPortGuard.IsComPort(p))
-                    SerialPortGuard.Release(p, OwnerDesc);
+                if (SerialPortGuard.IsComPort(_guardPort))
+                    SerialPortGuard.Release(_guardPort, OwnerDesc);   // ★W5：按登记键释放
+                _guardPort = null;
                 return false;
             }
         }

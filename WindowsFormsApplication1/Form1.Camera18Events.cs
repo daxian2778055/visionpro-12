@@ -41,6 +41,9 @@ namespace WindowsFormsApplication1
             if (label75.Text.Contains("N/A") || label75.Text.Contains("损坏"))
             {
                 MessageBox.Show("方案未正确加载,不能执行保存参数操作!");
+                // ★补修复：此处原缺 return——下面的裸块是无条件执行的（历史 else 改写残留），
+                //   方案"损坏/N/A"时提示完仍会把全部保存参数写一遍，守卫形同虚设。
+                return;
             }
             {
                 if (!comboBox7.Text.Contains(".vpp"))

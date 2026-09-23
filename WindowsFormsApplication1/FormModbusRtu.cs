@@ -780,7 +780,9 @@ namespace WindowsFormsApplication1
                 return;
             }
 
-            if (_rtuLink.Client != null) _rtuLink.Close( );
+            // ★W5 修复（2026-09-23 第23轮）：原实现在此处（_reconnecting 互斥与 _ioSync 之前）直接 Close 旧客户端——
+            //   此刻轮询读写/心跳可能正握着同一串口客户端。Close/换 Client 统一收进 Connect 内部，
+            //   并由下面的 _ioSync 持锁路径执行，全 I/O 单锁串行不再有裸关窗口。
             _rtuLink.PortName = comboBox3.Text;
             _rtuLink.BaudRate = baudRate;
             _rtuLink.DataBits = dataBits;
@@ -806,7 +808,10 @@ namespace WindowsFormsApplication1
             _connecting = true;
             try
             {
-                OperateResult connect = await _rtuLink.ConnectAsync(fmt);
+                // ★W5 修复（2026-09-23 第23轮）：建链（Close 旧链+更换 Client+开串口）不再在后台线程裸跑，
+                //   改为持 _ioSync 跑同步 Connect——与轮询读写/心跳/自动重连同锁串行；串口占用登记也随之入锁。
+                OperateResult connect = await System.Threading.Tasks.Task.Run(
+                    () => { lock (_ioSync) { return _rtuLink.Connect( fmt ); } } );
                 if (connect.IsSuccess)
                 {
                     button2.Enabled = true;
@@ -847,65 +852,65 @@ namespace WindowsFormsApplication1
         private void button_read_bool_Click( object sender, EventArgs e )
         {
             // 读取bool变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadCoil( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadCoil( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button4_Click_1( object sender, EventArgs e )
         {
             // 离散输入读取
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadDiscrete( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadDiscrete( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_short_Click( object sender, EventArgs e )
         {
             // 读取short变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadInt16( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadInt16( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_ushort_Click( object sender, EventArgs e )
         {
             // 读取ushort变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadUInt16( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadUInt16( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_int_Click( object sender, EventArgs e )
         {
             // 读取int变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadInt32(  textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadInt32(  textBox3.Text ), textBox3.Text, textBox4 ));
         }
         private void button_read_uint_Click( object sender, EventArgs e )
         {
             // 读取uint变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadUInt32( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadUInt32( textBox3.Text ), textBox3.Text, textBox4 ));
         }
         private void button_read_long_Click( object sender, EventArgs e )
         {
             // 读取long变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadInt64( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadInt64( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_ulong_Click( object sender, EventArgs e )
         {
             // 读取ulong变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadUInt64( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadUInt64( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_float_Click( object sender, EventArgs e )
         {
             // 读取float变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadFloat( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadFloat( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_double_Click( object sender, EventArgs e )
         {
             // 读取double变量
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadDouble( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadDouble( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_string_Click( object sender, EventArgs e )
         {
             // 读取字符串
-            ManualRead(() => DemoUtils.ReadResultRender( busRtuClient.ReadString( textBox3.Text , ushort.Parse( textBox5.Text ) ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => busRtuClient.ReadString( textBox3.Text , ushort.Parse( textBox5.Text ) ), textBox3.Text, textBox4 ));
         }
 
         // ★BUG1/BUG3 修复：手动"读"按钮运行在 UI 线程，若此刻正在重连或客户端未连接，
@@ -918,32 +923,18 @@ namespace WindowsFormsApplication1
             lock (_ioSync) { return readOp(); }
         }
 
-        private void ManualRead(Action readAction)
+        // ★BUG1/BUG3 修复 + ★W2/W5 修复（2026-09-23 第23轮，与 FormOmron/FormModbus 同构）：
+        //   W2：原实现把 op/readAction 整个放进 lock(_ioSync)——其内部调 DemoUtils.*Render 弹模态框，
+        //       弹窗未点掉锁就不释放，轮询读写/心跳/自动重连全部排队卡死，PLC 触发脉冲成批丢失。
+        //       现 op 只做 I/O 并返回"需要弹窗的文本"（null=成功静默），MessageBox 一律在放锁之后弹。
+        //   W5：门控原本只在锁外查一次，"检查→拿到锁"窗口内手动建链线程可能已换掉/释放客户端（TOCTOU）。
+        //       现锁内复查 _reconnecting 与客户端非空后才执行，配合手动建链持 _ioSync，两条路径彻底串行。
+        private void ManualRead(Func<string> readOp)
         {
-            if (_reconnecting != 0)
-            {
-                MessageBox.Show("通讯正在重连，请稍候再试。", "提示");
-                return;
-            }
-            try
-            {
-                // ★全 I/O 单锁串行：手动读与轮询读/回写/重连共用 _ioSync
-                lock (_ioSync)
-                {
-                    readAction();
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message, "读取出错");
-            }
+            ManualGuarded(readOp, "读取出错");
         }
 
-
-        // ★G6 修复（2026-09-23）：手动"写入/批量读/报文读"测试按钮原为裸调（写入组仅有 try 但无锁、
-        //   无重连门控——与轮询读写/心跳/自动重连并发抢同一串口；button25/26 连 try 都没有）。
-        //   与 FINS/ModbusTCP 同款收口：门控 + _ioSync 串行 + 兜底提示。
-        private void ManualGuarded(Action op, string errorTitle)
+        private void ManualGuarded(Func<string> op, string errorTitle)
         {
             if (_reconnecting != 0)
             {
@@ -955,14 +946,30 @@ namespace WindowsFormsApplication1
                 MessageBox.Show("尚未连接 PLC，请先连接。", "提示");
                 return;
             }
-            try
+            string msg = null;
+            bool failed = false;
+            // ★审核建议②：锁等待封顶 1 秒——轮询/重连正持锁时不再让 UI 线程无限排队（最坏冻到对端超时），
+            //   超时直接回"链路正忙"，操作员稍后再点即可。op 本身的同步读写保留（其内直读直写控件，异步化需全量快照改造）。
+            if (!System.Threading.Monitor.TryEnter(_ioSync, 1000))
             {
-                lock (_ioSync) { op(); }
+                msg = "链路正忙（轮询读写或重连未返回），请稍后再试。";
             }
-            catch (Exception ex)
+            else
             {
-                MessageBox.Show(ex.Message, errorTitle);
+                try
+                {
+                    if (_reconnecting != 0) msg = "通讯正在重连，请稍候再试。";
+                    else if (busRtuClient == null) msg = "尚未连接 PLC，请先连接。";
+                    else
+                    {
+                        try { msg = op(); }
+                        catch (Exception ex) { msg = ex.Message; failed = true; }
+                    }
+                }
+                finally { System.Threading.Monitor.Exit(_ioSync); }
             }
+            // ★审核建议①：标题按来源区分——op 返回的是"操作结果文案"（含写成功提示），只有异常才配叫 errorTitle
+            if (!string.IsNullOrEmpty(msg)) MessageBox.Show(msg, failed ? errorTitle : "提示");
         }
 
         #endregion
@@ -973,63 +980,63 @@ namespace WindowsFormsApplication1
         private void button24_Click( object sender, EventArgs e )
         {
             // bool写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.WriteCoil( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.WriteCoil( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button22_Click( object sender, EventArgs e )
         {
             // short写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , short.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , short.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button21_Click( object sender, EventArgs e )
         {
             // ushort写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , ushort.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , ushort.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button20_Click( object sender, EventArgs e )
         {
             // int写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , int.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , int.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button19_Click( object sender, EventArgs e )
         {
             // uint写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , uint.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , uint.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button18_Click( object sender, EventArgs e )
         {
             // long写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , long.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , long.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button17_Click( object sender, EventArgs e )
         {
             // ulong写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , ulong.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , ulong.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button16_Click( object sender, EventArgs e )
         {
             // float写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , float.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , float.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button15_Click( object sender, EventArgs e )
         {
             // double写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , double.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , double.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button14_Click( object sender, EventArgs e )
         {
             // string写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( busRtuClient.Write( textBox8.Text , textBox7.Text ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => busRtuClient.Write( textBox8.Text , textBox7.Text ), textBox8.Text ), "写入出错");
         }
 
         
@@ -1039,7 +1046,7 @@ namespace WindowsFormsApplication1
 
         private void button25_Click( object sender, EventArgs e )
         {
-            ManualGuarded(() => DemoUtils.BulkReadRenderResult( busRtuClient, textBox6, textBox9, textBox10 ), "读取出错");
+            ManualGuarded(() => DemoUtils.BulkReadResultText( busRtuClient, textBox6, textBox9, textBox10 ), "读取出错");
         }
 
 
@@ -1052,17 +1059,16 @@ namespace WindowsFormsApplication1
         private void button26_Click( object sender, EventArgs e )
         {
             // ★G6：原实现无 try 无锁——串口异常/空引用直接把 UI 打崩
+            // ★W2：lambda 只返回要弹窗的文本，MessageBox 由 ManualGuarded 在释放 _ioSync 后统一弹
             ManualGuarded(() =>
             {
                 OperateResult<byte[]> read = busRtuClient.ReadBase( HslCommunication.Serial.SoftCRC16.CRC16( HslCommunication.BasicFramework.SoftBasic.HexStringToBytes( textBox13.Text ) ) );
                 if (read.IsSuccess)
                 {
                     textBox11.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
+                    return null;
                 }
-                else
-                {
-                    MessageBox.Show( "Read Failed：" + read.ToMessageShowString( ) );
-                }
+                return "Read Failed：" + read.ToMessageShowString( );
             }, "读取出错");
         }
 

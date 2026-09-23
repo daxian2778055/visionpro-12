@@ -125,6 +125,63 @@ namespace WindowsFormsApplication1
                 MessageBox.Show( "Read Failed：" + ex.Message );
             }
         }
+        // ★W2（2026-09-23 第23轮）：下面三个 *ResultText 是上方对应 *Render 的"只返回文本不弹窗"版本——
+        //   协议窗体（FormOmron/FormModbus/FormModbusRtu）的手动测试按钮在 lock(_ioSync) 内调用 DemoUtils.*Render，
+        //   模态框会把 _ioSync 按住到操作员点掉为止，轮询/心跳/重连全部卡死、PLC 触发脉冲丢失。
+        //   这些窗体改用 Text 版本：锁内只做 I/O 并生成文案，弹窗统一放到锁外。返回值 null=成功且无需提示。
+        public static string ReadResultText<T>( Func<OperateResult<T>> read, string address, TextBox textBox )
+        {
+            try
+            {
+                OperateResult<T> result = read( );
+                if (result.IsSuccess)
+                {
+                    textBox.AppendText( DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] " + result.Content + Environment.NewLine );
+                    return null;
+                }
+                return DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Read Failed " + Environment.NewLine + "Reason：" + result.ToMessageShowString( );
+            }
+            catch ( Exception ex )
+            {
+                return "Data for reading is not corrent: " + ex.Message;
+            }
+        }
+
+        public static string WriteResultText( Func<OperateResult> write, string address )
+        {
+            try
+            {
+                OperateResult result = write( );
+                if (result.IsSuccess)
+                {
+                    return DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Write Success";
+                }
+                return DateTime.Now.ToString( "[HH:mm:ss] " ) + "[" + address + "] Write Failed " + Environment.NewLine + " Reason：" + result.ToMessageShowString( );
+            }
+            catch ( Exception ex )
+            {
+                // 主要是为了捕获写入的值不正确的情况
+                return "Data for writting is not corrent: " + ex.Message;
+            }
+        }
+
+        public static string BulkReadResultText( HslCommunication.Core.IReadWriteNet readWrite, TextBox addTextBox, TextBox lengthTextBox, TextBox resultTextBox )
+        {
+            try
+            {
+                OperateResult<byte[]> read = readWrite.Read( addTextBox.Text, ushort.Parse( lengthTextBox.Text ) );
+                if (read.IsSuccess)
+                {
+                    resultTextBox.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
+                    return null;
+                }
+                return "Read Failed：" + read.ToMessageShowString( );
+            }
+            catch ( Exception ex )
+            {
+                return "Read Failed：" + ex.Message;
+            }
+        }
         public static readonly string IpAddressInputWrong = "IpAddress input wrong";
         public static readonly string PortInputWrong = "Port input wrong";
         public static readonly string SlotInputWrong = "Slot input wrong";

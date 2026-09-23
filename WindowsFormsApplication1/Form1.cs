@@ -4471,13 +4471,32 @@ namespace WindowsFormsApplication1
         // ★手动回图位图泄漏修复：myjob.img 只在使用后(getrecord 消费)或本次覆盖时释放。
         //   注意不能在 getrecord 提前返回(忙/暂停)时释放——trriger==1 时 timer 会重试 getrecord，img 必须存活到真正消费。
         //   仅在选择新图覆盖旧图这一刻 Dispose 旧图是安全的(回图操作限定 yunxing==false，无并发消费者)。
+        // ★W4 修复（2026-09-23 第23轮）：上面的"无并发消费者"前提有漏洞——yunxing 刚翻真的瞬间，
+        //   最后一圈 yunxing==false 时排队的 getrecord 可能仍持 recordBusy 在跑，GetRecordCore 正在读旧 img，
+        //   此时覆盖+Dispose = use-after-dispose。改为与 getrecord 同一把 recordBusy 互斥：
+        //   占用中直接跳过本次覆盖（回图是手动动作，重点一次即可），并限流记日志。
         private void SetReplayImg(Myjob job, string filePath)
         {
             if (job == null) return;
-            Bitmap old = job.img;
-            job.img = new Bitmap(filePath);
-            try { if (old != null) old.Dispose(); } catch { }
+            if (System.Threading.Interlocked.CompareExchange(ref job.recordBusy, 1, 0) != 0)
+            {
+                int now = Environment.TickCount;
+                if (now - _lastReplaySkipLogTick > 5000)
+                {
+                    _lastReplaySkipLogTick = now;
+                    try { _logger.WriteLog("回图跳过：相机流程(" + (job.path_number ?? "") + ")仍在执行中，稍后再点一次回图即可: " + filePath); } catch { }
+                }
+                return;
+            }
+            try
+            {
+                Bitmap old = job.img;
+                job.img = new Bitmap(filePath);
+                try { if (old != null) old.Dispose(); } catch { }
+            }
+            finally { job.recordBusy = 0; }
         }
+        private int _lastReplaySkipLogTick;
 
         private void GetRecordCore(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc, bool acquisitionFailed)
         {
@@ -5270,23 +5289,59 @@ namespace WindowsFormsApplication1
         /// 界面监控：35ms 周期刷新各相机状态/丢帧数/统计显示
         /// </summary>
         private Thread _uiMonitorThread;
+        // ★W6 修复（2026-09-23 第23轮）：原"IsAlive 判活"有竞态——旧线程已判定 _disposingFlag 退出中
+        //   但尚未结束（IsAlive 仍 true）时，Ensure 跳过启动；线程一死就再无人复活（统计冻结）。
+        //   改为 _uiMonitorLock + _uiMonitorActive 显式交接：启动方与退出方在同一把锁下翻转标志，
+        //   "活跃"以线程自己复位为准，不依赖 IsAlive 采样时机；同一锁也杜绝双开。
+        private readonly object _uiMonitorLock = new object();
+        private bool _uiMonitorActive;
+        // ★审核建议③（2026-09-23）：仅"活跃标志"仍有一道微缝——旧线程已决定退出（刚 break 出 while）
+        //   但还没执行到复位，Ensure 见 active==true 直接跳过；线程随后复位 → 复活请求丢失。
+        //   现 Ensure 见活跃不再空手返回，而是挂"复活请求"：正在退出的线程在锁内看到请求会自行重跑，
+        //   健康运行中的线程则要等真正退出时才消费一次（多跑两圈空转即自然收敛，无副作用）。
+        private bool _uiMonitorRestartReq;
 
         /// <summary>
         /// ★G5-④修复：UI_monitor 以 _disposingFlag 为退出条件——"取消关闭"回滚路径复位标志后
-        ///   线程已退出，不会自己复活（界面统计/丢帧采样永久冻结）。提供幂等重启入口：
-        ///   存活则不动作（含标志翻转瞬间旧线程恰好继续跑的竞态，不会双开）。
+        ///   线程已退出，不会自己复活（界面统计/丢帧采样永久冻结）。提供幂等重启入口。
         /// </summary>
         private void EnsureUiMonitorRunning()
         {
-            try
+            lock (_uiMonitorLock)
             {
-                if (_uiMonitorThread != null && _uiMonitorThread.IsAlive) return;
-                _uiMonitorThread = new Thread(new ThreadStart(UI_monitor));
-                _uiMonitorThread.IsBackground = true;
-                _uiMonitorThread.Name = "UI_monitor";
-                _uiMonitorThread.Start();
+                if (_uiMonitorActive) { _uiMonitorRestartReq = true; return; }
+                _uiMonitorActive = true;
+                _uiMonitorRestartReq = false;
+                try
+                {
+                    _uiMonitorThread = new Thread(() =>
+                    {
+                        bool again;
+                        do
+                        {
+                            try { UI_monitor(); }
+                            catch (Exception exM)
+                            {
+                                try { _logger.WriteLog("UI_monitor 异常退出: " + exM.Message); } catch { }
+                            }
+                            again = false;
+                            lock (_uiMonitorLock)
+                            {
+                                if (_uiMonitorRestartReq) { _uiMonitorRestartReq = false; again = true; }
+                                else { _uiMonitorActive = false; }
+                            }
+                        } while (again);
+                    });
+                    _uiMonitorThread.IsBackground = true;
+                    _uiMonitorThread.Name = "UI_monitor";
+                    _uiMonitorThread.Start();
+                }
+                catch (Exception ex)
+                {
+                    _uiMonitorActive = false;
+                    _logger.WriteLog("UI_monitor 启动失败: " + ex.Message);
+                }
             }
-            catch (Exception ex) { _logger.WriteLog("UI_monitor 启动失败: " + ex.Message); }
         }
 
         private void UI_monitor()
@@ -12206,76 +12261,85 @@ namespace WindowsFormsApplication1
             //   没保护设备销毁本身）。现先 StopAccepting 关门（新回调直接拒收）→ WaitForIdle 排空在途回调，
             //   再执行设备拆除；清理完毕在方法尾 Resume 放门（bnOpen 重开相机后需恢复进帧）。
             _inspectionLifecycle.StopAccepting();
-            if (!_inspectionLifecycle.WaitForIdle(2000))
-                _logger.WriteLog("bnClose：拆除前等待回调静止超时(2s)，仍继续拆除设备（在途回调访问已销毁句柄的窗口，极窄）");
-            for (int i = 0; i < 12; ++i)
+            // ★W1 修复（2026-09-23 第23轮）：原实现 StopAccepting 与尾段 Resume 是裸直线代码——
+            //   中间拆除段（等待静止/关设备/释缓冲/重置成员）任何一步抛异常，门就永久关闭：
+            //   之后 bnOpen 重开相机，回调全部被拒收，"能连不能检"直到重启。现拆除段包 try，Resume 进 finally。
+            try
             {
-                int nRet;
-
-                try
+                if (!_inspectionLifecycle.WaitForIdle(2000))
+                    _logger.WriteLog("bnClose：拆除前等待回调静止超时(2s)，仍继续拆除设备（在途回调访问已销毁句柄的窗口，极窄）");
+                for (int i = 0; i < 12; ++i)
                 {
-                    // ★H4 修复：原实现只在 JobCount 以内的槽位真正关设备，却无条件把 12 个槽全置 null——
-                    //   槽位 ≥ JobCount 的已开设备（例如此前方案数量调小过）句柄被丢弃但设备未关：
-                    //   设备资源被占用直到进程退出、回调仍推帧，且旧委托失去 rooting 有打到已回收委托的崩溃窗口。
-                    //   现改为按"槽位是否真有相机对象"无条件关闭全部 12 槽。
-                    if (_cameraCtrl.Cameras[i] != null)
-                    {
-                        // ★ 关键修复：先停止抓流，再关闭设备（防止回调线程冲突）
-                        lock (_cameraLock)
-                        {
-                        bool[] isGrabbing = new bool[] { m_bGrabbing1, m_bGrabbing2, m_bGrabbing3, m_bGrabbing4,
-                                                          m_bGrabbing5, m_bGrabbing6, m_bGrabbing7, m_bGrabbing8, m_bGrabbing9, m_bGrabbing10, m_bGrabbing11, m_bGrabbing12 };
-                        if (i < isGrabbing.Length && isGrabbing[i])
-                        {
-                            _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET();
-                            Thread.Sleep(30);
-                        }
+                    int nRet;
 
-                        nRet = _cameraCtrl.Cameras[i].MV_CC_CloseDevice_NET();
-                        nRet = _cameraCtrl.Cameras[i].MV_CC_DestroyDevice_NET();
+                    try
+                    {
+                        // ★H4 修复：原实现只在 JobCount 以内的槽位真正关设备，却无条件把 12 个槽全置 null——
+                        //   槽位 ≥ JobCount 的已开设备（例如此前方案数量调小过）句柄被丢弃但设备未关：
+                        //   设备资源被占用直到进程退出、回调仍推帧，且旧委托失去 rooting 有打到已回收委托的崩溃窗口。
+                        //   现改为按"槽位是否真有相机对象"无条件关闭全部 12 槽。
+                        if (_cameraCtrl.Cameras[i] != null)
+                        {
+                            // ★ 关键修复：先停止抓流，再关闭设备（防止回调线程冲突）
+                            lock (_cameraLock)
+                            {
+                            bool[] isGrabbing = new bool[] { m_bGrabbing1, m_bGrabbing2, m_bGrabbing3, m_bGrabbing4,
+                                                              m_bGrabbing5, m_bGrabbing6, m_bGrabbing7, m_bGrabbing8, m_bGrabbing9, m_bGrabbing10, m_bGrabbing11, m_bGrabbing12 };
+                            if (i < isGrabbing.Length && isGrabbing[i])
+                            {
+                                _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET();
+                                Thread.Sleep(30);
+                            }
+
+                            nRet = _cameraCtrl.Cameras[i].MV_CC_CloseDevice_NET();
+                            nRet = _cameraCtrl.Cameras[i].MV_CC_DestroyDevice_NET();
+                            }
                         }
                     }
+                    catch { }
+                    // 关闭后立即置空，防止后续对无效句柄调用 SDK
+                    _cameraCtrl.Cameras[i] = null;
                 }
-                catch { }
-                // 关闭后立即置空，防止后续对无效句柄调用 SDK
-                _cameraCtrl.Cameras[i] = null;
-            }
-            // ★ 修复（关设备顺序）：所有相机已停止取流并关闭后，再释放非托管缓冲，
-            //   避免海康 SDK 回调线程仍在用 m_pSaveImageBuf 做像素转换时被 FreeHGlobal 导致崩溃
-            // ★A2 修复：仅"设备都已关"还不够——最后几帧可能仍在回调线程里做像素转换（毫秒级）。
-            //   回调全程被 _inspectionLifecycle 包着（ImageCallBack TryEnter/Exit），
-            //   此处等它归零即证明"无回调正在使用缓冲"，再做 Free/Destroy
-            //   （原先 FreeHGlobal 与 EnsureConvertBuffer 的无锁 free+realloc 存在 use-after-free/双重释放）。
-            if (!_inspectionLifecycle.WaitForIdle(2000))
-                _logger.WriteLog("bnClose：等待回调静止超时(2s)，仍继续释放缓冲（设备已关、无新回调，窗口已极小）");
-            for (int i = 0; i < 12; i++)
-            {
-                FreeDriverBuffer(i);
-                if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                // ★ 修复（关设备顺序）：所有相机已停止取流并关闭后，再释放非托管缓冲，
+                //   避免海康 SDK 回调线程仍在用 m_pSaveImageBuf 做像素转换时被 FreeHGlobal 导致崩溃
+                // ★A2 修复：仅"设备都已关"还不够——最后几帧可能仍在回调线程里做像素转换（毫秒级）。
+                //   回调全程被 _inspectionLifecycle 包着（ImageCallBack TryEnter/Exit），
+                //   此处等它归零即证明"无回调正在使用缓冲"，再做 Free/Destroy
+                //   （原先 FreeHGlobal 与 EnsureConvertBuffer 的无锁 free+realloc 存在 use-after-free/双重释放）。
+                if (!_inspectionLifecycle.WaitForIdle(2000))
+                    _logger.WriteLog("bnClose：等待回调静止超时(2s)，仍继续释放缓冲（设备已关、无新回调，窗口已极小）");
+                for (int i = 0; i < 12; i++)
                 {
-                    try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
-                    m_pSaveImageBuf[i] = IntPtr.Zero;
+                    FreeDriverBuffer(i);
+                    if (m_pSaveImageBuf[i] != IntPtr.Zero)
+                    {
+                        try { Marshal.FreeHGlobal(m_pSaveImageBuf[i]); } catch { }
+                        m_pSaveImageBuf[i] = IntPtr.Zero;
+                    }
                 }
+                // ch:重置成员变量 | en:Reset member variable
+                m_pDeviceList = new MyCamera.MV_CC_DEVICE_INFO_LIST();
+                m_bGrabbing1 = false;
+                m_bGrabbing2 = false;
+                m_bGrabbing3 = false;
+                m_bGrabbing4 = false;
+                m_bGrabbing5 = false;
+                m_bGrabbing6 = false;
+                m_bGrabbing7 = false;
+                m_bGrabbing8 = false;
+                m_bGrabbing9 = false;
+                m_bGrabbing10 = false;
+                m_bGrabbing11 = false;
+                m_bGrabbing12 = false;
+                m_nCanOpenDeviceNum = 0;
+                m_nDevNum = 0;
             }
-            // ch:重置成员变量 | en:Reset member variable
-            m_pDeviceList = new MyCamera.MV_CC_DEVICE_INFO_LIST();
-            m_bGrabbing1 = false;
-            m_bGrabbing2 = false;
-            m_bGrabbing3 = false;
-            m_bGrabbing4 = false;
-            m_bGrabbing5 = false;
-            m_bGrabbing6 = false;
-            m_bGrabbing7 = false;
-            m_bGrabbing8 = false;
-            m_bGrabbing9 = false;
-            m_bGrabbing10 = false;
-            m_bGrabbing11 = false;
-            m_bGrabbing12 = false;
-            m_nCanOpenDeviceNum = 0;
-            m_nDevNum = 0;
-            // ★G2 修复配套：拆除+缓冲释放已完成，重新放门——bnOpen 重开相机后回调需能进帧；
-            //   若正在退出（_disposingFlag）回调/检测入口自有判断，放门无副作用。
-            _inspectionLifecycle.Resume();
+            finally
+            {
+                // ★G2 修复配套 + ★W1：无论拆除段是否抛异常，finally 统一放门——bnOpen 重开相机后回调需能进帧；
+                //   若正在退出（_disposingFlag）回调/检测入口自有判断，放门无副作用。
+                _inspectionLifecycle.Resume();
+            }
 
             //try
             //{

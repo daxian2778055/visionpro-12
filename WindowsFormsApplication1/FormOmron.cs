@@ -717,7 +717,17 @@ namespace WindowsFormsApplication1
             _connecting = true;
             try
             {
-                var connect = await _finsLink.ConnectAsync( (HslCommunication.Core.DataFormat)comboBox1.SelectedItem );
+                // ★补修复（2026-09-23）：DataFormat 取值必须在 UI 线程完成（与 FormModbus/FormModbusRtu 对齐）——
+                //   原在 Task.Run 后台 lambda 内读 comboBox1.SelectedItem，Debug 挂调试器时
+                //   CheckForIllegalCrossThreadCalls 直抛（被外层 catch 兜住→连接必败）。
+                //   null（未选择）时拆箱抛异常同样走 catch，_reconnecting 在 catch 里复位不锁死。
+                var fmt = (HslCommunication.Core.DataFormat)comboBox1.SelectedItem;
+                // ★W5 修复（2026-09-23 第23轮）：原 ConnectAsync 在后台线程裸跑——Close/换 Client/ConnectServer
+                //   全程不持 _ioSync，轮询读写/心跳可能正握着被 ConnectClose/Dispose 的旧客户端（P4 的
+                //   _reconnecting 门控只挡"检查在开始前"的路径，已进锁者不受阻）。现在 Task.Run 内持 _ioSync
+                //   跑同步 Connect：建链与全部 I/O 同锁串行；_reconnecting 仍先行置 1，等待锁的轮询醒来即见门控跳过。
+                var connect = await System.Threading.Tasks.Task.Run(
+                    () => { lock (_ioSync) { return _finsLink.Connect( fmt ); } } );
                 // ★P4：建链动作已完成，立即释放互斥（放在此处而非 UI 回调里，避免回调异常导致永久锁死）
                 System.Threading.Interlocked.Exchange(ref _reconnecting, 0);
                 // 建链在后台线程完成，结果回写 UI 需切回界面线程
@@ -765,58 +775,58 @@ namespace WindowsFormsApplication1
         private void button_read_bool_Click( object sender, EventArgs e )
         {
             // 读取bool变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadBool( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadBool( textBox3.Text ), textBox3.Text, textBox4 ));
         }
         private void button_read_short_Click( object sender, EventArgs e )
         {
             // 读取short变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadInt16( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadInt16( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_ushort_Click( object sender, EventArgs e )
         {
             // 读取ushort变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadUInt16( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadUInt16( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_int_Click( object sender, EventArgs e )
         {
             // 读取int变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadInt32( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadInt32( textBox3.Text ), textBox3.Text, textBox4 ));
         }
         private void button_read_uint_Click( object sender, EventArgs e )
         {
             // 读取uint变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadUInt32( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadUInt32( textBox3.Text ), textBox3.Text, textBox4 ));
         }
         private void button_read_long_Click( object sender, EventArgs e )
         {
             // 读取long变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadInt64( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadInt64( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_ulong_Click( object sender, EventArgs e )
         {
             // 读取ulong变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadUInt64( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadUInt64( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_float_Click( object sender, EventArgs e )
         {
             // 读取float变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadFloat( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadFloat( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_double_Click( object sender, EventArgs e )
         {
             // 读取double变量
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadDouble( textBox3.Text ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadDouble( textBox3.Text ), textBox3.Text, textBox4 ));
         }
 
         private void button_read_string_Click( object sender, EventArgs e )
         {
             // 读取字符串
-            ManualRead(() => DemoUtils.ReadResultRender( omronFinsNet.ReadString( textBox3.Text, ushort.Parse( textBox5.Text ) ), textBox3.Text, textBox4 ));
+            ManualRead(() => DemoUtils.ReadResultText( () => omronFinsNet.ReadString( textBox3.Text, ushort.Parse( textBox5.Text ) ), textBox3.Text, textBox4 ));
         }
 
         // ★BUG1/BUG3 修复：手动"读"按钮运行在 UI 线程，若此刻正在重连或客户端未连接，
@@ -829,33 +839,18 @@ namespace WindowsFormsApplication1
             lock (_ioSync) { return readOp(); }
         }
 
-        private void ManualRead(Action readAction)
+        // ★BUG1/BUG3 修复 + ★W2/W5 修复（2026-09-23 第23轮）：
+        //   W2：原实现把 op/readAction 整个放进 lock(_ioSync)——其内部调 DemoUtils.*Render 弹模态框，
+        //       弹窗未点掉锁就不释放，轮询读写/心跳/自动重连全部排队卡死，PLC 触发脉冲成批丢失。
+        //       现 op 只做 I/O 并返回"需要弹窗的文本"（null=成功静默），MessageBox 一律在放锁之后弹。
+        //   W5：门控原本只在锁外查一次，"检查→拿到锁"窗口内手动建链线程可能已换掉/释放客户端（TOCTOU）。
+        //       现锁内复查 _reconnecting 与客户端非空后才执行，配合手动建链持 _ioSync，两条路径彻底串行。
+        private void ManualRead(Func<string> readOp)
         {
-            if (_reconnecting != 0)
-            {
-                MessageBox.Show("通讯正在重连，请稍候再试。", "提示");
-                return;
-            }
-            try
-            {
-                // ★全 I/O 单锁串行：手动读与轮询读/回写/重连共用 _ioSync
-                lock (_ioSync)
-                {
-                    readAction();
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message, "读取出错");
-            }
+            ManualGuarded(readOp, "读取出错");
         }
 
-
-        // ★G6 修复（2026-09-23）：下面"单数据写入/批量读取/报文读取"测试按钮原是裸调——
-        //   ① 重连中/未连接时 Hsl 在关闭中的 socket 上抛异常 → UI 线程未处理异常整个程序崩；
-        //   ② 与轮询读写/心跳/自动重连的 ConnectClose 并发抢同一 socket（BUG1 同根因）；
-        //   ③ bool.Parse 等非法输入异常也直接上抛。统一收口：门控 + _ioSync 串行 + 兜底提示。
-        private void ManualGuarded(Action op, string errorTitle)
+        private void ManualGuarded(Func<string> op, string errorTitle)
         {
             if (_reconnecting != 0)
             {
@@ -867,14 +862,30 @@ namespace WindowsFormsApplication1
                 MessageBox.Show("尚未连接 PLC，请先连接。", "提示");
                 return;
             }
-            try
+            string msg = null;
+            bool failed = false;
+            // ★审核建议②：锁等待封顶 1 秒——轮询/重连正持锁时不再让 UI 线程无限排队（最坏冻到对端超时），
+            //   超时直接回"链路正忙"，操作员稍后再点即可。op 本身的同步读写保留（其内直读直写控件，异步化需全量快照改造）。
+            if (!System.Threading.Monitor.TryEnter(_ioSync, 1000))
             {
-                lock (_ioSync) { op(); }
+                msg = "链路正忙（轮询读写或重连未返回），请稍后再试。";
             }
-            catch (Exception ex)
+            else
             {
-                MessageBox.Show(ex.Message, errorTitle);
+                try
+                {
+                    if (_reconnecting != 0) msg = "通讯正在重连，请稍候再试。";
+                    else if (omronFinsNet == null) msg = "尚未连接 PLC，请先连接。";
+                    else
+                    {
+                        try { msg = op(); }
+                        catch (Exception ex) { msg = ex.Message; failed = true; }
+                    }
+                }
+                finally { System.Threading.Monitor.Exit(_ioSync); }
             }
+            // ★审核建议①：标题按来源区分——op 返回的是"操作结果文案"（含写成功提示），只有异常才配叫 errorTitle
+            if (!string.IsNullOrEmpty(msg)) MessageBox.Show(msg, failed ? errorTitle : "提示");
         }
 
         #endregion
@@ -885,63 +896,63 @@ namespace WindowsFormsApplication1
         private void button24_Click( object sender, EventArgs e )
         {
             // bool写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, bool.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button22_Click( object sender, EventArgs e )
         {
             // short写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, short.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, short.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button21_Click( object sender, EventArgs e )
         {
             // ushort写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, ushort.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, ushort.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button20_Click( object sender, EventArgs e )
         {
             // int写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, int.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, int.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button19_Click( object sender, EventArgs e )
         {
             // uint写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, uint.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, uint.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button18_Click( object sender, EventArgs e )
         {
             // long写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, long.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, long.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button17_Click( object sender, EventArgs e )
         {
             // ulong写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, ulong.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, ulong.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button16_Click( object sender, EventArgs e )
         {
             // float写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, float.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, float.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
         private void button15_Click( object sender, EventArgs e )
         {
             // double写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, double.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, double.Parse( textBox7.Text ) ), textBox8.Text ), "写入出错");
         }
 
 
         private void button14_Click( object sender, EventArgs e )
         {
             // string写入
-            ManualGuarded(() => DemoUtils.WriteResultRender( () => omronFinsNet.Write( textBox8.Text, textBox7.Text ), textBox8.Text ), "写入出错");
+            ManualGuarded(() => DemoUtils.WriteResultText( () => omronFinsNet.Write( textBox8.Text, textBox7.Text ), textBox8.Text ), "写入出错");
         }
         
         #endregion
@@ -950,7 +961,7 @@ namespace WindowsFormsApplication1
 
         private void button25_Click( object sender, EventArgs e )
         {
-            ManualGuarded(() => DemoUtils.BulkReadRenderResult( omronFinsNet, textBox6, textBox9, textBox10 ), "读取出错");
+            ManualGuarded(() => DemoUtils.BulkReadResultText( omronFinsNet, textBox6, textBox9, textBox10 ), "读取出错");
         }
 
 
@@ -963,17 +974,16 @@ namespace WindowsFormsApplication1
         private void button26_Click( object sender, EventArgs e )
         {
             // ★G6：原实现无 try 无锁——读失败/空引用直接把 UI 打崩
+            // ★W2：lambda 只返回要弹窗的文本，MessageBox 由 ManualGuarded 在释放 _ioSync 后统一弹
             ManualGuarded(() =>
             {
                 OperateResult<byte[]> read = omronFinsNet.ReadFromCoreServer( HslCommunication.BasicFramework.SoftBasic.HexStringToBytes( textBox13.Text ) );
                 if (read.IsSuccess)
                 {
                     textBox11.Text = "Result：" + HslCommunication.BasicFramework.SoftBasic.ByteToHexString( read.Content );
+                    return null;
                 }
-                else
-                {
-                    MessageBox.Show( "Read Failed：" + read.ToMessageShowString( ) );
-                }
+                return "Read Failed：" + read.ToMessageShowString( );
             }, "读取出错");
         }
 
