@@ -7417,23 +7417,40 @@ namespace WindowsFormsApplication1
             //   JobService.SetOk/SetNg、timer17 测试输出中都是按 locker_ok/locker_ng 成对加锁写的，
             //   这里不加锁直接清，可与脉冲线程交叉成"半新半旧"配对（指示灯显示与实际输出不一致）。
             //   现逐路取同一把锁、单路异常只记日志，不再影响其它路。
+            // ★第27轮⑥：改为非阻塞抢锁（#28 加锁时漏掉的一半）。outputok 的 setter 会在赋值线程上
+            //   同步回调 IOxOK，而持 locker_ok 的脉冲写入方（timer17 高电平拍）正是"持锁 → 赋值 →
+            //   回调里 Thread.Sleep(IOyanshi) → 再置位"，本方法又被停止按钮在 UI 线程直接调用，
+            //   阻塞等锁最坏可被 Σ IOyanshi 冻住界面。抢不到锁就照旧写入（等价于 #28 之前的行为，
+            //   绝不因争用漏掉"输出线回断态"），并按路 5 秒限流记一条"本次未加锁"日志。
             var jobs = _jobs;
             if (jobs == null || jobs.Myjobs == null) return;
+            int nowTick = Environment.TickCount;
             for (int i = 0; i < 12 && i < jobs.Myjobs.Length; i++)
             {
                 var job = jobs.Myjobs[i];
                 if (job == null) continue;
                 try
                 {
-                    lock (job.locker_ok)
+                    bool gotOk = System.Threading.Monitor.TryEnter(job.locker_ok, 0);
+                    try
                     {
                         job.outputok = 0;
                         job.outputok2 = -1;
                     }
-                    lock (job.locker_ng)
+                    finally { if (gotOk) System.Threading.Monitor.Exit(job.locker_ok); }
+
+                    bool gotNg = System.Threading.Monitor.TryEnter(job.locker_ng, 0);
+                    try
                     {
                         job.outputng = 0;
                         job.outputng2 = -1;
+                    }
+                    finally { if (gotNg) System.Threading.Monitor.Exit(job.locker_ng); }
+
+                    if ((!gotOk || !gotNg) && (nowTick - _lastOutputResetBusyTick[i]) >= 5000)
+                    {
+                        _lastOutputResetBusyTick[i] = nowTick;
+                        _logger.WriteLog("复位相机" + (i + 1) + "输出：该路脉冲写入方正持锁（含 IO 延时），本次按无锁方式复位");
                     }
                 }
                 catch (Exception ex)
@@ -7442,6 +7459,9 @@ namespace WindowsFormsApplication1
                 }
             }
         }
+
+        // ★第27轮⑥：IO 复位争用日志的按路限流时戳（停止按钮/启动/关闭都会调，不能每次 12 路刷屏）
+        private readonly int[] _lastOutputResetBusyTick = new int[12];
 
         /// <summary>
         /// 停止所有通讯窗体的轮询线程（程序关闭前调用，避免后台线程在进程退出时操作半释放资源）
@@ -10915,6 +10935,13 @@ namespace WindowsFormsApplication1
                         //   整段收口到 UI 线程执行（与下方成功收尾块同法；启动时的同段绑定本就在 UI 线程）。
                         this.Invoke(new Action(() =>
                         {
+                            // 第27轮②：12 路流程绑定改为逐路独立捕获。原实现整段共用一个 try/catch，任一路
+                            //   中途抛（块内缺 CogToolBlock1、VisionTool 不是 ToolGroup 等）就连带跳过其后所有路
+                            //   的绑定，而下游 flowBindOk 只看结果不看过程，现场只能从末段各路全为 null 倒推第一
+                            //   个异常点。逐路捕获后其余路照常绑定，失败路汇总记日志后仍由绑定校验抑制回执。
+                            var bindFail = new System.Collections.Generic.List<string>();
+                            try
+                            {
                             manager1.UserQueueFlush();
                             manager1.FailureQueueFlush();
                             _jobs.myjob1.job = manager1.Job(0);
@@ -10965,7 +10992,11 @@ namespace WindowsFormsApplication1
                                     _jobs.myjob1.output3 = "有";
                                 }
                             }
+                            }
+                            catch (Exception exB1) { bindFail.Add("相机1: " + exB1.Message); }
                             if (manager1.JobCount > 1)
+                            {
+                            try
                             {
                                 _jobs.myjob2.job = manager1.Job(1);
                                 myIndependentJob = _jobs.myjob2.job.OwnedIndependent;
@@ -11020,7 +11051,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB2) { bindFail.Add("相机2: " + exB2.Message); }
+                            }
                             if (manager1.JobCount > 2)
+                            {
+                            try
                             {
                                 _jobs.myjob3.job = manager1.Job(2);
                                 myIndependentJob = _jobs.myjob3.job.OwnedIndependent;
@@ -11076,7 +11111,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB3) { bindFail.Add("相机3: " + exB3.Message); }
+                            }
                             if (manager1.JobCount > 3)
+                            {
+                            try
                             {
                                 _jobs.myjob4.job = manager1.Job(3);
                                 myIndependentJob = _jobs.myjob4.job.OwnedIndependent;
@@ -11128,7 +11167,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB4) { bindFail.Add("相机4: " + exB4.Message); }
+                            }
                             if (manager1.JobCount > 4)
+                            {
+                            try
                             {
                                 _jobs.myjob5.job = manager1.Job(4);
                                 myIndependentJob = _jobs.myjob5.job.OwnedIndependent;
@@ -11185,7 +11228,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB5) { bindFail.Add("相机5: " + exB5.Message); }
+                            }
                             if (manager1.JobCount > 5)
+                            {
+                            try
                             {
                                 _jobs.myjob6.job = manager1.Job(5);
                                 myIndependentJob = _jobs.myjob6.job.OwnedIndependent;
@@ -11242,7 +11289,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB6) { bindFail.Add("相机6: " + exB6.Message); }
+                            }
                             if (manager1.JobCount > 6)
+                            {
+                            try
                             {
                                 _jobs.myjob7.job = manager1.Job(6);
                                 myIndependentJob = _jobs.myjob7.job.OwnedIndependent;
@@ -11299,7 +11350,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB7) { bindFail.Add("相机7: " + exB7.Message); }
+                            }
                             if (manager1.JobCount > 7)
+                            {
+                            try
                             {
                                 _jobs.myjob8.job = manager1.Job(7);
                                 myIndependentJob = _jobs.myjob8.job.OwnedIndependent;
@@ -11347,7 +11402,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB8) { bindFail.Add("相机8: " + exB8.Message); }
+                            }
                             if (manager1.JobCount > 8)
+                            {
+                            try
                             {
                                 _jobs.myjob9.job = manager1.Job(8);
                                 myIndependentJob = _jobs.myjob9.job.OwnedIndependent;
@@ -11386,7 +11445,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB9) { bindFail.Add("相机9: " + exB9.Message); }
+                            }
                             if (manager1.JobCount > 9)
+                            {
+                            try
                             {
                                 _jobs.myjob10.job = manager1.Job(9);
                                 myIndependentJob = _jobs.myjob10.job.OwnedIndependent;
@@ -11425,7 +11488,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB10) { bindFail.Add("相机10: " + exB10.Message); }
+                            }
                             if (manager1.JobCount > 10)
+                            {
+                            try
                             {
                                 _jobs.myjob11.job = manager1.Job(10);
                                 myIndependentJob = _jobs.myjob11.job.OwnedIndependent;
@@ -11464,7 +11531,11 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB11) { bindFail.Add("相机11: " + exB11.Message); }
+                            }
                             if (manager1.JobCount > 11)
+                            {
+                            try
                             {
                                 _jobs.myjob12.job = manager1.Job(11);
                                 myIndependentJob = _jobs.myjob12.job.OwnedIndependent;
@@ -11503,7 +11574,14 @@ namespace WindowsFormsApplication1
                                     }
                                 }
                             }
+                            catch (Exception exB12) { bindFail.Add("相机12: " + exB12.Message); }
+                            }
                             
+
+                            for (int _bf = 0; _bf < bindFail.Count; _bf++)
+                                _logger.WriteLog("切换方案: 流程绑定异常（仅跳过该路）" + bindFail[_bf]);
+                            if (bindFail.Count > 0)
+                                _logger.WriteLog("切换方案: 本次共 " + bindFail.Count + " 路绑定异常，未绑定路由下游校验抑制回执");
                         }));
                         }
                         catch (Exception exBind)
@@ -11760,6 +11838,30 @@ namespace WindowsFormsApplication1
                                                 + (_armed ? "部分相机流程未绑定" : "检测未就绪/Arm 超时") + "），请立即检查，详见日志";
                                     }
                                     catch { }
+                                    // ★第27轮③：切方案收尾必须关掉仍钉着上一方案块的辅助窗体。
+                                    //   button1_Click（重运行）路径已有同样的 frm6/f9 关闭段，但 PLC 切方案路径没有：
+                                    //   旧 Form6/Form9 继续开着 → 写回打到 ReleaseAllMyjobVisionObjects 已 Shutdown 的块
+                                    //   却提示"已写回"；参数调整界面 f1 的 block_1..8 只在"当前不可见"时才重新取
+                                    //   （Camera18Events:916 的 Visible 守卫），切完仍开着就是全套死引用。
+                                    //   统一按重运行同口径处置：关 frm6/f9、隐藏 f1 让下次打开重读当前各路 block。
+                                    try
+                                    {
+                                        for (int _fw = 0; _fw < frm6.Count; _fw++)
+                                        {
+                                            try { if (frm6[_fw] != null && !frm6[_fw].IsDisposed) frm6[_fw].Close(); } catch { }
+                                        }
+                                        frm6.Clear();
+                                        if (f9 != null)
+                                        {
+                                            for (int _f9 = 0; _f9 < f9.Length; _f9++)
+                                            {
+                                                try { if (f9[_f9] != null && !f9[_f9].IsDisposed) f9[_f9].Close(); } catch { }
+                                                f9[_f9] = null;   // 置空：下次打开会 new
+                                            }
+                                        }
+                                        if (f1 != null && f1.Visible) f1.Visible = false;
+                                    }
+                                    catch (Exception exWin) { _logger.WriteLog("切换方案收尾关闭辅助窗体异常：" + exWin.Message); }
                                 }));
                             }
                             catch (Exception exArm)

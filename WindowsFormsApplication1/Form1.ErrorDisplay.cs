@@ -282,10 +282,15 @@ namespace WindowsFormsApplication1
             }
         }
 
-        /// <summary>将 UI/ini 中的触发模式写入相机硬件（不依赖 frm5.mark）。</summary>
-        private void ApplyTriggerModeToCameraHardware(int slot)
+        /// <summary>
+        /// 将 UI/ini 中的触发模式写入相机硬件（不依赖 frm5.mark）。
+        /// ★第27轮①：返回 true = 本次下发全部 MV_OK。原先返回码被整个丢弃，SDK 写失败时
+        ///   "下拉框新模式 + 硬件旧模式"的背离与未授权分支同样存在，只是无人回滚也无提示。
+        ///   失败时由调用方把 job.triggerMode 与下拉框退回旧模式后再次调用本方法回写硬件。
+        /// </summary>
+        private bool ApplyTriggerModeToCameraHardware(int slot)
         {
-            if (slot < 0 || slot >= 12 || _cameraCtrl.Cameras[slot] == null) return;
+            if (slot < 0 || slot >= 12 || _cameraCtrl.Cameras[slot] == null) return true;
             Myjob job = _jobs.Myjobs[slot];
             // 与打开/关闭/重连互斥，防止半开半关时写触发参数
             lock (_cameraLock)
@@ -293,34 +298,50 @@ namespace WindowsFormsApplication1
             try
             {
                 bool softChecked = GetSoftTriggerChecked(slot);
+                int nRet = MyCamera.MV_OK;
                 if (job.triggerMode == "连续运行")
                 {
                     job.trrigerEn = false;
-                    _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
+                    nRet = _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                     SetSoftTriggerEnabled(slot, false);
                     SetTriggerExecEnabled(slot, false);
                 }
                 else if (job.triggerMode == "触发拍照" || IsCommTriggerMode(job.triggerMode))
                 {
                     job.trrigerEn = true;
-                    _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
-                    if (softChecked || IsCommTriggerMode(job.triggerMode))
+                    nRet = _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
+                    if (nRet == MyCamera.MV_OK)
                     {
-                        _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
-                        SetTriggerExecEnabled(slot, IsCameraGrabbing(slot));
-                    }
-                    else
-                    {
-                        _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
+                        if (softChecked || IsCommTriggerMode(job.triggerMode))
+                        {
+                            nRet = _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
+                            SetTriggerExecEnabled(slot, IsCameraGrabbing(slot));
+                            // ★第27轮⑧：软触发勾选把该路的"触发拍照"从 Line0 硬触发改成了 SOFTWARE。统一 12 路口径是
+                            //   有意的（原 9~12 路 handler 强制 Line0 并禁用勾选框），但现场若按 Line0 接线必须能看出来：
+                            //   只在"勾选框改变了结果"时记一条（通讯触发本来就恒 SOFTWARE，不打）。
+                            if (softChecked && !IsCommTriggerMode(job.triggerMode))
+                                _logger.WriteLog("相机" + (slot + 1) + "「触发拍照」已勾选软触发 → 触发源下发 SOFTWARE（非 Line0），外部硬触发信号将不起作用");
+                        }
+                        else
+                        {
+                            nRet = _cameraCtrl.Cameras[slot].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_LINE0);
+                        }
                     }
                     SetSoftTriggerEnabled(slot, true);
                     if (IsCommTriggerMode(job.triggerMode))
                         _jobs.ClearCommTriggerPending(slot);
                 }
+                if (nRet != MyCamera.MV_OK)
+                {
+                    _logger.WriteLog("相机" + (slot + 1) + "触发模式下发失败 ret=0x" + Convert.ToString(nRet, 16) + "（目标「" + job.triggerMode + "」）");
+                    return false;
+                }
+                return true;
             }
             catch (Exception ex)
             {
                 _logger.WriteLog(ex.Message + "触发切换" + (slot + 1));
+                return false;
             }
             }
         }
@@ -356,7 +377,18 @@ namespace WindowsFormsApplication1
             }
             if (newMode == oldMode) return;   // 同一模式重复选择：不重复下发
             job.triggerMode = newMode;
-            ApplyTriggerModeToCameraHardware(slot);
+            if (!ApplyTriggerModeToCameraHardware(slot))
+            {
+                // ★第27轮①：SDK 写失败——回退 job.triggerMode 并把硬件按旧模式回写一次，
+                //   再回滚下拉框，避免"显示新模式、硬件仍是旧模式"。回退本身也可能失败（只记日志）。
+                job.triggerMode = oldMode;
+                bool hwRestored = ApplyTriggerModeToCameraHardware(slot);
+                _triggerModeRollbackBusy = true;
+                try { cb.Text = oldMode; }
+                finally { _triggerModeRollbackBusy = false; }
+                _logger.WriteLog("相机" + (slot + 1) + "触发模式「" + newMode + "」下发失败，界面与硬件已回滚为「" + oldMode + "」"
+                    + (hwRestored ? "" : "（硬件回写同样失败，请检查相机连接后手动重设）"));
+            }
             try { _jobs.ClearCommTriggerPending(slot); }
             catch (Exception exP) { _logger.WriteLog("相机" + (slot + 1) + "清理通讯触发待处理异常：" + exP.Message); }
         }
