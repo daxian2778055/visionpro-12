@@ -500,7 +500,7 @@ namespace WindowsFormsApplication1
                             if (_jobs.myjob4.block.Inputs["triggermode"].Value.ToString() == "触发拍照" || _jobs.myjob4.block.Inputs["triggermode"].Value.ToString() == "连续运行" || _jobs.myjob4.block.Inputs["triggermode"].Value.ToString() == "通讯触发")
                             {
                                 comboBox8.Text = _jobs.myjob4.block.Inputs["triggermode"].Value.ToString();
-                                _jobs.myjob4.triggerMode = _jobs.myjob4.block.Inputs["triggermode"].Value.ToString().Replace(" ", "");
+                                _jobs.myjob4.triggerMode = _jobs.myjob4.block.Inputs["triggermode"].Value.ToString().Replace("\0", "");
                             }
                             else
                             {
@@ -584,7 +584,7 @@ namespace WindowsFormsApplication1
                             if (_jobs.myjob8.block.Inputs["triggermode"].Value.ToString() == "触发拍照" || _jobs.myjob8.block.Inputs["triggermode"].Value.ToString() == "连续运行" || _jobs.myjob8.block.Inputs["triggermode"].Value.ToString() == "通讯触发")
                             {
                                 comboBox34.Text = _jobs.myjob8.block.Inputs["triggermode"].Value.ToString();
-                                _jobs.myjob8.triggerMode = _jobs.myjob8.block.Inputs["triggermode"].Value.ToString().Replace(" ", "");
+                                _jobs.myjob8.triggerMode = _jobs.myjob8.block.Inputs["triggermode"].Value.ToString().Replace("\0", "");
                             }
                             else
                             {
@@ -605,7 +605,7 @@ namespace WindowsFormsApplication1
                             if (_jobs.myjob9.block.Inputs["triggermode"].Value.ToString() == "触发拍照" || _jobs.myjob9.block.Inputs["triggermode"].Value.ToString() == "连续运行" || _jobs.myjob9.block.Inputs["triggermode"].Value.ToString() == "通讯触发")
                             {
                                 comboBox43.Text = _jobs.myjob9.block.Inputs["triggermode"].Value.ToString();
-                                _jobs.myjob9.triggerMode = _jobs.myjob9.block.Inputs["triggermode"].Value.ToString().Replace(" ", "");
+                                _jobs.myjob9.triggerMode = _jobs.myjob9.block.Inputs["triggermode"].Value.ToString().Replace("\0", "");
                             }
                             else
                             {
@@ -626,7 +626,7 @@ namespace WindowsFormsApplication1
                             if (_jobs.myjob10.block.Inputs["triggermode"].Value.ToString() == "触发拍照" || _jobs.myjob10.block.Inputs["triggermode"].Value.ToString() == "连续运行" || _jobs.myjob10.block.Inputs["triggermode"].Value.ToString() == "通讯触发")
                             {
                                 comboBox47.Text = _jobs.myjob10.block.Inputs["triggermode"].Value.ToString();
-                                _jobs.myjob10.triggerMode = _jobs.myjob10.block.Inputs["triggermode"].Value.ToString().Replace(" ", "");
+                                _jobs.myjob10.triggerMode = _jobs.myjob10.block.Inputs["triggermode"].Value.ToString().Replace("\0", "");
                             }
                             else
                             {
@@ -647,7 +647,7 @@ namespace WindowsFormsApplication1
                             if (_jobs.myjob11.block.Inputs["triggermode"].Value.ToString() == "触发拍照" || _jobs.myjob11.block.Inputs["triggermode"].Value.ToString() == "连续运行" || _jobs.myjob11.block.Inputs["triggermode"].Value.ToString() == "通讯触发")
                             {
                                 comboBox51.Text = _jobs.myjob11.block.Inputs["triggermode"].Value.ToString();
-                                _jobs.myjob11.triggerMode = _jobs.myjob11.block.Inputs["triggermode"].Value.ToString().Replace(" ", "");
+                                _jobs.myjob11.triggerMode = _jobs.myjob11.block.Inputs["triggermode"].Value.ToString().Replace("\0", "");
                             }
                             else
                             {
@@ -668,7 +668,7 @@ namespace WindowsFormsApplication1
                             if (_jobs.myjob12.block.Inputs["triggermode"].Value.ToString() == "触发拍照" || _jobs.myjob12.block.Inputs["triggermode"].Value.ToString() == "连续运行" || _jobs.myjob12.block.Inputs["triggermode"].Value.ToString() == "通讯触发")
                             {
                                 comboBox55.Text = _jobs.myjob12.block.Inputs["triggermode"].Value.ToString();
-                                _jobs.myjob12.triggerMode = _jobs.myjob12.block.Inputs["triggermode"].Value.ToString().Replace(" ", "");
+                                _jobs.myjob12.triggerMode = _jobs.myjob12.block.Inputs["triggermode"].Value.ToString().Replace("\0", "");
                             }
                             else
                             {
