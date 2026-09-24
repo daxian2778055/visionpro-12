@@ -2995,6 +2995,217 @@ namespace WindowsFormsApplication1
                 pictureBox1.Image = QRCodeHelper.GetQRCodeBmp(identifier("Win32_DiskDrive", "Signature") + "M" + identifier("Win32_DiskDrive", "TotalHeads"));
             }));
         }
+        #region 授权判定的时间基准加固（判定式不变，只防"没过期被误判成过期"）
+
+        /// <summary>一次授权判定的输入快照：test.ini 三值 + 本次"今天" + 按原判定式算出的结果。</summary>
+        private sealed class AuthSnapshot
+        {
+            public int V1;            // test.ini [1]/2 到期日（OA 天数）
+            public int V2;            // test.ini [1]/3 起始日
+            public int V3;            // test.ini [1]/4 上次运行日
+            public int Now;           // 本次取到的"今天"（OA 天数）
+            public bool Pass;         // v1>now && v2<=now && v3<=now —— 与历史判定式完全一致
+            public bool ClockUnreliable;
+            public bool DataMissing;  // 三个值一个都没读到（文件被占用/尚未就绪），不等于过期
+        }
+
+        /// <summary>
+        /// 读一次 test.ini 并按原判定式算一次。★判定式未作任何放宽：v1&gt;now &amp;&amp; v2&lt;=now &amp;&amp; v3&lt;=now。
+        /// 本方法只负责"取数 + 计算"，不写文件、不碰界面。
+        /// </summary>
+        private AuthSnapshot ReadAuthSnapshot()
+        {
+            var r = new AuthSnapshot();
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    duini.ReadINIFile("C:\\Program Files\\test.ini");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.WriteLog("授权快照: 读test.ini失败(第" + (attempt + 1) + "次): " + ex.Message);
+                    if (attempt < 2)
+                    {
+                        try
+                        {
+                            string dir = Path.GetDirectoryName("C:\\Program Files\\test.ini");
+                            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                        }
+                        catch { }
+                        Thread.Sleep(100);
+                    }
+                }
+            }
+            string s1 = duini.ReadString("1", "2", "");
+            string s2 = duini.ReadString("1", "3", "");
+            string s3 = duini.ReadString("1", "4", "");
+            r.DataMissing = (s1.Length == 0 && s2.Length == 0 && s3.Length == 0);
+            int.TryParse(s1, out r.V1);
+            int.TryParse(s2, out r.V2);
+            int.TryParse(s3, out r.V3);
+            r.Now = (int)DateTime.Now.ToOADate();
+            r.Pass = (r.V1 > r.Now && r.V2 <= r.Now && r.V3 <= r.Now);
+            r.ClockUnreliable = AuthClockLooksUnreliable(r.V1, r.V2, r.V3, r.Now);
+            return r;
+        }
+
+        /// <summary>
+        /// 判"未通过"时区分两种情形：真到期，还是系统时间不可信。
+        /// 现场表现"每天开机第一次报到期、重开就正常"来自后者——夜间断电/CMOS 电池弱使 BIOS 时钟跑偏，
+        /// 开机初期 W32Time 还没联网校时，此刻的 now 不是真正的今天。
+        /// 只认这两种可疑：① 年份不在 2015~2037（掉电回到出厂年份等）；② 到期日仍在未来，却被
+        /// "起始日未到"或"上次运行日在未来"挡住（时钟偏慢→v2&gt;now；时钟被回拨/上次写进了未来日期→v3&gt;now）。
+        /// 真到期（v1&lt;=now）一律返回 false，不给任何宽限，避免把这里变成绕过口。
+        /// </summary>
+        private static bool AuthClockLooksUnreliable(int v1, int v2, int v3, int now)
+        {
+            int year = DateTime.FromOADate(now).Year;
+            if (year < 2015 || year > 2037) return true;
+            if (v1 <= now) return false;
+            return v3 > now || v2 > now;
+        }
+
+        /// <summary>
+        /// 上次运行日回写值。原实现无条件把 now 写回 [1]/4：开机时若系统时间被 BIOS 带到未来，
+        /// 就会把未来日期钉进 test.ini，之后时钟纠正回来则恒有 v3&gt;now → 天天判"未通过"，
+        /// 且回写被 v3&lt;=now 门控住，自己永远好不了（只能改文件）。
+        /// 现改为：时钟可疑或数据没读到就不写；正常时每次最多前进 1 天，最坏只多锁一天、下次启动自愈。
+        /// 返回 null 表示本次不回写。
+        /// </summary>
+        private static string AuthNextLastRunDay(AuthSnapshot a)
+        {
+            if (a.DataMissing || a.ClockUnreliable) return null;
+            if (a.V3 <= 0 || a.V3 > a.Now) return null;
+            return Math.Min(a.Now, a.V3 + 1).ToString();
+        }
+
+        /// <summary>
+        /// 判"未通过"且属于"时间可疑/数据未读到"时，等几秒再判一次（最多 3 次，累计 6 秒）。
+        /// 校时通常在这个窗口里完成，于是启动阶段就能拿到正确的今天，不必把界面打成"加密中"。
+        /// 真到期不会进这个循环（AuthClockLooksUnreliable 对 v1&lt;=now 直接返回 false）。
+        /// logTag 用于区分"启动解码"/"监控解码"两条调用路径。
+        /// </summary>
+        private AuthSnapshot RejudgeUntilClockSettles(string logTag)
+        {
+            var a = ReadAuthSnapshot();
+            if (a.Pass || !(a.ClockUnreliable || a.DataMissing)) return a;
+            int[] waits = { 1000, 2000, 3000 };
+            for (int i = 0; i < waits.Length; i++)
+            {
+                _logger.WriteLog(logTag + ": 判为未通过但时间可疑(" + AuthDescribe(a)
+                    + (a.DataMissing ? " 授权数据未读到" : "")
+                    + ")，" + waits[i] / 1000 + "秒后重判");
+                Thread.Sleep(waits[i]);
+                a = ReadAuthSnapshot();
+                if (a.Pass) { _logger.WriteLog(logTag + ": 重判通过，按正常授权处理"); return a; }
+                if (!(a.ClockUnreliable || a.DataMissing)) return a;
+            }
+            return a;
+        }
+
+        private volatile bool _authEncryptedUiShown;
+        private int _authSettleRetryRunning = 0;
+
+        /// <summary>OA 天数 → 日期文本（日志专用）。</summary>
+        private static string AuthDateText(int oaDay)
+        {
+            if (oaDay <= 0) return "未记录";
+            try { return DateTime.FromOADate(oaDay).ToString("yyyy-MM-dd"); }
+            catch { return "无效"; }
+        }
+
+        /// <summary>
+        /// ★第29轮：授权日志统一口径——只写"解码出来的到期日期 / 当初解码多少天 / 还剩多少天 / 系统日期"，
+        ///   不再把 test.ini 里的原始计数值（47267、46268 这类 OA 天数）写进日志：客户拿到日志即可
+        ///   反推到期日与起始日的编码规则。解码天数 = 到期日 - 起始日（起始日在解码时写入 [1]/3）。
+        /// </summary>
+        private static string AuthDescribe(AuthSnapshot a)
+        {
+            string granted = (a.V1 > 0 && a.V2 > 0 && a.V1 > a.V2) ? (a.V1 - a.V2) + "天" : "未知";
+            string left;
+            if (a.V1 <= 0) left = "剩余=未知";
+            else if (a.V1 > a.Now) left = "剩余" + (a.V1 - a.Now) + "天";
+            else left = "已过期" + (a.Now - a.V1) + "天";
+            return "到期日期=" + AuthDateText(a.V1) + " 解码天数=" + granted + " " + left
+                + " 系统日期=" + AuthDateText(a.Now) + " 上次运行日=" + AuthDateText(a.V3);
+        }
+
+        /// <summary>
+        /// 启动阶段 6 秒窗口内仍未校时时的后台自愈：每 30 秒重判一次，最多 10 次（约 5 分钟）。
+        /// 一旦判为通过，由 daoqi_jiankong 的新自愈分支恢复界面，操作工不必再重开软件。
+        /// 只做"按原判定式重判"，不放宽任何条件；到期日已过的真过期会在第一次就退出循环。
+        /// </summary>
+        private void StartAuthClockSettleRetry()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _authSettleRetryRunning, 1, 0) != 0) return;
+            Task.Run(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < 10; i++)
+                    {
+                        Thread.Sleep(30000);
+                        if (IsDisposed) return;
+                        var a = ReadAuthSnapshot();
+                        if (a.Pass)
+                        {
+                            _logger.WriteLog("授权自愈: 第" + (i + 1) + "次重判通过，恢复界面");
+                            daoqi_jiankong();
+                            return;
+                        }
+                        if (!(a.ClockUnreliable || a.DataMissing))
+                        {
+                            _logger.WriteLog("授权自愈: 重判为真未通过(" + AuthDescribe(a) + ")，停止自愈");
+                            return;
+                        }
+                        _logger.WriteLog("授权自愈: 第" + (i + 1) + "次重判仍时间可疑(系统日期=" + AuthDateText(a.Now) + ")，继续等待校时");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { _logger.WriteLog("授权自愈异常: " + ex.Message); } catch { }
+                }
+                finally { System.Threading.Interlocked.Exchange(ref _authSettleRetryRunning, 0); }
+            });
+        }
+
+        /// <summary>把界面从"加密中"恢复回未加密态（与 Form1_Load 判为通过时的界面动作同口径）。</summary>
+        private void RestoreUiAfterAuthPass()
+        {
+            try
+            {
+                this.Invoke(new Action(() =>
+                {
+                    try
+                    {
+                        // 操作工若正停在"解密"输入框上，不抢他的界面
+                        if (textBox4 != null && (textBox4.Focused || button5.Focused))
+                        {
+                            _logger.WriteLog("授权自愈: 操作员正在输入解密码，本次不自动恢复界面");
+                            return;
+                        }
+                        for (int i = 0; i < 12; i++) checkedListBox1.SetItemChecked(i, true);
+                        button1.Enabled = true;
+                        button2.Enabled = true;
+                        label12.Text = "";
+                        button5.Visible = false;
+                        label172.Visible = false;
+                        textBox7.Visible = false;
+                        textBox4.Visible = false;
+                        pictureBox1.Visible = false;
+                        tableLayoutPanel1.Visible = true;
+                        _authEncryptedUiShown = false;
+                    }
+                    catch (Exception exInner) { _logger.WriteLog("授权自愈: 恢复界面异常: " + exInner.Message); }
+                }));
+            }
+            catch (Exception exUi) { _logger.WriteLog("授权自愈: 恢复界面失败(窗体可能正在关闭): " + exUi.Message); }
+        }
+
+        #endregion
+
         private void Form1_Load(object sender, EventArgs e)
         {
             // ★ 交互优先（2026-09-19）：挂只读消息过滤器，记录最后鼠标/键盘活动时间，
@@ -3007,61 +3218,35 @@ namespace WindowsFormsApplication1
             int authV1 = 0;   // ★ 2026-09-07：授权到期日期（用于统一计算 _authExpired，见下方）
             string zhongjian = "22";
 
-            // ★ 读取加密码，带重试
+            // ★ 读取加密码，带重试（★第29轮：与 test.ini 同口径重试到 3 次。读空会让下方整个判定块
+            //   被跳过、dayz 保持 0，界面直接显示"加密中"+二维码——冷启动时 code.ini 被杀软/索引
+            //   短暂占用就可能读空，原实现只重试 1 次(200ms)不够。）
             string code = _config.ReadString("code1", "code2", "");
-            if (code == "")
+            for (int codeAttempt = 0; codeAttempt < 2 && code == ""; codeAttempt++)
             {
-                Thread.Sleep(200);
+                Thread.Sleep(100 * (codeAttempt + 1));
                 code = _config.ReadString("code1", "code2", "");
-                if (code == "")
-                {
-                    _logger.WriteLog("启动解码: 未读到code2，code.ini可能损坏");
-                }
             }
+            if (code == "")
+                _logger.WriteLog("启动解码: 未读到加密码，配置文件可能损坏");
 
-            // ★ 读取授权文件，带重试和目录创建
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                try
-                {
-                    duini.ReadINIFile("C:\\Program Files\\test.ini");
-                    break; // 成功
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog("读取test.ini失败(第" + (attempt + 1) + "次): " + ex.Message);
-                    if (attempt < 2)
-                    {
-                        // 尝试确保目录存在后重试
-                        try
-                        {
-                            string dir = Path.GetDirectoryName("C:\\Program Files\\test.ini");
-                            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                        }
-                        catch { }
-                        Thread.Sleep(100);
-                    }
-                }
-            }
-
-            string code1 = duini.ReadString("1", "2", "");
-            string code2_val = duini.ReadString("1", "3", "");
-            string code3 = duini.ReadString("1", "4", "");
+            // ★第29轮：test.ini 三值与"今天"统一由一次快照取（原实现 daoqi/dayt/解锁判断各读一次
+            //   DateTime.Now，校时或跨零点正好落在中间就会自相矛盾）；判为未通过且属于"时间可疑/
+            //   数据未读到"时，等 1s/2s/3s 重判，避免开机初期系统时间尚未联网校准就误报到期。
+            //   判定式本身未作任何改动。
+            var auth = RejudgeUntilClockSettles("启动解码");
             textBox7.Text = duini.ReadString("1", "1", "");
-            _logger.WriteLog("启动解码: test.ini读取完成");
+            _logger.WriteLog("启动解码: 授权信息 " + AuthDescribe(auth));
 
-            // ★ 过期警告检查，用 TryParse 替代 Parse 避免空串异常
-            // 用 today 作为基准，而非 c3（c3 是上次运行日期，检查时尚未更新）
-            Thread.Sleep(20);
+            // ★ 过期警告检查：与解锁判定共用同一个 now 快照
+            // ★第29轮：时间可疑或授权数据没到时不弹"剩余0天"——时钟被 BIOS 带到未来时 c1-today 会变负，
+            //   原来会据此弹"软件剩余时间0天，请联系厂家"，属于同一类误报。
             try
             {
-                int c1 = 0;
-                int today = (int)DateTime.Now.ToOADate();
-                int.TryParse(code1, out c1);
-                if (c1 > 0 && (c1 - today) <= 1)
+                if (auth.V1 > 0 && (auth.V1 - auth.Now) <= 1 && !auth.ClockUnreliable && !auth.DataMissing)
                 {
-                    daoqi = "软件剩余时间" + Math.Max(0, c1 - today) + "天，请联系厂家!";
-                    _logger.WriteLog("启动解码: 过期警告触发, 剩余" + Math.Max(0, c1 - today) + "天");
+                    daoqi = "软件剩余时间" + Math.Max(0, auth.V1 - auth.Now) + "天，请联系厂家!";
+                    _logger.WriteLog("启动解码: 过期警告触发, 剩余" + Math.Max(0, auth.V1 - auth.Now) + "天");
                 }
                 else
                     daoqi = "";
@@ -3085,11 +3270,11 @@ namespace WindowsFormsApplication1
                         int parsedDate = 0;
                         if (int.TryParse(dateStr, out parsedDate))
                         {
-                            dayt = parsedDate - ((int)DateTime.Now.ToOADate());
+                            dayt = parsedDate - auth.Now;   // ★第29轮：用同一次快照，不再另读 DateTime.Now
                         }
                         else
                         {
-                            _logger.WriteLog("启动解码: code中日期段解析失败, offset=" + offset);
+                            _logger.WriteLog("启动解码: 加密码日期段格式异常，无法解析");
                             // 重试一次
                             code = _config.ReadString("code1", "code2", "");
                             if (code != "" && code.Length >= 7)
@@ -3098,14 +3283,14 @@ namespace WindowsFormsApplication1
                                 if (int.TryParse(last2, out offset) && offset >= 0 && offset + 5 <= code.Length)
                                 {
                                     int.TryParse(code.Substring(offset, 5), out parsedDate);
-                                    dayt = parsedDate - ((int)DateTime.Now.ToOADate());
+                                    dayt = parsedDate - auth.Now;   // ★第29轮：用同一次快照，不再另读 DateTime.Now
                                 }
                             }
                         }
                     }
                     else
                     {
-                        _logger.WriteLog("启动解码: code偏移量无效, codeLen=" + code.Length);
+                        _logger.WriteLog("启动解码: 加密码格式异常（偏移量无效）");
                         // 重试一次
                         code = _config.ReadString("code1", "code2", "");
                         if (code != "" && code.Length >= 7)
@@ -3115,7 +3300,7 @@ namespace WindowsFormsApplication1
                             {
                                 int parsedDate2 = 0;
                                 int.TryParse(code.Substring(offset, 5), out parsedDate2);
-                                dayt = parsedDate2 - ((int)DateTime.Now.ToOADate());
+                                dayt = parsedDate2 - auth.Now;   // ★第29轮：同一次快照
                             }
                         }
                     }
@@ -3127,31 +3312,43 @@ namespace WindowsFormsApplication1
                             zhongjian = code.Substring(off, 5);
                     }
                     else
-                        zhongjian = DateTime.Now.ToOADate().ToString();
+                        zhongjian = auth.Now.ToString();   // ★第29轮：同一次快照（zhongjian 仅喂给 day2，day2 从不参与比较）
 
-                    // ★ 解锁判断，用 TryParse 替代 Parse
-                    int v1 = 0, v2 = 0, v3 = 0, now = (int)DateTime.Now.ToOADate();
-                    int.TryParse(code1, out v1);
-                    int.TryParse(code2_val, out v2);
-                    int.TryParse(code3, out v3);
-                    authV1 = v1;
-                    if (v1 > now && v2 <= now && v3 <= now)
+                    // ★ 解锁判断：判定式与历史完全一致（v1>now && v2<=now && v3<=now），
+                    //   取值改自上面同一次快照，未作任何放宽。
+                    authV1 = auth.V1;
+                    if (auth.Pass)
                     {
                         dayz = 1;
-                        _logger.WriteLog("启动解码: 授权通过, dayz=1");
+                        // ★第29轮：授权数据已由上面"授权信息"那行记录，此处只写结论，避免同一份快照刷两遍
+                        _logger.WriteLog("启动解码: 授权通过");
                     }
                     else
                     {
                         dayz = 0;
-                        _logger.WriteLog("启动解码: 授权未通过, v1=" + v1 + " v2=" + v2 + " v3=" + v3 + " now=" + now);
+                        _logger.WriteLog("启动解码: 授权未通过"
+                            + (auth.ClockUnreliable ? " [系统时间可疑]" : "")
+                            + (auth.DataMissing ? " [test.ini授权数据未读到]" : ""));
                     }
 
                     // ★ 更新运行日期，确保下次启动仍能正常判断
-                    if (v3 > 0 && v3 <= now)
+                    // ★第29轮：改为 AuthNextLastRunDay —— 时间可疑或数据没到时不回写，正常时每次最多
+                    //   前进 1 天。原实现无条件写 now，开机时钟被带到未来时会把未来日期钉进 test.ini，
+                    //   之后时钟纠正就恒有 v3>now → 天天判"未通过"，且回写被 v3<=now 门控再也好不了。
+                    string nextRunDay = AuthNextLastRunDay(auth);
+                    if (nextRunDay != null)
                     {
                         try
                         {
-                            duini.WriteString("1", "4", now.ToString());
+                            duini.WriteString("1", "4", nextRunDay);
+                            if (nextRunDay != auth.Now.ToString())
+                            {
+                                int writtenDay = 0;
+                                int.TryParse(nextRunDay, out writtenDay);
+                                _logger.WriteLog("启动解码: 系统日期(" + AuthDateText(auth.Now) + ")比上次运行日("
+                                    + AuthDateText(auth.V3) + ")前进 " + (auth.Now - auth.V3)
+                                    + " 天，上次运行日限步回写为 " + AuthDateText(writtenDay));
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -3166,7 +3363,7 @@ namespace WindowsFormsApplication1
             }
             else if (code != "" && code.Length < 7)
             {
-                _logger.WriteLog("启动解码: code长度不足7位, 无法解码");
+                _logger.WriteLog("启动解码: 加密码格式异常，无法解码");
             }
             // ★ 2026-09-07：统一计算授权门控。
             //   必须限定「确实读到有效到期日期 authV1>0」才算过期 —— 否则 test.ini 读取失败或字段为空时
@@ -3175,6 +3372,14 @@ namespace WindowsFormsApplication1
             _authExpired = (authV1 > 0 && dayz == 0);
             if (_authExpired)
                 _logger.WriteLog("启动解码: 授权门控生效，将跳过自动开相机");
+            // ★第29轮：启动阶段 6 秒重判窗口仍没等到联网校时（或 test.ini 当时读不到）时，
+            //   交给后台自愈每 30 秒按原判定式重判，校时完成后自动恢复界面，操作工不必重开软件。
+            //   真到期（v1<=now）不会进这里，自愈循环第一次也会因"非可疑"直接退出。
+            if (dayz == 0 && (auth.ClockUnreliable || auth.DataMissing))
+            {
+                _logger.WriteLog("启动解码: 本次未通过按[时间可疑/数据未读到]处理，启动后台自愈重判（判定式未放宽，通过才恢复）");
+                StartAuthClockSettleRetry();
+            }
             try
             {
                 day2 = GetCPUSerialnumber(zhongjian);
@@ -3207,9 +3412,11 @@ namespace WindowsFormsApplication1
                 pictureBox1.Visible = true;
                 tableLayoutPanel1.Visible = false;
                 getCode();
+                _authEncryptedUiShown = true;   // ★第29轮：记住加密界面是本次判定挂上去的，校时后可安全恢复
             }
             else
             {
+                _authEncryptedUiShown = false;
                 checkedListBox1.SetItemChecked(0, true);
                 checkedListBox1.SetItemChecked(1, true);
                 checkedListBox1.SetItemChecked(2, true);

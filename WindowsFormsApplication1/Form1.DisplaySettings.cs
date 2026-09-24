@@ -1408,52 +1408,33 @@ namespace WindowsFormsApplication1
             string zhongjian = "22";
 
             string code = _config.ReadString("code1", "code2", "");
+            // ★第29轮：与 Form1_Load 同口径，重试到 3 次（冷启动被杀软/索引占用可能读空）
+            for (int codeAttempt = 0; codeAttempt < 2 && code == ""; codeAttempt++)
+            {
+                Thread.Sleep(100 * (codeAttempt + 1));
+                code = _config.ReadString("code1", "code2", "");
+            }
             if (code == "")
             {
-                Thread.Sleep(20);
-                code = _config.ReadString("code1", "code2", "");
-                if (code == "")
-                {
-                    _logger.WriteLog("监控解码: 未读到code2");
-                    return; // ★ 无code则直接返回，不再弹MessageBox（后台线程不能弹窗）
-                }
+                _logger.WriteLog("监控解码: 未读到加密码，配置文件可能损坏");
+                return; // ★ 无code则直接返回，不再弹MessageBox（后台线程不能弹窗）
             }
 
-            // ★ 带重试读取test.ini
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                try
-                {
-                    duini.ReadINIFile("C:\\Program Files\\test.ini");
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog("监控解码: 读test.ini失败(第" + (attempt + 1) + "次): " + ex.Message);
-                    if (attempt < 2)
-                    {
-                        try { string d = Path.GetDirectoryName("C:\\Program Files\\test.ini"); if (!Directory.Exists(d)) Directory.CreateDirectory(d); } catch { }
-                        Thread.Sleep(100);
-                    }
-                }
-            }
-
-            string code1 = duini.ReadString("1", "2", "");
-            string code2_val = duini.ReadString("1", "3", "");
-            string code3 = duini.ReadString("1", "4", "");
+            // ★第29轮：与 Form1_Load 同一套快照/重判助手——test.ini 三值与"今天"一次取，
+            //   判为未通过且属于"时间可疑/数据未读到"时等 1s/2s/3s 重判，避免开机初期系统时间
+            //   尚未联网校时就把正常授权判成到期。判定式未作任何改动。
+            var auth = RejudgeUntilClockSettles("监控解码");
+            _logger.WriteLog("监控解码: 授权信息 " + AuthDescribe(auth));
             string beizhu = duini.ReadString("1", "1", "");
             try { this.Invoke(new Action(() => { textBox7.Text = beizhu; })); } catch { }
 
-            // ★ 过期警告，用 today 作为基准（c3 是上次运行日期，尚未更新）
-            Thread.Sleep(5);
+            // ★ 过期警告：与解锁判定共用同一个 now 快照
+            // ★第29轮：时间可疑或数据未读到不弹"剩余0天"（时钟被带到未来时 c1-today 会变负，属误报）
             try
             {
-                int c1 = 0;
-                int today = (int)DateTime.Now.ToOADate();
-                int.TryParse(code1, out c1);
-                if (c1 > 0 && (c1 - today) <= 1)
+                if (auth.V1 > 0 && (auth.V1 - auth.Now) <= 1 && !auth.ClockUnreliable && !auth.DataMissing)
                 {
-                    int remain = Math.Max(0, c1 - today);
+                    int remain = Math.Max(0, auth.V1 - auth.Now);
                     daoqi = "软件剩余时间" + remain + "天，请联系厂家!";
                     _logger.WriteLog("监控解码: 过期警告触发, 剩余" + remain + "天");
                 }
@@ -1477,13 +1458,13 @@ namespace WindowsFormsApplication1
                         string dateStr = code.Substring(offset, 5);
                         int parsedDate = 0;
                         if (int.TryParse(dateStr, out parsedDate))
-                            dayt = parsedDate - ((int)DateTime.Now.ToOADate());
+                            dayt = parsedDate - auth.Now;
                         else
-                            _logger.WriteLog("监控解码: code日期段解析失败, offset=" + offset);
+                            _logger.WriteLog("监控解码: 加密码日期段格式异常，无法解析");
                     }
                     else
                     {
-                        _logger.WriteLog("监控解码: code偏移量无效, codeLen=" + code.Length);
+                        _logger.WriteLog("监控解码: 加密码格式异常（偏移量无效）");
                         // 重试
                         code = _config.ReadString("code1", "code2", "");
                         if (code != "" && code.Length >= 7)
@@ -1493,7 +1474,7 @@ namespace WindowsFormsApplication1
                             {
                                 int parsedDate2 = 0;
                                 int.TryParse(code.Substring(offset, 5), out parsedDate2);
-                                dayt = parsedDate2 - ((int)DateTime.Now.ToOADate());
+                                dayt = parsedDate2 - auth.Now;
                             }
                         }
                     }
@@ -1505,23 +1486,36 @@ namespace WindowsFormsApplication1
                             zhongjian = code.Substring(off, 5);
                     }
                     else
-                        zhongjian = DateTime.Now.ToOADate().ToString();
+                        zhongjian = auth.Now.ToString();
 
-                    // ★ 解锁判断
-                    int v1 = 0, v2 = 0, v3 = 0, now = (int)DateTime.Now.ToOADate();
-                    int.TryParse(code1, out v1);
-                    int.TryParse(code2_val, out v2);
-                    int.TryParse(code3, out v3);
-                    authV1 = v1;
-                    if (v1 > now && v2 <= now && v3 <= now)
+                    // ★ 解锁判断（★第29轮：三值与 now 由同一个快照给出，判定式一字未改）
+                    authV1 = auth.V1;
+                    if (auth.Pass)
                         dayz = 1;
                     else
-                        dayz = 0;
-
-                    // ★ 更新运行日期
-                    if (v3 > 0 && v3 <= now)
                     {
-                        try { duini.WriteString("1", "4", now.ToString()); }
+                        dayz = 0;
+                        if (auth.ClockUnreliable)
+                            _logger.WriteLog("监控解码: 本次未通过伴随[系统时间可疑]，判定式未放宽，仅记录");
+                        if (auth.DataMissing)
+                            _logger.WriteLog("监控解码: 本次未通过伴随[test.ini授权数据未读到]，判定式未放宽，仅记录");
+                    }
+
+                    // ★ 更新运行日期（★第29轮：限步前进，时钟被带到未来时不会把未来日期钉进 test.ini）
+                    string nextRunDay = AuthNextLastRunDay(auth);
+                    if (nextRunDay != null)
+                    {
+                        try
+                        {
+                            duini.WriteString("1", "4", nextRunDay);
+                            if (nextRunDay != auth.Now.ToString())
+                            {
+                                int writtenDay = 0;
+                                int.TryParse(nextRunDay, out writtenDay);
+                                _logger.WriteLog("监控解码: 上次运行日限步回写为 " + AuthDateText(writtenDay)
+                                    + "(系统日期=" + AuthDateText(auth.Now) + ")");
+                            }
+                        }
                         catch (Exception ex) { _logger.WriteLog("监控解码: 更新运行日期失败: " + ex.Message); }
                     }
                 }
@@ -1566,12 +1560,20 @@ namespace WindowsFormsApplication1
                     pictureBox1.Visible = true;
                     tableLayoutPanel1.Visible = false;
                     getCode();
+                    _authEncryptedUiShown = true;
                     }));
                 }
                 catch (Exception exUi)
                 {
                     _logger.WriteLog("监控解码: 刷新加密界面失败(窗体可能正在关闭): " + exUi.Message);
                 }
+            }
+            else if (_authEncryptedUiShown)
+            {
+                // ★第29轮：判定通过但界面仍停在"加密中"（后台自愈重判通过 / 开机初期误判后已校时）
+                //   则就地恢复，不需要重开软件。判定式未放宽：只有真正通过才走这里。
+                _logger.WriteLog("监控解码: 判定通过且界面仍处于加密中，执行恢复");
+                RestoreUiAfterAuthPass();
             }
         }
         #endregion
