@@ -3059,11 +3059,24 @@ namespace WindowsFormsApplication1
         /// "起始日未到"或"上次运行日在未来"挡住（时钟偏慢→v2&gt;now；时钟被回拨/上次写进了未来日期→v3&gt;now）。
         /// 真到期（v1&lt;=now）一律返回 false，不给任何宽限，避免把这里变成绕过口。
         /// </summary>
+        /// <summary>
+        /// 系统日期是否落在可信年份窗口（2015~2037）。夜间断电/CMOS 电池弱会让 BIOS 时钟掉回出厂年份，
+        /// 或被带到未来年份——凡此种种，此刻的"今天"不是真正的今天，不能拿去做授权判定，更不能写回 test.ini。
+        /// ★第30轮：从 AuthClockLooksUnreliable 抽出，供手动解码写入路径复用；异常计数值按不可信处理，
+        ///   不再让 FromOADate 的 ArgumentOutOfRangeException 抛穿到启动流程。
+        /// </summary>
+        private static bool AuthSystemDateLooksSane(int nowOa)
+        {
+            int year;
+            try { year = DateTime.FromOADate(nowOa).Year; }
+            catch { return false; }
+            return year >= 2015 && year <= 2037;
+        }
+
         private static bool AuthClockLooksUnreliable(int v1, int v2, int v3, int now)
         {
-            int year = DateTime.FromOADate(now).Year;
-            if (year < 2015 || year > 2037) return true;
-            if (v1 <= now) return false;
+            if (!AuthSystemDateLooksSane(now)) return true;
+            if (v1 <= now) return false;                 // 真到期不给宽限，避免变成绕过口
             return v3 > now || v2 > now;
         }
 
@@ -3107,6 +3120,8 @@ namespace WindowsFormsApplication1
 
         private volatile bool _authEncryptedUiShown;
         private int _authSettleRetryRunning = 0;
+        private int _authRestoreRetryRunning = 0;
+        private int _lastDaoqiTick = 0;   // daoqi_jiankong 入口去抖用（Environment.TickCount，0=未跑过）
 
         /// <summary>OA 天数 → 日期文本（日志专用）。</summary>
         private static string AuthDateText(int oaDay)
@@ -3117,25 +3132,27 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
-        /// ★第29轮：授权日志统一口径——只写"解码出来的到期日期 / 当初解码多少天 / 还剩多少天 / 系统日期"，
+        /// ★第29轮：授权日志统一口径——只写"解码出来的到期日期 / 还剩多少天 / 系统日期 / 上次运行日"，
         ///   不再把 test.ini 里的原始计数值（47267、46268 这类 OA 天数）写进日志：客户拿到日志即可
-        ///   反推到期日与起始日的编码规则。解码天数 = 到期日 - 起始日（起始日在解码时写入 [1]/3）。
+        ///   反推到期日与起始日的编码规则。
+        /// ★第31轮 S2：去掉"解码天数"（= 到期日 - 起始日，起始日在解码时写入 [1]/3）——有了到期日和这个
+        ///   差值就能减回起始日，等于把解码日暴露出去，与上面的脱敏口径相悖。授权规模不再进日志。
         /// </summary>
         private static string AuthDescribe(AuthSnapshot a)
         {
-            string granted = (a.V1 > 0 && a.V2 > 0 && a.V1 > a.V2) ? (a.V1 - a.V2) + "天" : "未知";
             string left;
             if (a.V1 <= 0) left = "剩余=未知";
             else if (a.V1 > a.Now) left = "剩余" + (a.V1 - a.Now) + "天";
             else left = "已过期" + (a.Now - a.V1) + "天";
-            return "到期日期=" + AuthDateText(a.V1) + " 解码天数=" + granted + " " + left
+            return "到期日期=" + AuthDateText(a.V1) + " " + left
                 + " 系统日期=" + AuthDateText(a.Now) + " 上次运行日=" + AuthDateText(a.V3);
         }
 
         /// <summary>
-        /// 启动阶段 6 秒窗口内仍未校时时的后台自愈：每 30 秒重判一次，最多 10 次（约 5 分钟）。
-        /// 一旦判为通过，由 daoqi_jiankong 的新自愈分支恢复界面，操作工不必再重开软件。
+        /// 启动阶段 6 秒窗口内仍未校时时的后台自愈：每 30 秒按原判定式重判一次，最多 10 次（约 5 分钟）。
+        /// 判为通过即就地清除 _authExpired 门控并恢复界面，操作工不必再重开软件。
         /// 只做"按原判定式重判"，不放宽任何条件；到期日已过的真过期会在第一次就退出循环。
+        /// ★第30轮：不再绕道 daoqi_jiankong（该入口已加去抖，绕过去会被静默吞掉），直接走恢复。
         /// </summary>
         private void StartAuthClockSettleRetry()
         {
@@ -3152,7 +3169,8 @@ namespace WindowsFormsApplication1
                         if (a.Pass)
                         {
                             _logger.WriteLog("授权自愈: 第" + (i + 1) + "次重判通过，恢复界面");
-                            daoqi_jiankong();
+                            _authExpired = false;   // 与 dayz==1 同口径（Pass ⇒ 未过期）
+                            if (_authEncryptedUiShown) RestoreUiAfterAuthPass();
                             return;
                         }
                         if (!(a.ClockUnreliable || a.DataMissing))
@@ -3183,7 +3201,8 @@ namespace WindowsFormsApplication1
                         // 操作工若正停在"解密"输入框上，不抢他的界面
                         if (textBox4 != null && (textBox4.Focused || button5.Focused))
                         {
-                            _logger.WriteLog("授权自愈: 操作员正在输入解密码，本次不自动恢复界面");
+                            _logger.WriteLog("授权自愈: 操作员正在输入解密码，本次不自动恢复界面，转入重试");
+                            StartAuthRestoreRetry();
                             return;
                         }
                         for (int i = 0; i < 12; i++) checkedListBox1.SetItemChecked(i, true);
@@ -3202,6 +3221,48 @@ namespace WindowsFormsApplication1
                 }));
             }
             catch (Exception exUi) { _logger.WriteLog("授权自愈: 恢复界面失败(窗体可能正在关闭): " + exUi.Message); }
+        }
+
+        /// <summary>
+        /// ★第30轮：恢复动作被"操作员正在输入解密码"跳过后，界面会一直停在"加密中"而授权其实已通过
+        /// （相机稳定时再无别的路径触发恢复）。此处每 30 秒重试一次、最多 10 次；
+        /// 每轮都重新按原判定式判定，只有 Pass 才恢复——绝不拿上一轮的旧结论直接动界面。
+        /// </summary>
+        private void StartAuthRestoreRetry()
+        {
+            if (System.Threading.Interlocked.CompareExchange(ref _authRestoreRetryRunning, 1, 0) != 0) return;
+            Task.Run(() =>
+            {
+                try
+                {
+                    for (int i = 0; i < 10; i++)
+                    {
+                        Thread.Sleep(30000);
+                        if (IsDisposed) return;
+                        if (!_authEncryptedUiShown) return;   // 已由其它路径恢复
+                        var a = ReadAuthSnapshot();
+                        if (!a.Pass)
+                        {
+                            if (!(a.ClockUnreliable || a.DataMissing))
+                            {
+                                _logger.WriteLog("授权恢复重试: 重判为真未通过(" + AuthDescribe(a) + ")，停止重试");
+                                return;
+                            }
+                            continue;   // 仍属时间可疑/数据未读到，等下一轮
+                        }
+                        _logger.WriteLog("授权恢复重试: 第" + (i + 1) + "次重判通过，重试恢复界面");
+                        _authExpired = false;
+                        RestoreUiAfterAuthPass();
+                        if (!_authEncryptedUiShown) return;
+                    }
+                    _logger.WriteLog("授权恢复重试: 已达最大次数，界面仍为加密中，请操作员离开解密输入框后重开或等待跨零点监控");
+                }
+                catch (Exception ex)
+                {
+                    try { _logger.WriteLog("授权恢复重试异常: " + ex.Message); } catch { }
+                }
+                finally { System.Threading.Interlocked.Exchange(ref _authRestoreRetryRunning, 0); }
+            });
         }
 
         #endregion
@@ -7050,9 +7111,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出1-NG: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出1-NG: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[0].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出1-NG: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出1-NG: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出1-NG异常: " + ex.Message); }
             }
@@ -7072,13 +7133,13 @@ namespace WindowsFormsApplication1
                     nRet = _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("LineSelector", a);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出2: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16) + " line=" + a);
+                        _logger.WriteLog("IO输出2: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
                         return;
                     }
                     nRet = _cameraCtrl.Cameras[1].MV_CC_SetBoolValue_NET("LineInverter", b);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出2: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16) + " val=" + b);
+                        _logger.WriteLog("IO输出2: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
                     }
                 }
                 catch (Exception ex)
@@ -7102,13 +7163,13 @@ namespace WindowsFormsApplication1
                     nRet = _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("LineSelector", a);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出3: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16) + " line=" + a);
+                        _logger.WriteLog("IO输出3: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
                         return;
                     }
                     nRet = _cameraCtrl.Cameras[2].MV_CC_SetBoolValue_NET("LineInverter", b);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出3: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16) + " val=" + b);
+                        _logger.WriteLog("IO输出3: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
                     }
                 }
                 catch (Exception ex)
@@ -7132,13 +7193,13 @@ namespace WindowsFormsApplication1
                     nRet = _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("LineSelector", a);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出4: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16) + " line=" + a);
+                        _logger.WriteLog("IO输出4: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
                         return;
                     }
                     nRet = _cameraCtrl.Cameras[3].MV_CC_SetBoolValue_NET("LineInverter", b);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出4: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16) + " val=" + b);
+                        _logger.WriteLog("IO输出4: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
                     }
                 }
                 catch (Exception ex)
@@ -7162,13 +7223,13 @@ namespace WindowsFormsApplication1
                     nRet = _cameraCtrl.Cameras[4].MV_CC_SetEnumValue_NET("LineSelector", a);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出5: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16) + " line=" + a);
+                        _logger.WriteLog("IO输出5: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
                         return;
                     }
                     nRet = _cameraCtrl.Cameras[4].MV_CC_SetBoolValue_NET("LineInverter", b);
                     if (nRet != MyCamera.MV_OK)
                     {
-                        _logger.WriteLog("IO输出5: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16) + " val=" + b);
+                        _logger.WriteLog("IO输出5: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
                     }
                 }
                 catch (Exception ex)
@@ -7189,9 +7250,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[5].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出6: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出6: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[5].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出6: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出6: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出6异常: " + ex.Message); }
             }
@@ -7208,9 +7269,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[6].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出7: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出7: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[6].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出7: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出7: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出7异常: " + ex.Message); }
             }
@@ -7227,9 +7288,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[7].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出8: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出8: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[7].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出8: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出8: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出8异常: " + ex.Message); }
             }
@@ -7246,9 +7307,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出9: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出9: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[8].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出9: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出9: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出9异常: " + ex.Message); }
             }
@@ -7265,9 +7326,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出10: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出10: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[9].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出10: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出10: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出10异常: " + ex.Message); }
             }
@@ -7284,9 +7345,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出11: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出11: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[10].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出11: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出11: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出11异常: " + ex.Message); }
             }
@@ -7303,9 +7364,9 @@ namespace WindowsFormsApplication1
                 {
                     int nRet;
                     nRet = _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出12: LineSelector失败 ret=0x" + Convert.ToString(nRet, 16)); return; }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出12: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
                     nRet = _cameraCtrl.Cameras[11].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出12: LineInverter失败 ret=0x" + Convert.ToString(nRet, 16)); }
+                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出12: LineInverter失败 ret=0x" + HkRet(nRet)); }
                 }
                 catch (Exception ex) { _logger.WriteLog("IO输出12异常: " + ex.Message); }
             }
@@ -7617,8 +7678,9 @@ namespace WindowsFormsApplication1
             // ★第27轮⑥：改为非阻塞抢锁（#28 加锁时漏掉的一半）。outputok 的 setter 会在赋值线程上
             //   同步回调 IOxOK，而持 locker_ok 的脉冲写入方（timer17 高电平拍）正是"持锁 → 赋值 →
             //   回调里 Thread.Sleep(IOyanshi) → 再置位"，本方法又被停止按钮在 UI 线程直接调用，
-            //   阻塞等锁最坏可被 Σ IOyanshi 冻住界面。抢不到锁就照旧写入（等价于 #28 之前的行为，
-            //   绝不因争用漏掉"输出线回断态"），并按路 5 秒限流记一条"本次未加锁"日志。
+            //   阻塞等锁最坏可被 Σ IOyanshi 冻住界面。抢不到锁就照旧写入（等价于 #28 之前的行为：本方法
+            //   不会因争用跳过"清输出状态"这一步；但不保证最终停在断态——持锁的脉冲线程随后仍会继续置位，
+            //   本次写入可能被它覆盖，这是"不冻 UI"换来的取舍），并按路 5 秒限流记一条"本次未加锁"日志。
             var jobs = _jobs;
             if (jobs == null || jobs.Myjobs == null) return;
             int nowTick = Environment.TickCount;
@@ -7661,6 +7723,16 @@ namespace WindowsFormsApplication1
         private readonly int[] _lastOutputResetBusyTick = new int[12];
 
         /// <summary>
+        /// ★第30轮：海康 SDK 返回码统一按 8 位十六进制输出。原日志用 Convert.ToString 按 16 进制转 nRet——
+        /// MV_CC 的 0x80000000 段状态码按 int 是负数，会被打成 "ret=0x-80000000" 这种既错又无法对照
+        /// 手册的写法，小值还不补零（0x57 而非 0x00000057）。
+        /// </summary>
+        private static string HkRet(int nRet)
+        {
+            return ((uint)nRet).ToString("X8");
+        }
+
+        /// <summary>
         /// ★第28轮②：某路流程绑定中途抛异常时，把该路打回"未绑定"空态（与 ReleaseAllMyjobVisionObjects 一致）。
         /// 第27轮把 12 路绑定改成逐路 try 后，失败路不再连带让后续路空绑定，而 flowBindOk 只查 job/block 非空——
         /// 若异常发生在 <c>job.block = ...</c> 之后（典型如 <c>block.Inputs["Input"]</c> 键不存在），
@@ -7672,6 +7744,22 @@ namespace WindowsFormsApplication1
             if (job == null) return;
             job.job = null;
             job.block = null;
+        }
+
+        /// <summary>
+        /// ★第30轮④：把 listBox2 中第 slotOneBased 组（1 基，每组固定 6 项）的首行标记为"(未绑定)"。
+        /// 组项已由绑定前按 JobCount 定序预填，失败路的整组仍在绝对索引 6*(路号-1) 的原位上，
+        /// 只改首行文字即可让"列表看着正常"与"job/block 已置空、无 PLC 回执"两种状态一致。
+        /// 只在 UI 线程调用（本方法所在的绑定段已整体收口到 this.Invoke）。
+        /// </summary>
+        private void MarkRouteListSlotUnbound(int slotOneBased)
+        {
+            int idx = (slotOneBased - 1) * 6;
+            if (idx < 0 || idx >= listBox2.Items.Count) return;
+            string label = "产品类型:相机" + slotOneBased;
+            var cur = listBox2.Items[idx];
+            if (cur == null || !cur.ToString().StartsWith(label)) return;
+            listBox2.Items[idx] = label + "(未绑定)";
         }
 
         /// <summary>
@@ -8336,8 +8424,8 @@ namespace WindowsFormsApplication1
                                     _logger.WriteLog(camName + "断线，开始重连...");
                                     if (!ReconnectCameraSlot(slot, job.index, out nRet))
                                     {
-                                        _logger.WriteLog(camName + "重连失败: 0x" + Convert.ToString(nRet, 16));
-                                        cameraState += Convert.ToString(nRet, 16) + camName + "断线\r\n";
+                                        _logger.WriteLog(camName + "重连失败: 0x" + HkRet(nRet));
+                                        cameraState += "0x" + HkRet(nRet) + camName + "断线\r\n";
                                     }
                                     else
                                     {
@@ -10489,7 +10577,10 @@ namespace WindowsFormsApplication1
 
         private void button5_Click_1(object sender, EventArgs e)
         {
-            if ((int)DateTime.Now.ToOADate() > 44460 && textBox4.Text.Trim().Length > 10)
+            // ★第30轮：整个解码流程只用这一个"今天"快照（原实现门槛与 [1]/4、[1]/3 三次写入各读一次
+            //   DateTime.Now，跨午夜或恰好落在联网校时中间时会写出互相矛盾的起始日/上次运行日）
+            int nowOa = (int)DateTime.Now.ToOADate();
+            if (nowOa > 44460 && textBox4.Text.Trim().Length > 10)
             {
                 try
                 {
@@ -10513,6 +10604,18 @@ namespace WindowsFormsApplication1
                             return;
                         }
 
+                        // ★第30轮：时钟不可信时拒绝写盘——本方法把"今天"直写 [1]/4(上次运行日) 和 [1]/3(起始日)，
+                        //   BIOS 时钟跑到未来时手动解锁会把未来日期钉进 test.ini，之后时钟纠正就恒有 v3>now：
+                        //   判定式永远不通过，而 6 秒重判和 5 分钟自愈都在等一个不会再来的校时，只能再次手动解锁。
+                        //   这正是④要消灭的锁死模式，只是从"手动解码"这条路径漏进来。
+                        if (!AuthSystemDateLooksSane(nowOa))
+                        {
+                            _logger.WriteLog("解码: 系统日期不可信(年份窗口外)，已拒绝写入授权数据");
+                            MessageBox.Show("解码失败：系统日期异常（" + DateTime.Now.ToString("yyyy-MM-dd")
+                                + "），请先联网校准系统时间后再解码！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            return;
+                        }
+
                         // ★ 确保 duini 已初始化
                         try
                         {
@@ -10525,11 +10628,13 @@ namespace WindowsFormsApplication1
                         bool testIniOk = false;
                         try
                         {
-                            duini.WriteString("1", "4", ((int)DateTime.Now.ToOADate()).ToString());
-                            duini.WriteString("1", "3", ((int)DateTime.Now.ToOADate()).ToString());
+                            duini.WriteString("1", "4", nowOa.ToString());
+                            duini.WriteString("1", "3", nowOa.ToString());
                             duini.WriteString("1", "2", expiryDate.ToString());
                             duini.WriteString("1", "1", textBox7.Text.Trim());
                             testIniOk = true;
+                            _logger.WriteLog("解码: 授权数据已写入 到期日期=" + AuthDateText(expiryDate)
+                                + " 起始日/上次运行日=" + AuthDateText(nowOa));
                         }
                         catch (Exception ex)
                         {
@@ -10570,6 +10675,22 @@ namespace WindowsFormsApplication1
                 {
                     _logger.WriteLog("解码按钮异常: " + ex.Message);
                     MessageBox.Show("解码异常: " + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            else
+            {
+                // ★第31轮 S1：外层门槛原先静默——系统日期慢过门槛线（时钟掉回出厂年份）或加密码没填够时，
+                //   点"解码"没有任何反应，与"年份窗口外会弹框"体验不一致，现场只能反复空点按钮。
+                if (textBox4.Text.Trim().Length <= 10)
+                {
+                    _logger.WriteLog("解码: 加密码长度不足，未执行解码");
+                    MessageBox.Show("解码失败：请先输入完整的加密码！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+                else
+                {
+                    _logger.WriteLog("解码: 系统日期过早(门槛外)，已拒绝执行解码");
+                    MessageBox.Show("解码失败：系统日期异常（" + DateTime.Now.ToString("yyyy-MM-dd")
+                        + "），请先联网校准系统时间后再解码！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             }
         }
@@ -11193,6 +11314,19 @@ namespace WindowsFormsApplication1
                             //   Color/tishi/biaotou/output3 却停在上一方案值上，flowBindOk 判通过并回 PLC"切换成功"。
                             //   故各路 catch 内显式 InvalidateRouteBinding：把失败路打回未绑定空态，让抑制回执重新必然成立。
                             var bindFail = new System.Collections.Generic.List<string>();
+                            // ★第30轮④：本方案的各组 ×6 项按路号一次性定序预填。原来每组 6 项写在各自
+                            //   的逐路 try 内：某路在 Add 之后抛 → 条目残留而该路 job/block 已被②打回空态；
+                            //   在 Add 之前抛 → 整组缺失、其后各路在列表里整体前移。下游统计刷新按
+                            //   6*路号 的绝对索引改写各项，两种错位都会让相机 n 显示相机 n±1 的计数。
+                            for (int _lg = 0; _lg < manager1.JobCount && _lg < 12; _lg++)
+                            {
+                                listBox2.Items.Add("产品类型:相机" + (_lg + 1));
+                                listBox2.Items.Add("检测数:");
+                                listBox2.Items.Add("OK数:");
+                                listBox2.Items.Add("NG数:");
+                                listBox2.Items.Add("合格率:");
+                                listBox2.Items.Add("~~~~~~~~~");
+                            }
                             try
                             {
                             manager1.UserQueueFlush();
@@ -11202,12 +11336,6 @@ namespace WindowsFormsApplication1
                             _jobs.myjob1.job.ImageQueueFlush();
                             _jobs.myjob1.Cogbmp = new CogImageFileBMP();
                             myIndependentJob.RealTimeQueueFlush();
-                            listBox2.Items.Add("产品类型:相机1");
-                            listBox2.Items.Add("检测数:");
-                            listBox2.Items.Add("OK数:");
-                            listBox2.Items.Add("NG数:");
-                            listBox2.Items.Add("合格率:");
-                            listBox2.Items.Add("~~~~~~~~~");
 
                             group_1 = _jobs.myjob1.job.VisionTool as CogToolGroup;
                             block_1 = group_1.Tools["CogToolBlock1"] as CogToolBlock;
@@ -11256,12 +11384,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob2.job.ImageQueueFlush();
                                 _jobs.myjob2.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机2");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
 
                                 group_2 = _jobs.myjob2.job.VisionTool as CogToolGroup;
                                 block_2 = group_2.Tools["CogToolBlock1"] as CogToolBlock;
@@ -11315,12 +11437,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob3.job.ImageQueueFlush();
                                 _jobs.myjob3.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机3");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 group_3 = _jobs.myjob3.job.VisionTool as CogToolGroup;
                                 bbtemp = 7462;
                                 block_3 = group_3.Tools["CogToolBlock1"] as CogToolBlock;
@@ -11375,12 +11491,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob4.job.ImageQueueFlush();
                                 _jobs.myjob4.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机4");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 group_4 = _jobs.myjob4.job.VisionTool as CogToolGroup;
                                 block_4 = group_4.Tools["CogToolBlock1"] as CogToolBlock;
 
@@ -11431,12 +11541,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob5.job.ImageQueueFlush();
                                 _jobs.myjob5.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机5");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 //listBox14.Items.Add("record");
                                 //listBox14.Items.Add("record");
                                 //listBox14.Items.Add("record");
@@ -11492,12 +11596,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob6.job.ImageQueueFlush();
                                 _jobs.myjob6.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机6");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 //listBox15.Items.Add("record");
                                 //listBox15.Items.Add("record");
                                 //listBox15.Items.Add("record");
@@ -11553,12 +11651,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob7.job.ImageQueueFlush();
                                 _jobs.myjob7.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机7");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 //listBox18.Items.Add("record");
                                 //listBox18.Items.Add("record");
                                 //listBox18.Items.Add("record");
@@ -11614,12 +11706,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob8.job.ImageQueueFlush();
                                 _jobs.myjob8.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机8");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 //listBox17.Items.Add("record");
                                 //listBox17.Items.Add("record");
                                 //listBox17.Items.Add("record");
@@ -11666,12 +11752,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob9.job.ImageQueueFlush();
                                 _jobs.myjob9.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机9");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 group_9 = _jobs.myjob9.job.VisionTool as CogToolGroup;
                                 block_9 = group_9.Tools["CogToolBlock1"] as CogToolBlock;
                                 _jobs.myjob9.block = block_9.Tools["CogToolBlock1"] as CogToolBlock;
@@ -11709,12 +11789,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob10.job.ImageQueueFlush();
                                 _jobs.myjob10.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机10");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 group_10 = _jobs.myjob10.job.VisionTool as CogToolGroup;
                                 block_10 = group_10.Tools["CogToolBlock1"] as CogToolBlock;
                                 _jobs.myjob10.block = block_10.Tools["CogToolBlock1"] as CogToolBlock;
@@ -11752,12 +11826,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob11.job.ImageQueueFlush();
                                 _jobs.myjob11.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机11");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 group_11 = _jobs.myjob11.job.VisionTool as CogToolGroup;
                                 block_11 = group_11.Tools["CogToolBlock1"] as CogToolBlock;
                                 _jobs.myjob11.block = block_11.Tools["CogToolBlock1"] as CogToolBlock;
@@ -11795,12 +11863,6 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob12.job.ImageQueueFlush();
                                 _jobs.myjob12.Cogbmp = new CogImageFileBMP();
                                 myIndependentJob.RealTimeQueueFlush();
-                                listBox2.Items.Add("产品类型:相机12");
-                                listBox2.Items.Add("检测数:");
-                                listBox2.Items.Add("OK数:");
-                                listBox2.Items.Add("NG数:");
-                                listBox2.Items.Add("合格率:");
-                                listBox2.Items.Add("~~~~~~~~~");
                                 group_12 = _jobs.myjob12.job.VisionTool as CogToolGroup;
                                 block_12 = group_12.Tools["CogToolBlock1"] as CogToolBlock;
                                 _jobs.myjob12.block = block_12.Tools["CogToolBlock1"] as CogToolBlock;
@@ -11831,6 +11893,13 @@ namespace WindowsFormsApplication1
                             }
                             
 
+                            for (int _ms = 0; _ms < manager1.JobCount && _ms < 12; _ms++)
+                            {
+                                var _mj = _jobs.Myjobs[_ms];
+                                if (_mj == null || _mj.job == null || _mj.block == null)
+                                    MarkRouteListSlotUnbound(_ms + 1);
+                            }
+
                             for (int _bf = 0; _bf < bindFail.Count; _bf++)
                                 _logger.WriteLog("切换方案: 流程绑定异常（该路已打回未绑定，其余路继续）" + bindFail[_bf]);
                             if (bindFail.Count > 0)
@@ -11841,7 +11910,7 @@ namespace WindowsFormsApplication1
                         {
                             // ★第26轮#11（连同#9 可见性）：原实现只写常量"无流程4"，异常文本被丢弃——
                             //   现场无从判断是第几路、哪一步失败。绑定不完整的后果由下方 flowBindOk 抑制回执兜住。
-                            _logger.WriteLog("切换方案: 12 路流程绑定异常（该路及其后各路可能未绑定，回执由绑定校验抑制）：" + exBind.Message);
+                            _logger.WriteLog("切换方案: 绑定段在逐路 try 之外整体中断（队列刷新/列表预填/窗体正在关闭等），已绑定的路保留、其后各路本次未执行，回执由绑定校验抑制：" + exBind.Message);
                         }
                         }
                         else
@@ -12441,7 +12510,7 @@ namespace WindowsFormsApplication1
                         nRet = _cameraCtrl.Cameras[slot].MV_CC_CreateDevice_NET(ref device1[deviceArrayIndex]);
                         if (MyCamera.MV_OK != nRet)
                         {
-                            _logger.WriteLog("相机" + (slot + 1) + "CreateDevice失败:" + Convert.ToString(nRet, 16));
+                            _logger.WriteLog("相机" + (slot + 1) + "CreateDevice失败:" + HkRet(nRet));
                             ClearCameraSlotOnOpenFailed(slot.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
                             continue;
                         }
@@ -12449,7 +12518,7 @@ namespace WindowsFormsApplication1
                         nRet = _cameraCtrl.Cameras[slot].MV_CC_OpenDevice_NET();
                         if (MyCamera.MV_OK != nRet)
                         {
-                            _logger.WriteLog("相机" + (slot + 1) + "打开失败:" + Convert.ToString(nRet, 16));
+                            _logger.WriteLog("相机" + (slot + 1) + "打开失败:" + HkRet(nRet));
                             ClearCameraSlotOnOpenFailed(slot.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
                             continue;
                         }
@@ -12476,7 +12545,7 @@ namespace WindowsFormsApplication1
                         nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
                         if (nRet != MyCamera.MV_OK)
                         {
-                            _logger.WriteLog("相机" + (slot + 1) + "注册回调失败:" + Convert.ToString(nRet, 16));
+                            _logger.WriteLog("相机" + (slot + 1) + "注册回调失败:" + HkRet(nRet));
                             ClearCameraSlotOnOpenFailed(slot.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
                             continue;
                         }

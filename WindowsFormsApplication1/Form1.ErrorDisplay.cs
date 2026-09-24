@@ -45,7 +45,8 @@ namespace WindowsFormsApplication1
             }
             else
             {
-                errorMsg = csMessage + ": Error =" + String.Format("{0:X}", nErrorNum);
+                // ★第31轮 S5：与日志同口径走 HkRet（原 {0:X} 不补零，0x57 打成 "57"，位数随错误值变化）
+                errorMsg = csMessage + ": Error =0x" + HkRet(nErrorNum);
             }
 
             switch (nErrorNum)
@@ -353,7 +354,7 @@ namespace WindowsFormsApplication1
                 }
                 if (nRet != MyCamera.MV_OK)
                 {
-                    _logger.WriteLog("相机" + (slot + 1) + "触发模式下发失败 ret=0x" + Convert.ToString(nRet, 16) + "（目标「" + job.triggerMode + "」）");
+                    _logger.WriteLog("相机" + (slot + 1) + "触发模式下发失败 ret=0x" + HkRet(nRet) + "（目标「" + job.triggerMode + "」）");
                     return false;
                 }
                 return true;

@@ -1407,6 +1407,17 @@ namespace WindowsFormsApplication1
             int authV1 = 0;   // ★ 2026-09-07：授权到期日期（与 Form1_Load 同一门控口径）
             string zhongjian = "22";
 
+            // ★第30轮（第31轮 W1 修正）：入口去抖。全仓唯一调用点是 timer2_Tick 的跨零点分支（Form1.cs:8530，
+            //   正常每天一次），本方法每轮又要睡最多 6 秒重判并写 test.ini 同一键，所以只需挡住"时钟在两天
+            //   之间来回摆"造成的连发。窗口必须以【上一次真正执行】为锚：原先写成 Exchange 先写后判，被跳过的
+            //   调用同样把时间戳推到当下，窗口随调用滑动——调用间隔持续 <10s 时一次也进不去，跨零点那天的
+            //   重判/门控同步/剩余天数告警全部丢失（要等下一次日期翻转，最坏 24 小时）。现改为先读判窗口、
+            //   再用 CompareExchange 认领，认领失败即让位，跳过既不推时间戳也不写日志（连发时它本身就是刷屏源）。
+            int thisTick = Environment.TickCount;
+            int prevTick = Volatile.Read(ref _lastDaoqiTick);
+            if (prevTick != 0 && unchecked(thisTick - prevTick) < 10000) return;
+            if (System.Threading.Interlocked.CompareExchange(ref _lastDaoqiTick, thisTick, prevTick) != prevTick) return;
+
             string code = _config.ReadString("code1", "code2", "");
             // ★第29轮：与 Form1_Load 同口径，重试到 3 次（冷启动被杀软/索引占用可能读空）
             for (int codeAttempt = 0; codeAttempt < 2 && code == ""; codeAttempt++)
