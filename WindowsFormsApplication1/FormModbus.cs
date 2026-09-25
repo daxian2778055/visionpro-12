@@ -345,6 +345,7 @@ namespace WindowsFormsApplication1
                 //   ModbusTCP 连接1 启动建链统一由本方法末尾 Task.Run 异步执行一次（对齐 FINS 的修复）。
             }
             geshu = int.Parse(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "geshu", "0"));
+            int greenSkipped = 0;
             if (geshu > 0)
             {
                 for (int i = 0; i < geshu; i++)
@@ -358,11 +359,26 @@ namespace WindowsFormsApplication1
                     for (int j = 0; j < fins_length; j++)
                     {
                         xuanzhong_temp = fins_qishi - address_qishi + j;
-                        dataGridView1[fins_name[int.Parse(xuanzhong_temp.ToString())][0], fins_name[int.Parse(xuanzhong_temp.ToString())][1]].Style.BackColor = Color.Green;
-                        dataGridView1[fins_data[int.Parse(xuanzhong_temp.ToString())][0], fins_data[int.Parse(xuanzhong_temp.ToString())][1]].Style.BackColor = Color.Green;
-                        dataGridView1[fins_name[int.Parse(xuanzhong_temp.ToString())][0], fins_name[int.Parse(xuanzhong_temp.ToString())][1]].Value = fins_mingcheng;
+                        // ★第32轮：台账只有 0..49 格（10 行 × 5 组），原实现直接 fins_name[key] 索引，
+                        //   块起始/长度配到范围外即抛 KeyNotFoundException：连接1 走全局崩溃弹窗，
+                        //   连接2~4 被管理器 try{EnsureHandleCreated()}catch{} 吞掉，且 _formLoaded 已置真
+                        //   → 该连接永久不轮询。改与轮询侧 SetPollCell 同口径的 TryGetValue，越界只跳过。
+                        int _idx;
+                        int[] _nameCell, _dataCell;
+                        if (!int.TryParse(xuanzhong_temp.ToString(), out _idx)
+                            || !fins_name.TryGetValue(_idx, out _nameCell)
+                            || !fins_data.TryGetValue(_idx, out _dataCell))
+                        {
+                            greenSkipped++;
+                            continue;
+                        }
+                        dataGridView1[_nameCell[0], _nameCell[1]].Style.BackColor = Color.Green;
+                        dataGridView1[_dataCell[0], _dataCell[1]].Style.BackColor = Color.Green;
+                        dataGridView1[_nameCell[0], _nameCell[1]].Value = fins_mingcheng;
                     }
                 }
+                if (greenSkipped > 0)
+                    Log("初始化: " + greenSkipped + " 个块地址落在台账(0..49)之外，已跳过回绿，请核对起始地址/块长度/总长度配置");
             }
             for (int i = 0; i < 13; i++)
             {
@@ -1257,10 +1273,27 @@ namespace WindowsFormsApplication1
         }
         int geshu = 0;
 
+        private bool _qishiRevert;   // ★第32轮 S2：回退起始地址时防本处理器重入
         private void numericUpDown1_ValueChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
+                // ★第32轮 S2：起始地址决定台账 0..49 格对应哪段绝对地址。改成让已有数据块
+                //   算出负数或超 49 的格位，等于把"每次启动都越界"的坏配置写进 ini（A5 只降级了后果）。
+                if (!_qishiRevert)
+                {
+                    string bad = CommGridHelper.FindBlockOutOfRange(fins_dic, numericUpDown1.Value, fins_data.Count);
+                    if (bad != null)
+                    {
+                        _qishiRevert = true;
+                        try { numericUpDown1.Value = address_qishi; }
+                        finally { _qishiRevert = false; }
+                        Log("起始地址未改：" + bad + "（请先调整/删除该数据块）");
+                        MessageBox.Show("起始地址未修改：" + bad + "\r\n\r\n请先调整或删除该数据块，再改起始地址。",
+                            "配置越界", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
                 address_qishi = numericUpDown1.Value;
                 wdini.WriteString(ModbusTcpIniStore.ConnSection(_linkId), "qishi", numericUpDown1.Value.ToString());
             }

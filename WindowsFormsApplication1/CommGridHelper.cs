@@ -199,6 +199,36 @@ namespace WindowsFormsApplication1
             lock (_dirtyBlocksLogged) { return _dirtyBlocksLogged.Add(blockKey); }
         }
 
+        /// <summary>
+        /// ★第32轮 S2：改"台账起始地址"（address_qishi / numericUpDown1）前的越界预检。
+        /// 数据块在台账里的格位 = 块起始绝对地址 - 起始地址 + i，格位只有 0..ledgerCells-1；
+        /// 第32轮 A5 只是把越界的后果从"启动崩溃/静默不轮询"降级为"跳过回绿+日志"，
+        /// 根因是这里允许把起始地址改成让已有块算出负数或超 49 的值并持久化。
+        /// 返回 null 表示新基准可用；否则返回首个越界块的文字说明，由调用方拒绝本次改动。
+        /// </summary>
+        public static string FindBlockOutOfRange(Dictionary<string, string[]> finsDic, decimal newBase, int ledgerCells)
+        {
+            var snap = SnapshotFinsDic(finsDic);
+            if (snap == null || ledgerCells <= 0) return null;
+            foreach (var kv in snap)
+            {
+                string[] v = kv.Value;
+                if (v == null || v.Length < 3) continue;
+                long start, len;
+                if (!long.TryParse((v[1] ?? "").Trim(), out start)) continue;   // 脏块由轮询侧 P5 单独报
+                if (!long.TryParse((v[2] ?? "").Trim(), out len) || len <= 0) continue;
+                long first = start - (long)newBase;
+                long last = first + len - 1;
+                if (first < 0 || last >= ledgerCells)
+                {
+                    return "数据块「" + (string.IsNullOrEmpty(kv.Key) ? "(未命名)" : kv.Key) + "」起始 "
+                        + start + "、长度 " + len + " 在起始地址 " + newBase + " 下落在台账 0.."
+                        + (ledgerCells - 1) + " 之外";
+                }
+            }
+            return null;
+        }
+
         /// <summary>轮询线程安全写单元格（合并刷新，不阻塞读循环）。</summary>
         public static void SetPollCell(CommGridUiSink sink, Dictionary<int, int[]> finsData, int idx, object value)
         {

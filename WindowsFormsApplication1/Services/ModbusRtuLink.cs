@@ -66,12 +66,17 @@ namespace WindowsFormsApplication1
         //   现登记/释放统一以 _guardPort 为准。
         private string _guardPort;
 
+        // ★第32轮 A4：记住最后一次建链所用的字节序参数。Connect 的两个失败出口（口被占 / Open 抛）
+        //   都发生在 Client = rtu 之前，Client 会一直为 null；Reconnect 需要它才能整体重建。
+        private DataFormat? _lastDataFormat;
+
         /// <summary>
         /// 用当前串口参数创建客户端并打开串口。等价于原 button1_Click 中的建链逻辑。
         /// dataFormat 传 null 表示不设置（保持底层默认值）。
         /// </summary>
         public OperateResult Connect(DataFormat? dataFormat)
         {
+            _lastDataFormat = dataFormat;   // ★第32轮 A4：失败出口在 Client 赋值之前，先记账供 Reconnect 重建
             try
             {
                 Close();
@@ -148,7 +153,14 @@ namespace WindowsFormsApplication1
         /// <summary>重开串口：先关再开（重新确认占用登记）。等价于原 PerformReconnectCore 思路。</summary>
         public bool Reconnect()
         {
-            if (Client == null) { _connected = false; return false; }
+            if (Client == null)
+            {
+                // ★第32轮 A4：Client 为 null 只有"首次建链即失败"一种来源（两个失败出口都在 Client=rtu 之前）。
+                //   原实现在此 return false，而轮询线程读空客户端只抛异常、不走 "Failed" 文本判定，
+                //   永远不会触发重连计数 → 这条连接除了重启软件再无出路。现按最后一次建链参数整体重建。
+                var rebuild = Connect(_lastDataFormat);
+                return rebuild.IsSuccess;
+            }
             string p = (PortName ?? "").Trim();
             if (SerialPortGuard.IsComPort(p))
             {

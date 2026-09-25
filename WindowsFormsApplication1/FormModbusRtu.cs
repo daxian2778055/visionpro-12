@@ -403,6 +403,7 @@ namespace WindowsFormsApplication1
                 //   ModbusRTU 连接1 启动建链统一由本方法末尾 Task.Run 异步执行一次（对齐 FINS 的修复）。
             }
             geshu = int.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "geshu", "0"));
+            int greenSkipped = 0;
             if (geshu > 0)
             {
                 for (int i = 0; i < geshu; i++)
@@ -416,11 +417,26 @@ namespace WindowsFormsApplication1
                     for (int j = 0; j < fins_length; j++)
                     {
                         xuanzhong_temp = fins_qishi - address_qishi + j;
-                        dataGridView1[fins_name[int.Parse(xuanzhong_temp.ToString())][0], fins_name[int.Parse(xuanzhong_temp.ToString())][1]].Style.BackColor = Color.Green;
-                        dataGridView1[fins_data[int.Parse(xuanzhong_temp.ToString())][0], fins_data[int.Parse(xuanzhong_temp.ToString())][1]].Style.BackColor = Color.Green;
-                        dataGridView1[fins_name[int.Parse(xuanzhong_temp.ToString())][0], fins_name[int.Parse(xuanzhong_temp.ToString())][1]].Value = fins_mingcheng;
+                        // ★第32轮：台账只有 0..49 格（10 行 × 5 组），原实现直接 fins_name[key] 索引，
+                        //   块起始/长度配到范围外即抛 KeyNotFoundException：连接1 走全局崩溃弹窗，
+                        //   连接2~4 被管理器 try{EnsureHandleCreated()}catch{} 吞掉，且 _formLoaded 已置真
+                        //   → 该连接永久不轮询。改与轮询侧 SetPollCell 同口径的 TryGetValue，越界只跳过。
+                        int _idx;
+                        int[] _nameCell, _dataCell;
+                        if (!int.TryParse(xuanzhong_temp.ToString(), out _idx)
+                            || !fins_name.TryGetValue(_idx, out _nameCell)
+                            || !fins_data.TryGetValue(_idx, out _dataCell))
+                        {
+                            greenSkipped++;
+                            continue;
+                        }
+                        dataGridView1[_nameCell[0], _nameCell[1]].Style.BackColor = Color.Green;
+                        dataGridView1[_dataCell[0], _dataCell[1]].Style.BackColor = Color.Green;
+                        dataGridView1[_nameCell[0], _nameCell[1]].Value = fins_mingcheng;
                     }
                 }
+                if (greenSkipped > 0)
+                    Log("初始化: " + greenSkipped + " 个块地址落在台账(0..49)之外，已跳过回绿，请核对起始地址/块长度/总长度配置");
             }
             for (int i = 0; i < 13; i++)
             {
@@ -1208,10 +1224,28 @@ namespace WindowsFormsApplication1
         }
         int geshu = 0;
 
+        private bool _qishiRevert;   // ★第32轮 S2：回退起始地址时防本处理器重入
         private void numericUpDown1_ValueChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
+                // ★第32轮 S2：起始地址决定台账 0..49 格对应哪段绝对地址。改成让已有数据块
+                //   算出负数或超 49 的格位，等于把"每次启动都越界"的坏配置写进 ini（A5 只降级了后果）。
+                //   现直接拒绝并回退，不落盘。
+                if (!_qishiRevert)
+                {
+                    string bad = CommGridHelper.FindBlockOutOfRange(fins_dic, numericUpDown1.Value, fins_data.Count);
+                    if (bad != null)
+                    {
+                        _qishiRevert = true;
+                        try { numericUpDown1.Value = address_qishi; }
+                        finally { _qishiRevert = false; }
+                        Log("起始地址未改：" + bad + "（请先调整/删除该数据块）");
+                        MessageBox.Show("起始地址未修改：" + bad + "\r\n\r\n请先调整或删除该数据块，再改起始地址。",
+                            "配置越界", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
                 address_qishi = numericUpDown1.Value;
                 wdini.WriteString(ModbusRtuIniStore.ConnSection(_linkId), "qishi", numericUpDown1.Value.ToString());
             }
@@ -3294,6 +3328,14 @@ namespace WindowsFormsApplication1
                         // ★P3-2：Fins_duxie 轮询外层 catch。PLC 断线时每圈（~20ms）抛一次，原样 Log 会数秒刷上百条相同日志。
                         //   改限流：5s 窗口内只报首条 + 窗口到期补报累计次数，辨识 tag 含协议/连接号/方法。
                         RateLimitedLog.Throttled("[ModbusRTU-连接" + _linkId + "-Fins_duxie] 轮询读异常", m => MsgErroeLog.WriteLog(m), ex, 5000);
+                        // ★第32轮 A4：异常出口原先只记日志，永远走不到下面按 "Failed" 文本判定的重连分支。
+                        //   首次建链失败时 Client 恒 null → 每圈 NRE → 该连接就此僵死（只能重启软件）。
+                        //   现异常也计入失败计数，按同一阈值/冷却/防重入口径触发自动重连。
+                        if (CommReconnectHelper.ShouldTriggerReconnect(
+                            ref _commFailCount, fins_en, _reconnecting, ref _lastReconnectAttemptTicks))
+                        {
+                            TryAutoReconnect();
+                        }
                     }
             }
         }
@@ -3332,7 +3374,11 @@ namespace WindowsFormsApplication1
         /// <summary>后台线程执行，仅 Close+Open，不访问 UI 控件。走 _rtuLink.Reconnect 以带 COM 互斥防呆。</summary>
         private bool PerformReconnectCore()
         {
-            if (busRtuClient == null) return false;
+            if (_rtuLink == null) return false;
+            // ★第32轮 A4：原实现在此 `if (busRtuClient == null) return false;`——而 Client 为 null 恰恰
+            //   是"首次建链失败"的唯一形态，这条守卫使该连接永久无解。现交给 Reconnect() 内部整体重建。
+            if (_rtuLink.Client == null)
+                Log("自动重连: 底层客户端尚未建立（首次建链失败），按最后一次建链参数整体重建");
             return _rtuLink.Reconnect();
         }
 

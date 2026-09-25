@@ -51,18 +51,12 @@ namespace WindowsFormsApplication1
                 Inspect1.Pattern.Train();
                 tishi = "训练新模式成功";
             }
-            catch
+            catch (Exception ex)
             {
-                tishi = "训练新模式失败";
+                tishi = "训练新模式失败:" + ex.Message;
             }
 
-
-            cogRecordDisplay1.Record = Inspect1.CreateCurrentRecord().SubRecords[2];
-            if (max1 == 0)
-            {
-                cogRecordDisplay1.Fit(true);
-                max1 = 1;
-            }
+            ShowTrainRecord();
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -74,17 +68,43 @@ namespace WindowsFormsApplication1
                 Inspect1.Pattern.StatisticalTrain(image8, pose8);
                 tishi = "训练成功";
             }
-            catch
+            catch (Exception ex)
             {
-                tishi = "训练失败";
+                tishi = "训练失败:" + ex.Message;
             }
 
+            ShowTrainRecord();
+        }
 
-            cogRecordDisplay1.Record = Inspect1.CreateCurrentRecord().SubRecords[2];
-            if (max1 == 0)
+        /// <summary>★第32轮 W8：训练后回显当前记录。原两处调用点把 CreateCurrentRecord() 写在 try 之外——
+        /// 未选中定位工具（Inspect1 为 null）或该工具尚无记录/子项不足 3 个时，NRE/越界直接打到全局崩溃
+        /// 处理器：每点一次弹一次"程序已崩溃"并落一份 minidump。改为独立 try + 空值/子项数守卫，
+        /// 回显失败只并入提示，不影响训练结果本身。</summary>
+        private void ShowTrainRecord()
+        {
+            try
             {
-                cogRecordDisplay1.Fit(true);
-                max1 = 1;
+                if (Inspect1 == null)
+                {
+                    tishi += "（未选择定位工具，无记录可显示）";
+                    return;
+                }
+                var rec = Inspect1.CreateCurrentRecord();
+                if (rec == null || rec.SubRecords == null || rec.SubRecords.Count <= 2)
+                {
+                    tishi += "（当前记录子项不足，未回显）";
+                    return;
+                }
+                cogRecordDisplay1.Record = rec.SubRecords[2];
+                if (max1 == 0)
+                {
+                    cogRecordDisplay1.Fit(true);
+                    max1 = 1;
+                }
+            }
+            catch (Exception ex)
+            {
+                tishi += "（回显失败:" + ex.Message + "）";
             }
         }
         Dictionary<string, ICogTool> tools1 = new Dictionary<string, ICogTool>();

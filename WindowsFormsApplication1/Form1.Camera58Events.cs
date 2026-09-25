@@ -1242,8 +1242,23 @@ namespace WindowsFormsApplication1
 
         private void textBox3_TextChanged(object sender, EventArgs e)
         {
+            // ★第32轮：原为裸 int.Parse——操作员清空输入框或输入小数/非数字即在 UI 线程抛
+            //   FormatException（全局"程序崩溃"弹窗 + minidump）；启动期从 code.ini 读回历史非法值时
+            //   更是在启动巨型 try 内抛出 = 静默半初始化。改 TryParse + ≥1（timespace 同时用作
+            //   Timer.Interval 与 Thread.Sleep 参数，0/负值均非法），非法则保持各路原值、只记日志。
             int temp_time = 0;
-            temp_time = int.Parse(textBox3.Text.ToString().Trim());
+            string text = (textBox3.Text ?? "").Trim();
+            if (!int.TryParse(text, out temp_time) || temp_time < 1)
+            {
+                try { _logger.WriteLog("输出时间输入非法（需 ≥1 的整数毫秒），保持原值: \"" + text + "\""); } catch { }
+                // ★第32轮 S5：不能停在"框里显示 abc、实际生效 100"的状态——直接把生效值回填，
+                //   界面显示与实际用时始终一致。回填会以合法文本再次进入本方法，那次只走正常赋值，
+                //   且同值赋值不再触发 TextChanged，不会递归。
+                int effective = 100;
+                try { effective = _jobs.myjob1.timespace >= 1 ? _jobs.myjob1.timespace : 100; } catch { }
+                try { textBox3.Text = effective.ToString(); } catch { }
+                return;
+            }
             _jobs.myjob1.timespace = temp_time;
             _jobs.myjob2.timespace = temp_time;
             _jobs.myjob3.timespace = temp_time;

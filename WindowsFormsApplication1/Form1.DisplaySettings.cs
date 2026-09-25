@@ -1547,6 +1547,7 @@ namespace WindowsFormsApplication1
             // ★ 2026-09-07：与 Form1_Load 同一口径 —— 授权数据读不到（authV1<=0）时不判为过期，
             //   避免把"读不到 test.ini"误判成"授权过期"而禁用功能。
             _authExpired = (authV1 > 0 && dayz == 0);
+            _authNotVerifiedFailOpen = (dayz == 0 && !_authExpired);   // ★第32轮 A1：与启动侧同口径同步诊断标志
             if (dayz == 0)
             {
                 // ★ 监控线程在后台运行，所有 UI 操作必须 Invoke 到 UI 线程。

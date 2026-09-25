@@ -282,6 +282,16 @@ namespace WindowsFormsApplication1
                 catch (Exception ex)
                 {
                     ctx.Log(ex.Message + "modbusrtu");
+                    // ★第32轮 A4（与 RTU 窗体侧同口径）：异常出口原先不参与重连判定——首次建链失败时
+                    //   _link.Client 恒 null，本循环每圈抛 NRE，连接永久僵死。现异常也计入失败计数，
+                    //   按同一阈值/冷却触发本连接重连（Reconnect 已能在 Client 缺失时整体重建）。
+                    //   try 内的 reconnecting 局部量在此不可见，重连状态改读 ctx.IsReconnecting。
+                    int rc = ctx.IsReconnecting ? 1 : 0;
+                    if (CommReconnectHelper.ShouldTriggerReconnect(
+                        ref _commFailCount, ctx.IsCommEnabled, rc, ref _lastReconnectAttemptTicks))
+                    {
+                        ctx.OnReconnect();
+                    }
                 }
             }
         }

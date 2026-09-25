@@ -499,6 +499,7 @@ namespace WindowsFormsApplication1
             // ★M7：组帧缓冲改为线程局部（原实例字段 _tcpBuf 会被垂死旧线程清空，
             //   清掉新连接线程刚积累的半包）——线程随本次连接结束而消亡，天然无跨连接污染。
             System.Collections.Generic.List<byte> connBuf = new System.Collections.Generic.List<byte>(512);
+            bool sawLf = false;   // ★第32轮 W5：本连接是否出现过换行（决定能否走整段派发）
             while (true)
             {
                 try
@@ -523,7 +524,7 @@ namespace WindowsFormsApplication1
                     {
                         // ★M7：改为字节级组帧——原实现先 GetString 再拼字符串，
                         //   GB2312 多字节字符被 TCP 分包截半后无法在字符串层还原。
-                        DispatchTcpFrame(_tcpRecvBuffer, r, ref connBuf);
+                        DispatchTcpFrame(_tcpRecvBuffer, r, ref connBuf, ref sawLf);
                     }
                 }
                 catch
@@ -541,17 +542,26 @@ namespace WindowsFormsApplication1
         /// ★M7 无协议 TCP 组帧（字节级）：修复"拆包漏触发/粘包误匹配"及 GB2312 多字节跨包截半。
         /// 规则与串口侧一致：
         ///   ① 含 0x0A（换行）→ 累积到字节缓冲后按行切帧，半包留缓冲等下一段，超 512 字节强制成帧；
-        ///   ② 不含换行且缓冲为空 → 保持原"整段直接派发"行为，兼容不使用换行分隔的协议，避免吞帧。
+        ///   ② 本连接尚未出现过任何换行且缓冲为空 → 保持原"整段直接派发"行为，兼容不使用换行分隔的协议，避免吞帧。
         /// 缓冲由调用方持有：客户机用线程局部 List（见 receiveClient），服务器每连接一个局部 List，天然不串扰。
         /// </summary>
-        private void DispatchTcpFrame(byte[] data, int count, ref System.Collections.Generic.List<byte> buffer)
+        /// <summary>
+        /// ★第32轮 W5：整段派发只在"本连接从未见过换行"（sawLf）时才走。
+        /// 原条件 `buffer.Count==0 && !hasLf` 对换行协议的第一段同样成立：
+        /// 例如一条 "AABB\n" 被 TCP 拆成 "AA" + "BB\n" 两段到达时，"AA" 被立即当成一帧派发，
+        /// 触发内容被拆成两帧（第一帧短、第二帧余下），PLC 侧表现为漏触发/错触发。
+        /// 收到过一次换行即判定本连接是换行协议，此后一律进缓冲等行尾；
+        /// 局限：首条消息仍可能被拆（无从判定对端是否用换行），512 字节强制成帧兜住无行尾的残留半包。
+        /// </summary>
+        private void DispatchTcpFrame(byte[] data, int count, ref System.Collections.Generic.List<byte> buffer, ref bool sawLf)
         {
             bool hasLf = false;
             for (int i = 0; i < count; i++)
             {
                 if (data[i] == 0x0A) { hasLf = true; break; }
             }
-            if (buffer.Count == 0 && !hasLf)
+            if (hasLf) sawLf = true;
+            if (buffer.Count == 0 && !sawLf)
             {
                 if (count > 0) DispatchReceivedFrame(System.Text.Encoding.Default.GetString(data, 0, count));   // 原有行为：整段直接派发
                 return;
@@ -796,6 +806,7 @@ namespace WindowsFormsApplication1
             Socket sk = o as Socket;
             byte[] buf = new byte[64 * 1024];   // 每个连接独立缓冲，避免多连接共享字段竞态
             System.Collections.Generic.List<byte> connBuf = new System.Collections.Generic.List<byte>(512);   // ★M7：字节级组帧缓冲（方法局部变量，多连接天然不串扰）
+            bool sawLf = false;   // ★第32轮 W5：本连接是否出现过换行（决定能否走整段派发）
             while (true)
             {
                 try
@@ -819,7 +830,7 @@ namespace WindowsFormsApplication1
                     if (qiehuan_fangshi == "Tcp_server")
                     {
                         // ★M7：字节级组帧（与客户机同法），修复 GB2312 多字节跨包截半
-                        DispatchTcpFrame(buf, r, ref connBuf);
+                        DispatchTcpFrame(buf, r, ref connBuf, ref sawLf);
                     }
                 }
                 catch

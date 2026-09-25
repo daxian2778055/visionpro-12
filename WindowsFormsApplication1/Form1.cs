@@ -2276,7 +2276,13 @@ namespace WindowsFormsApplication1
                 zhenlv.Start();
                 // ★ 2026-09-06 ④：授权过期时禁止自动打开相机（2037 门控）
                 if (!_authExpired)
+                {
+                    // ★第32轮 A1：自动路径只看 _authExpired，界面"加密中"只挡手动按钮——此处把
+                    //   "未确认授权却照常自动开相机"这一 fail-open 事实写进日志，便于现场追溯。
+                    if (_authNotVerifiedFailOpen)
+                        _logger.WriteLog("启动流程: 授权未确认通过（数据读不到/时间可疑），按 fail-open 设计仍自动开相机");
                     bnOpen_Click(null, null);
+                }
                 else
                     _logger.WriteLog("启动流程: 授权未通过，跳过自动开相机");
                 display();
@@ -2836,11 +2842,16 @@ namespace WindowsFormsApplication1
         // ★ 2026-09-11：存图保留天数（默认7），可在配置窗"存图限制"旁的可编辑控件设置，写回 ini [存图] baocun_tianshu。
         private int _saveImageKeepDays = 7;
 
+        private System.Threading.Timer _saveImageCleanupTimer;   // ★第32轮 W1：定时器必须被字段钉住
+
         private void delete12()
         {
             // 使用Timer替代while+Sleep，避免永久阻塞线程池
-            System.Threading.Timer timer = null;
-            timer = new System.Threading.Timer((state) =>
+            // ★第32轮 W1：原实现把 Timer 放在局部变量里，方法一返回就再无引用——.NET 不保证
+            //   未被引用的 Timer 对象存活，GC 回收后回调永久停（表现为存图目录只增不减，
+            //   且毫无报错）。现由字段持有，并防止重复调用叠加多个周期任务。
+            if (_saveImageCleanupTimer != null) return;
+            _saveImageCleanupTimer = new System.Threading.Timer((state) =>
             {
                 try
                 {
@@ -3170,6 +3181,7 @@ namespace WindowsFormsApplication1
                         {
                             _logger.WriteLog("授权自愈: 第" + (i + 1) + "次重判通过，恢复界面");
                             _authExpired = false;   // 与 dayz==1 同口径（Pass ⇒ 未过期）
+                            _authNotVerifiedFailOpen = false;   // ★第32轮 A1：已确认通过，撤销 fail-open 标记
                             if (_authEncryptedUiShown) RestoreUiAfterAuthPass();
                             return;
                         }
@@ -3252,6 +3264,7 @@ namespace WindowsFormsApplication1
                         }
                         _logger.WriteLog("授权恢复重试: 第" + (i + 1) + "次重判通过，重试恢复界面");
                         _authExpired = false;
+                        _authNotVerifiedFailOpen = false;   // ★第32轮 A1：已确认通过，撤销 fail-open 标记
                         RestoreUiAfterAuthPass();
                         if (!_authEncryptedUiShown) return;
                     }
@@ -3429,8 +3442,13 @@ namespace WindowsFormsApplication1
             // ★ 2026-09-07：统一计算授权门控。
             //   必须限定「确实读到有效到期日期 authV1>0」才算过期 —— 否则 test.ini 读取失败或字段为空时
             //   v1=0 会被误判成过期，进而阻止自动开相机（改动前无论授权结果如何都会自动开）。
-            //   授权数据不可读时保持"未过期"，仍由下方 dayz==0 的界面流程显示"加密中"并禁用按钮。
+            // ★第32轮 A1 更正（原注释把"界面显示加密中并禁用按钮"当作兜底依据，不成立）：
+            //   dayz==0 的界面流程只挡操作员手动点按钮，挡不住启动期的自动路径（自动开相机与自动运行
+            //   只看 _authExpired）。因此这是**有意 fail-open**：授权数据读不到/时间可疑时宁可让设备照常
+            //   生产，也不允许把没到期的客户误锁机（第29轮的确立口径）。代价是"删掉/损坏 test.ini"
+            //   同样会得到 _authExpired=false，即本门控不构成防拷贝手段，只防"到期后继续用"。
             _authExpired = (authV1 > 0 && dayz == 0);
+            _authNotVerifiedFailOpen = (dayz == 0 && !_authExpired);
             if (_authExpired)
                 _logger.WriteLog("启动解码: 授权门控生效，将跳过自动开相机");
             // ★第29轮：启动阶段 6 秒重判窗口仍没等到联网校时（或 test.ini 当时读不到）时，
@@ -5363,12 +5381,14 @@ namespace WindowsFormsApplication1
                                                 if (tempout1 == "Accept")
                                                 {
                                                     runlog1(1, 0, myjob.path_number);
-                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
-                                                    if (myjob.tianbiao.Contains(","))
-                                                    {
-                                                        myjob.tianbiao = myjob.tianbiao.Remove(myjob.tianbiao.Length - 1, 1);
-                                                        runlog2(myjob.tianbiao, myjob.tianbiao, myjob.path_number, 1);
-                                                    }
+                                                    // ★第32轮 W2：原为共享字段读写改（赋快照→判逗号→Remove 回写→同字段传两遍），
+                                                    //   2026-09-13 那次"避免共享字段交错串帧"只改了 NG 分支，Accept 分支漏改。
+                                                    //   现与 NG 分支同构：全程用任务局部字符串，字段仅作最终状态登记。
+                                                    string _tb = _tianbiaoSnap;
+                                                    bool _tbHasComma = _tb.Contains(",");
+                                                    if (_tbHasComma) _tb = _tb.Remove(_tb.Length - 1, 1);
+                                                    myjob.tianbiao = _tb;
+                                                    if (_tbHasComma) runlog2(_tb, _tb, myjob.path_number, 1);
                                                 }
                                                 else
                                                 {
@@ -5395,16 +5415,20 @@ namespace WindowsFormsApplication1
                                                 if (tempout1 == "Accept")
                                                 {
                                                     runlog1(1, 0, myjob.path_number);
-                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
-                                                    if (myjob.tianbiao.Contains(","))
-                                                        runlog2(myjob.tianbiao, myjob.tianbiao, myjob.path_number, 1);
+                                                    // ★第32轮 W2：同主分支，局部变量传参，避免读到别帧写入的共享字段
+                                                    //   （本分支历史上就不去尾逗号，保持原语义不变）。
+                                                    string _tb = _tianbiaoSnap;
+                                                    myjob.tianbiao = _tb;
+                                                    if (_tb.Contains(","))
+                                                        runlog2(_tb, _tb, myjob.path_number, 1);
                                                 }
                                                 else
                                                 {
                                                     runlog1(0, 1, myjob.path_number);
-                                                    myjob.tianbiao = _tianbiaoSnap;   // ★B fix: 用检测线程快照，不活读 COM
-                                                    if (myjob.tianbiao.Contains(","))
-                                                        runlog2(myjob.tianbiao, myjob.tianbiao, myjob.path_number, 0);
+                                                    string _tb = _tianbiaoSnap;   // ★第32轮 W2：同上
+                                                    myjob.tianbiao = _tb;
+                                                    if (_tb.Contains(","))
+                                                        runlog2(_tb, _tb, myjob.path_number, 0);
                                                 }
                                             }
                                             catch { }
@@ -7398,6 +7422,16 @@ namespace WindowsFormsApplication1
         #region 资源清理与程序退出
         private void SafeCleanupBeforeDispose()
         {
+            // ★第32轮 W1 配套：存图清理定时器改为字段持有后不会再被 GC"顺带"回收，
+            //   退出时必须显式停掉，否则线程池回调会在 _jobs/日志资源收尾后继续访问它们。
+            try
+            {
+                var cleanupTimer = _saveImageCleanupTimer;
+                _saveImageCleanupTimer = null;
+                if (cleanupTimer != null) cleanupTimer.Dispose();
+            }
+            catch { }
+
             // ★低风险加固：释放原图显示（RawImageMode）各路最后一张位图——
             //   ShowRawFrame 只 Dispose 被替换的旧图，退出时最后一张无人释放（进程兜底），此处收口。
             for (int i = 0; i < 12; i++)
@@ -7957,7 +7991,6 @@ namespace WindowsFormsApplication1
             //   关闭/切型/开机若在 Task 跑到此处之后才置位，本函数仍会 Create+Open 相机成"幽灵相机"，
             //   且 7855 空 catch 吞异常。现复用同款四标志复查，命中即返回不碰硬件。
             if (!_cameraReconnectEnabled || _disposingFlag || _switchingScheme || dakaizhong) return false;
-            device1[deviceArrayIndex] = devInfo;
             string devName = "";
 
             if (devInfo.nTLayerType == MyCamera.MV_GIGE_DEVICE)
@@ -7980,6 +8013,12 @@ namespace WindowsFormsApplication1
             {
                 return false;
             }
+
+            // ★第32轮 W3：原先在名字校验之前就把 devInfo 写进共享数组 device1[]，
+            //   名称不匹配（网上别人的相机）或槽位解析失败时也照样覆盖——该枚举位的设备信息
+            //   就此被外来设备顶掉，后续任何按 device1[i] 建链的路径都可能 CreateDevice 到错的设备。
+            //   现在确认是本系统配置的相机之后才落盘。
+            device1[deviceArrayIndex] = devInfo;
 
             if (_cameraCtrl.Cameras[slot] != null) return false;
 
@@ -9156,14 +9195,30 @@ namespace WindowsFormsApplication1
 
             // 遍历所有的文件，检查文件名后缀
             box.Items.Clear();
-            string[] fff = Directory.GetFiles(wenjianjia + "\\" + job_number);
-            foreach (string f in fff)
+            // ★第32轮：wenjianjia\1..12 全仓无任何代码创建（首启/换机/手工清理方案目录后必缺），
+            //   裸 Directory.GetFiles 抛 DirectoryNotFoundException → 一点下拉就弹全局"程序崩溃"窗并写
+            //   minidump，且每次复现。目录缺失/读取失败只记日志、下拉留空。
+            try
             {
-                if (f.EndsWith(".vpp"))
+                string dir = wenjianjia + "\\" + job_number;
+                if (!Directory.Exists(dir))
                 {
-                    // 加到列表框显示
-                    box.Items.Add(Path.GetFileName(f));
+                    _logger.WriteLog("方案下拉: 目录不存在，本路无可选方案 (相机" + job_number + "): " + dir);
+                    return;
                 }
+                string[] fff = Directory.GetFiles(dir);
+                foreach (string f in fff)
+                {
+                    if (f.EndsWith(".vpp"))
+                    {
+                        // 加到列表框显示
+                        box.Items.Add(Path.GetFileName(f));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.WriteLog("方案下拉: 读取方案目录失败 (相机" + job_number + "): " + ex.Message);
             }
         }
         class PictureListItem
@@ -11079,6 +11134,10 @@ namespace WindowsFormsApplication1
                 if (string.IsNullOrWhiteSpace(a) || !a.Contains(".vpp"))
                 {
                     _logger.WriteLog("切方案请求被拒绝：路径参数无效（不含 .vpp）：" + a);
+                    // ★第32轮 W4：原先只回滚切换门控，不还原手动入口（menuitem_Click/打开）在调用前
+                    //   已写入的 path_1/label75/label173/wenjianjia —— 请求虽被拒，界面与配置却指向
+                    //   这个非法方案，下次保存把错路径写进 code.ini。与在途拒绝分支同口径还原。
+                    RollbackManualPathPrewrite(manualTarget, manualOldPath, "路径非法被拒");
                     try { RollbackSchemeSwitch(); } catch { }
                     return;
                 }
@@ -12219,17 +12278,26 @@ namespace WindowsFormsApplication1
                 //   文件 IO 级，但 PLC 切型由后台线程 CAS，理论窗口仍在——手动入口（menuitem_Click/打开）
                 //   已提前改写 path_1/label/wenjianjia，被拒后悬空→下次保存把在途切换完成的方案写进用户刚选的文件。
                 //   仅当 path_1 仍等于本次入口刚写入的目标才回滚（在途切换前言若后写则不动，绝不踩赢家的值）。
-                if (!string.IsNullOrEmpty(manualTarget) && !string.IsNullOrEmpty(manualOldPath)
-                    && string.Equals(path_1, manualTarget, StringComparison.OrdinalIgnoreCase))
-                {
-                    path_1 = manualOldPath;
-                    try { wenjianjia = Path.GetDirectoryName(path_1); } catch { }
-                    string _rb = manualOldPath;
-                    try { SafeBeginInvoke(new Action(() => { try { label75.Text = _rb.Split('\\').Last(); label173.Text = _rb; } catch { } })); } catch { }
-                    _logger.WriteLog("手动切方案被在途切换拒绝，path_1/界面已回滚为入口前方案：" + _rb);
-                }
+                RollbackManualPathPrewrite(manualTarget, manualOldPath, "被在途切换拒绝");
             }
         }
+        /// <summary>
+        /// ★第32轮 W4：手动切换入口（menuitem_Click/打开菜单）在调用 xinghao_qiehuan 前已把目标写进
+        /// path_1/label75/label173/wenjianjia。本次请求被拒（在途切换占用、或路径不含 .vpp）时必须把
+        /// 这 4 个字段还原回入口前的快照，否则界面与下次保存的配置都指向一个没有真正加载的方案。
+        /// 判据沿用第24轮 R3 收口口径：仅当 path_1 仍等于本次入口写入的目标才回滚，绝不踩别人的值。
+        /// </summary>
+        private void RollbackManualPathPrewrite(string manualTarget, string manualOldPath, string where)
+        {
+            if (string.IsNullOrEmpty(manualTarget) || string.IsNullOrEmpty(manualOldPath)) return;
+            if (!string.Equals(path_1, manualTarget, StringComparison.OrdinalIgnoreCase)) return;
+            path_1 = manualOldPath;
+            try { wenjianjia = Path.GetDirectoryName(path_1); } catch { }
+            string _rb = manualOldPath;
+            try { SafeBeginInvoke(new Action(() => { try { label75.Text = _rb.Split('\\').Last(); label173.Text = _rb; } catch { } })); } catch { }
+            _logger.WriteLog("手动切方案" + where + "，path_1/界面已回滚为入口前方案：" + _rb);
+        }
+
         private void 配置工具ToolStripMenuItem_Click(object sender, EventArgs e)
         {
 
@@ -12423,6 +12491,11 @@ namespace WindowsFormsApplication1
         // ★ 2026-09-06 授权过期门控（④）：替代局部 dayz，供 initialize_FormSet 自动开相机前判断。
         // ★ 2026-09-07：后台监控线程（daoqi_jiankong）也会写它，故声明 volatile。
         private volatile bool _authExpired = false;
+        /// <summary>
+        /// ★第32轮 A1：授权判定未通过（界面显示"加密中"）但按 fail-open 设计放行时的诊断标志。
+        /// 只用于把"未确认授权却自动开相机/自动运行"这条隐式取舍写进日志，不参与任何判定。
+        /// </summary>
+        private volatile bool _authNotVerifiedFailOpen = false;
         private void bnOpen_Click(object sender, EventArgs e)
         {
             // ★M10 修复：原实现 dakaizhong=true 后仅在"参数错误"与"正常结尾"两处复位，
