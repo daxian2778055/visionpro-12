@@ -325,11 +325,14 @@ namespace WindowsFormsApplication1
             //   （连接1 全局崩溃弹窗；连接2~4 被管理器 catch 吞掉且 _formLoaded 已置真 = 永久不轮询）。
             fins_lunxunen = CommGridHelper.ReadIniBool(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "modbus_lunxunen", "false"), false, "连接" + _linkId + "/modbus_lunxunen", Log);
             fins_en = CommGridHelper.ReadIniBool(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "modbus_en", "false"), false, "连接" + _linkId + "/modbus_en", Log);
-            address_qishi = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "qishi", "0"), 0, "连接" + _linkId + "/qishi(总起始地址)", Log);
-            address_length = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "zongchang", "1"), 1, "连接" + _linkId + "/zongchang(总长度)", Log);
-            lunxun_time = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "lunxun_time", "20"), 20, "连接" + _linkId + "/lunxun_time", Log);
+            address_qishi = CommGridHelper.ReadIniDecimalIntegral(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "qishi", "0"), 0, 0, ModbusTcpIniStore.MaxAddress, "连接" + _linkId + "/qishi(总起始地址)", Log);
+            address_length = CommGridHelper.ReadIniDecimalIntegral(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "zongchang", "1"), 1, 0, ModbusTcpIniStore.MaxTotalLength, "连接" + _linkId + "/zongchang(总长度)", Log);
+            lunxun_time = CommGridHelper.ReadIniDecimalIntegral(wdini.ReadString(ModbusTcpIniStore.ConnSection(_linkId), "lunxun_time", "20"), 20, 0, ModbusTcpIniStore.MaxPollInterval, "连接" + _linkId + "/lunxun_time", Log);
             // ★第33轮：赋值前钳位，且让派生变量与界面同取钳后值（R7 口径）——
             //   数字合法但超出控件量程同样会在启动读回段抛 ArgumentOutOfRangeException。
+            // ★第33轮复审警告（自查断言订正）：R7 回读链路只解决"量程"、不解决"小数"——
+            //   NumericUpDown.Value 的 setter 只做 Min/Max 钳位，不按 DecimalPlaces 取整（取整只发生在显示层 Text），
+            //   所以 2.5 回读仍是 2.5；取整改由上面三处 ReadIniDecimalIntegral 负责，本行回读仅同步界面口径。
             numericUpDown1.Value = CommGridHelper.ClampToNud(numericUpDown1, address_qishi);
             numericUpDown2.Value = CommGridHelper.ClampToNud(numericUpDown2, address_length);
             numericUpDown3.Value = CommGridHelper.ClampToNud(numericUpDown3, lunxun_time);

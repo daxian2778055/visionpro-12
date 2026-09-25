@@ -315,6 +315,9 @@ namespace WindowsFormsApplication1
         /// ★第33轮：ini→NumericUpDown 赋值前钳位（Form1.cs 的 R7 私有 ClampToNud 同口径）。
         /// "值是数字但超出控件量程"与"值不是数字"是同一崩溃面的两种形态——都发生在启动读回段，
         /// 越界赋值抛 ArgumentOutOfRangeException 同样打断 InitializeForm。
+        /// ★第33轮复审警告：本方法只管"量程"，不管"小数"——NumericUpDown.Value 的 setter 只钳 Min/Max，
+        /// 不按 DecimalPlaces 取整（取整只在显示层 Text 发生，赋 2.5 后 .Value 仍是 2.5 而 Text 是 "3"）。
+        /// 下游要 int.Parse(值.ToString()) 的，必须另走 <see cref="ReadIniDecimalIntegral"/> 自行取整。
         /// </summary>
         public static decimal ClampToNud(NumericUpDown nud, decimal v)
         {
