@@ -697,13 +697,15 @@ namespace WindowsFormsApplication1
                 {
                     try
                     {
-                        if (_jobs.myjob1.triggerMode == "连续运行")
+                        // ★功能修复③（第41轮·DisplaySettings 首个改动点）：triggerMode 判定一律收口
+                        //   NormalizeTriggerMode 归一化后再比较（原裸 == 对空白/大小写/变体漏判）。
+                        if (NormalizeTriggerMode(_jobs.myjob1.triggerMode) == "连续运行")
                         {
                             _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                             cbSoftTrigger1.Enabled = false;
                             bnTriggerExec1.Enabled = false;
                         }
-                        else if (_jobs.myjob1.triggerMode == "触发拍照" || _jobs.myjob1.triggerMode == "通讯触发")
+                        else if (NormalizeTriggerMode(_jobs.myjob1.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob1.triggerMode) == "通讯触发")
                         {
                             _jobs.myjob1.trrigerEn = true;
                             _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -714,7 +716,7 @@ namespace WindowsFormsApplication1
                             //           3 - Line3;
                             //           4 - Counter;
                             //           7 - Software;
-                            if (cbSoftTrigger1.Checked || _jobs.myjob1.triggerMode == "通讯触发")
+                            if (cbSoftTrigger1.Checked || NormalizeTriggerMode(_jobs.myjob1.triggerMode) == "通讯触发")
                             {
                                 _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                 if (m_bGrabbing1)
@@ -740,13 +742,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob2.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob2.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger2.Enabled = false;
                                 bnTriggerExec2.Enabled = false;
                             }
-                            else if (_jobs.myjob2.triggerMode == "触发拍照" || _jobs.myjob2.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob2.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob2.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob2.trrigerEn = true;
                                 _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -757,7 +759,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger2.Checked || _jobs.myjob2.triggerMode == "通讯触发")
+                                if (cbSoftTrigger2.Checked || NormalizeTriggerMode(_jobs.myjob2.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing2)
@@ -782,13 +784,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob3.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob3.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger3.Enabled = false;
                                 bnTriggerExec3.Enabled = false;
                             }
-                            else if (_jobs.myjob3.triggerMode == "触发拍照" || _jobs.myjob3.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob3.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob3.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob3.trrigerEn = true;
                                 _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -799,7 +801,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger3.Checked || _jobs.myjob3.triggerMode == "通讯触发")
+                                if (cbSoftTrigger3.Checked || NormalizeTriggerMode(_jobs.myjob3.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing3)
@@ -826,13 +828,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob4.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob4.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger4.Enabled = false;
                                 bnTriggerExec4.Enabled = false;
                             }
-                            else if (_jobs.myjob4.triggerMode == "触发拍照" || _jobs.myjob4.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob4.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob4.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob4.trrigerEn = true;
                                 _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -843,7 +845,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger4.Checked || _jobs.myjob4.triggerMode == "通讯触发")
+                                if (cbSoftTrigger4.Checked || NormalizeTriggerMode(_jobs.myjob4.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing4)
@@ -868,13 +870,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob5.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob5.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[4].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger5.Enabled = false;
                                 bnTriggerExec5.Enabled = false;
                             }
-                            else if (_jobs.myjob5.triggerMode == "触发拍照" || _jobs.myjob5.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob5.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob5.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob5.trrigerEn = true;
                                 _cameraCtrl.Cameras[4].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -885,7 +887,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger5.Checked || _jobs.myjob5.triggerMode == "通讯触发")
+                                if (cbSoftTrigger5.Checked || NormalizeTriggerMode(_jobs.myjob5.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[4].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing5)
@@ -910,13 +912,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob6.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob6.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[5].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger6.Enabled = false;
                                 bnTriggerExec6.Enabled = false;
                             }
-                            else if (_jobs.myjob6.triggerMode == "触发拍照" || _jobs.myjob6.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob6.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob6.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob6.trrigerEn = true;
                                 _cameraCtrl.Cameras[5].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -927,7 +929,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger6.Checked || _jobs.myjob6.triggerMode == "通讯触发")
+                                if (cbSoftTrigger6.Checked || NormalizeTriggerMode(_jobs.myjob6.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[5].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing6)
@@ -952,13 +954,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob7.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob7.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[6].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger7.Enabled = false;
                                 bnTriggerExec7.Enabled = false;
                             }
-                            else if (_jobs.myjob7.triggerMode == "触发拍照" || _jobs.myjob7.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob7.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob7.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob7.trrigerEn = true;
                                 _cameraCtrl.Cameras[6].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -969,7 +971,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger7.Checked || _jobs.myjob7.triggerMode == "通讯触发")
+                                if (cbSoftTrigger7.Checked || NormalizeTriggerMode(_jobs.myjob7.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[6].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing7)
@@ -994,13 +996,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob8.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob8.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[7].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger8.Enabled = false;
                                 bnTriggerExec8.Enabled = false;
                             }
-                            else if (_jobs.myjob8.triggerMode == "触发拍照" || _jobs.myjob8.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob8.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob8.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob8.trrigerEn = true;
                                 _cameraCtrl.Cameras[7].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -1011,7 +1013,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger8.Checked || _jobs.myjob8.triggerMode == "通讯触发")
+                                if (cbSoftTrigger8.Checked || NormalizeTriggerMode(_jobs.myjob8.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[7].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing8)
@@ -1036,13 +1038,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob9.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob9.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger9.Enabled = false;
                                 bnTriggerExec9.Enabled = false;
                             }
-                            else if (_jobs.myjob9.triggerMode == "触发拍照" || _jobs.myjob9.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob9.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob9.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob9.trrigerEn = true;
                                 _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -1053,7 +1055,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger9.Checked || _jobs.myjob9.triggerMode == "通讯触发")
+                                if (cbSoftTrigger9.Checked || NormalizeTriggerMode(_jobs.myjob9.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing9)
@@ -1078,13 +1080,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob10.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob10.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger10.Enabled = false;
                                 bnTriggerExec10.Enabled = false;
                             }
-                            else if (_jobs.myjob10.triggerMode == "触发拍照" || _jobs.myjob10.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob10.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob10.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob10.trrigerEn = true;
                                 _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -1095,7 +1097,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger10.Checked || _jobs.myjob10.triggerMode == "通讯触发")
+                                if (cbSoftTrigger10.Checked || NormalizeTriggerMode(_jobs.myjob10.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing10)
@@ -1120,13 +1122,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob11.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob11.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger11.Enabled = false;
                                 bnTriggerExec11.Enabled = false;
                             }
-                            else if (_jobs.myjob11.triggerMode == "触发拍照" || _jobs.myjob11.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob11.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob11.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob11.trrigerEn = true;
                                 _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -1137,7 +1139,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger11.Checked || _jobs.myjob11.triggerMode == "通讯触发")
+                                if (cbSoftTrigger11.Checked || NormalizeTriggerMode(_jobs.myjob11.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing11)
@@ -1162,13 +1164,13 @@ namespace WindowsFormsApplication1
                     {
                         try
                         {
-                            if (_jobs.myjob12.triggerMode == "连续运行")
+                            if (NormalizeTriggerMode(_jobs.myjob12.triggerMode) == "连续运行")
                             {
                                 _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_OFF);
                                 cbSoftTrigger12.Enabled = false;
                                 bnTriggerExec12.Enabled = false;
                             }
-                            else if (_jobs.myjob12.triggerMode == "触发拍照" || _jobs.myjob12.triggerMode == "通讯触发")
+                            else if (NormalizeTriggerMode(_jobs.myjob12.triggerMode) == "触发拍照" || NormalizeTriggerMode(_jobs.myjob12.triggerMode) == "通讯触发")
                             {
                                 _jobs.myjob12.trrigerEn = true;
                                 _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("TriggerMode", (uint)MyCamera.MV_CAM_TRIGGER_MODE.MV_TRIGGER_MODE_ON);
@@ -1179,7 +1181,7 @@ namespace WindowsFormsApplication1
                                 //           3 - Line3;
                                 //           4 - Counter;
                                 //           7 - Software;
-                                if (cbSoftTrigger12.Checked || _jobs.myjob12.triggerMode == "通讯触发")
+                                if (cbSoftTrigger12.Checked || NormalizeTriggerMode(_jobs.myjob12.triggerMode) == "通讯触发")
                                 {
                                     _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("TriggerSource", (uint)MyCamera.MV_CAM_TRIGGER_SOURCE.MV_TRIGGER_SOURCE_SOFTWARE);
                                     if (m_bGrabbing12)
@@ -1213,7 +1215,7 @@ namespace WindowsFormsApplication1
                     if (_mjTz == null) continue;
                     try
                     {
-                        if (_mjTz.triggerMode == "通讯触发" && _mjTz.block != null && _mjTz.block.Inputs.Contains("triggerZifu"))
+                        if (NormalizeTriggerMode(_mjTz.triggerMode) == "通讯触发" && _mjTz.block != null && _mjTz.block.Inputs.Contains("triggerZifu"))
                             _mjTz.triggerZifu = _mjTz.block.Inputs["triggerZifu"].Value.ToString();
                     }
                     catch (Exception exTz)

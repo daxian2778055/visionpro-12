@@ -78,7 +78,12 @@ namespace WindowsFormsApplication1
                     int row = (int)(kv.Key >> 32);
                     int col = (int)(kv.Key & 0xFFFFFFFF);
                     if (row >= 0 && row < _dgv.RowCount && col >= 0 && col < _dgv.ColumnCount)
-                        _dgv[col, row].Value = kv.Value;
+                    {
+                        DataGridViewCell cell = _dgv[col, row];
+                        // ★性能#6（第41轮）：等值跳过——轮询值未变化时不触发脏格重绘/ValueChanged（原每轮全格无条件赋值）。
+                        if (!Equals(cell.Value, kv.Value))
+                            cell.Value = kv.Value;
+                    }
                 }
             }
             finally

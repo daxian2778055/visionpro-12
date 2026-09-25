@@ -40,6 +40,12 @@ namespace demo
             public List<string> AllSections;
             // ★文件最后写入时间快照：外部(其它进程/手工编辑)改动后自动失效整份缓存；MinValue=尚未快照
             public DateTime MtimeUtc = DateTime.MinValue;
+            // ★复盘P1-1：「缓存里有、文件里没有」的键——ReadString 缺键时把 Default 补进了读缓存。
+            //   这些键的缓存值可能恰好等于调用方随后要写的值（心跳固化正是这个形状：读默认值=要写的值），
+            //   若允许"同值跳过"，键永远补不进文件 → 读默认值与盘上配置永久脱钩（第20轮N3
+            //   "读到即幂等落盘、与切换行脱钩"被静默回退）。命中该集合的键写入时强制落盘一次，成功即摘除。
+            public readonly HashSet<string> SynthKeys =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
         private static string CacheKey(string section, string ident) => section + "\0" + ident;
@@ -73,6 +79,11 @@ namespace demo
                     if (k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                         toRemove.Add(k);
                 foreach (var k in toRemove) fc.Values.Remove(k);
+                toRemove.Clear();
+                foreach (var k in fc.SynthKeys)   // ★复盘P1-1：段失效同步清"文件中不存在"标记（防陈旧强制写）
+                    if (k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        toRemove.Add(k);
+                foreach (var k in toRemove) fc.SynthKeys.Remove(k);
                 fc.SectionIdents.Remove(section);
                 fc.AllSections = null;
             }
@@ -94,6 +105,7 @@ namespace demo
                 if (fc.MtimeUtc != mtime)
                 {
                     fc.Values.Clear();
+                    fc.SynthKeys.Clear();   // ★复盘P1-1：外部改写后文件内容未知 → 重新读时再判定缺键
                     fc.SectionIdents.Clear();
                     fc.AllSections = null;
                     fc.MtimeUtc = mtime;
@@ -149,6 +161,37 @@ namespace demo
             if (string.IsNullOrEmpty(Section))
                 throw new ArgumentException("Section不能为空");
 
+            // ★性能#2 轻改（第41轮）：值未变且文件未被外部改写 → 跳过 WritePrivateProfileString
+            //   （每次调用都是一次 kernel 整文件读改写）。"保存参数"按钮一次 213 个键，
+            //   多数键值本就与盘上相同；键不在缓存 / 外部动过(mtime 变) / 首次写 → 照常落盘，语义不变。
+            //   ★复盘P2-2（文案订正）：跳过路径仍保留 1 次读前 stat（判"文件是否被外部改过"）；
+            //   真正省下的是 1 次 kernel 整文件读改写 + 1 次写后 stat，并非"两次 stat"。
+            //   ★复盘P1-1：缓存值来自"缺键回填的 Default"（SynthKeys 命中）时绝不同值跳过，必须补键落盘，
+            //   否则读默认值→同值写回永远跳过，键永远进不了文件（心跳固化=第20轮N3 静默回退）。
+            //   ★复盘P2-1：stat 裸调用遇共享冲突抖动会抛 IOException，把一次本可成功的写变成报错；
+            //   失败按"无法证明未变"处理 → 不跳过、照常落盘。
+            var fcW = GetCache(FileName);
+            string ck = string.IsNullOrEmpty(Ident) ? null : CacheKey(Section, Ident);
+            if (fcW != null && ck != null)
+            {
+                string curV;
+                bool sameVal;
+                bool synthKey;
+                lock (_cacheLock)
+                {
+                    sameVal = fcW.Values.TryGetValue(ck, out curV)
+                              && curV == (Value ?? string.Empty).Trim();
+                    synthKey = fcW.SynthKeys.Contains(ck);
+                }
+                DateTime fileMtimeUtc = DateTime.MinValue;
+                try { fileMtimeUtc = File.GetLastWriteTimeUtc(FileName); }
+                catch { fileMtimeUtc = DateTime.MinValue; }   // ★复盘P2-1：stat 失败=未知 → 走落盘
+                if (sameVal && !synthKey && fcW.MtimeUtc != DateTime.MinValue
+                    && fileMtimeUtc != DateTime.MinValue
+                    && fileMtimeUtc == fcW.MtimeUtc)
+                    return;
+            }
+
             if (!WritePrivateProfileString(Section, Ident, Value, FileName))
             {
                 throw new ApplicationException("写Ini文件出错，Section=" + Section + ", Ident=" + Ident);
@@ -156,12 +199,12 @@ namespace demo
 
             // P7：写成功后同步缓存，保证同进程内后续读立即看到新值
             var fc = GetCache(FileName);
-            if (fc != null && !string.IsNullOrEmpty(Ident))
+            if (fc != null && ck != null)
             {
-                string ck = CacheKey(Section, Ident);
                 lock (_cacheLock)
                 {
                     fc.Values[ck] = (Value ?? string.Empty).Trim();
+                    fc.SynthKeys.Remove(ck);   // ★复盘P1-1：已真实落盘 → 摘除"文件中不存在"标记
                     fc.SectionIdents.Remove(Section); // ident 集合可能新增/变化
                     fc.AllSections = null;            // 段集合可能新增
                 }
@@ -193,7 +236,18 @@ namespace demo
 
             lock (_cacheLock)
             {
-                if (fc != null) fc.Values[ck] = value;
+                if (fc != null)
+                {
+                    fc.Values[ck] = value;
+                    // ★复盘P1-1：返回值=Default ⇒ 键在文件里不存在（RawReadString 缺键返回默认值）。
+                    //   标记为"文件中不存在"，让随后的同值写跳过失效（必须补键落盘）；
+                    //   若文件里其实有键且值恰等于 Default，也只多落盘一次同值，无副作用。
+                    if (string.Equals(value, Default, StringComparison.Ordinal)
+                        || string.Equals(value, (Default ?? string.Empty).Trim(), StringComparison.Ordinal))
+                        fc.SynthKeys.Add(ck);
+                    else
+                        fc.SynthKeys.Remove(ck);
+                }
             }
             return value;
         }
@@ -386,6 +440,7 @@ namespace demo
                 lock (_cacheLock)
                 {
                     fc.Values.Remove(CacheKey(Section, Ident));
+                    fc.SynthKeys.Remove(CacheKey(Section, Ident));   // ★复盘P1-1：键已物理删除，标记一并摘除
                     fc.SectionIdents.Remove(Section);
                 }
                 TouchCacheMtime(fc);   // ★自家写：刷新 mtime
@@ -417,6 +472,7 @@ namespace demo
                 lock (_cacheLock)
                 {
                     fc.Values.Clear();
+                    fc.SynthKeys.Clear();   // ★复盘P1-1：整体作废缓存时"文件中不存在"标记同步作废
                     fc.SectionIdents.Clear();
                     fc.AllSections = null;
                 }

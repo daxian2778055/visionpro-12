@@ -74,7 +74,7 @@ namespace WindowsFormsApplication1
         private readonly PendingCameraTriggers[] _pendingTriggers = new PendingCameraTriggers[12];
         private readonly Dictionary<string, string>[] _continuousParameters = new Dictionary<string, string>[12];
 
-        private static bool IsContinuous(Myjob job) => (job.triggerMode ?? "").Trim() == "连续运行";
+        private static bool IsContinuous(Myjob job) => (job.triggerMode ?? "").Replace("\0", "").Trim() == "连续运行";   // ★复盘P2-7：与消费侧同口径——triggerMode 若带 '\0' 尾巴则 Trim 不掉，恒判非连续
 
         // Continuous cameras accept parameter updates without a software trigger.
         // Apply updates on their inspection worker, never from the communication thread during Run().

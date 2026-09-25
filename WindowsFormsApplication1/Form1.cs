@@ -488,8 +488,14 @@ namespace WindowsFormsApplication1
                     _jobs.myjob2.dlg = new FolderBrowserDialog();
                     for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].cuntu = true; _jobs.Myjobs[_i].xuanran = true; _jobs.Myjobs[_i].IO = true; }
                     for (int _i = 0; _i < 12; _i++) _jobs.Myjobs[_i].myTable = new DataTable();
+                    // ★功能修复⑤（第41轮）：myTable1 = 未勾"表格"时的可手工编辑统计表（绑定后 ReadOnly=false），
+                    //   原表 0 列 0 行 → 绑上去就是空网格，手工录入功能整个是死的。补齐与 myTable 同款两列。
                     _jobs.myjob1.myTable1 = new DataTable();
+                    _jobs.myjob1.myTable1.Columns.Add("种类", typeof(String));
+                    _jobs.myjob1.myTable1.Columns.Add("数量", typeof(String));
                     _jobs.myjob2.myTable1 = new DataTable();
+                    _jobs.myjob2.myTable1.Columns.Add("种类", typeof(String));
+                    _jobs.myjob2.myTable1.Columns.Add("数量", typeof(String));
                     int[] _changdu = { 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110 };
                     for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].danwu_cishu = 0; _jobs.Myjobs[_i].time = 0; _jobs.Myjobs[_i].changdu = _changdu[_i]; _jobs.Myjobs[_i].state = ""; _jobs.Myjobs[_i].triggerMode = ""; _jobs.Myjobs[_i].triggerZifu = ""; _jobs.Myjobs[_i].jieshouZifu = "null"; _jobs.Myjobs[_i].commTriggerPending = false; _jobs.Myjobs[_i].commTriggerPendingCount = 0; }
                     _jobs.myjob1.danwu_time = "";
@@ -2210,56 +2216,59 @@ namespace WindowsFormsApplication1
                 devalue = ClampToNud(numericUpDown1, devalue);
                 numericUpDown1.Value = devalue;
 
+                // ★P0 修复（第41轮）camera_name 手改 ini 读取口径：name1-8 = ClampToNud 后 Math.Truncate
+                //   取整（原小数直存 camera_name[]，与 NUD 实际显示/回写口径不齐）；name9-12 =
+                //   ReadIniDecimalIntegral（缺键回退默认值、越界钳 1~255 并告警，原裸 TryParse 缺键即 0）。
                 decimal.TryParse(_config.ReadString("camera", "name1", "1"), out devalue);
-                devalue = ClampToNud(numericUpDown9, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown9, devalue));
                 camera_name[0] = devalue.ToString();
                 numericUpDown9.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name2", "2"), out devalue);
-                devalue = ClampToNud(numericUpDown10, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown10, devalue));
                 camera_name[1] = devalue.ToString();
                 numericUpDown10.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name3", "3"), out devalue);
-                devalue = ClampToNud(numericUpDown11, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown11, devalue));
                 camera_name[2] = devalue.ToString();
                 numericUpDown11.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name4", "4"), out devalue);
-                devalue = ClampToNud(numericUpDown12, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown12, devalue));
                 camera_name[3] = devalue.ToString();
                 numericUpDown12.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name5", "5"), out devalue);
-                devalue = ClampToNud(numericUpDown13, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown13, devalue));
                 camera_name[4] = devalue.ToString();
                 numericUpDown13.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name6", "6"), out devalue);
-                devalue = ClampToNud(numericUpDown14, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown14, devalue));
                 camera_name[5] = devalue.ToString();
                 numericUpDown14.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name7", "7"), out devalue);
-                devalue = ClampToNud(numericUpDown15, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown15, devalue));
                 camera_name[6] = devalue.ToString();
                 numericUpDown15.Value = devalue;
 
                 decimal.TryParse(_config.ReadString("camera", "name8", "8"), out devalue);
-                devalue = ClampToNud(numericUpDown16, devalue);
+                devalue = Math.Truncate(ClampToNud(numericUpDown16, devalue));
                 camera_name[7] = devalue.ToString();
                 numericUpDown16.Value = devalue;
 
-                decimal.TryParse(_config.ReadString("camera", "name9", "9"), out devalue);
+                devalue = CommGridHelper.ReadIniDecimalIntegral(_config.ReadString("camera", "name9", "9"), 9, 1, 255, "camera/name9", _logger.WriteLog);
                 camera_name[8] = devalue.ToString();
 
-                decimal.TryParse(_config.ReadString("camera", "name10", "10"), out devalue);
+                devalue = CommGridHelper.ReadIniDecimalIntegral(_config.ReadString("camera", "name10", "10"), 10, 1, 255, "camera/name10", _logger.WriteLog);
                 camera_name[9] = devalue.ToString();
 
-                decimal.TryParse(_config.ReadString("camera", "name11", "11"), out devalue);
+                devalue = CommGridHelper.ReadIniDecimalIntegral(_config.ReadString("camera", "name11", "11"), 11, 1, 255, "camera/name11", _logger.WriteLog);
                 camera_name[10] = devalue.ToString();
 
-                decimal.TryParse(_config.ReadString("camera", "name12", "12"), out devalue);
+                devalue = CommGridHelper.ReadIniDecimalIntegral(_config.ReadString("camera", "name12", "12"), 12, 1, 255, "camera/name12", _logger.WriteLog);
                 camera_name[11] = devalue.ToString();
 
 
@@ -2709,7 +2718,9 @@ namespace WindowsFormsApplication1
                 numericUpDown2.Value = devalue;
 
 
-                for (int _i = 0; _i < 8; _i++)
+                // ★功能修复④（第41轮）：错误统计建表原只覆盖相机1-8 → 相机9-12 的 myTable 永无列，
+                //   UpdateJobErrorTable 往无列表加行必抛、被下方空 catch 吞，且 dataGridView9-12 无 DataSource。
+                for (int _i = 0; _i < 12; _i++)
                 {
                     _jobs.Myjobs[_i].myTable.Clear();
                     DataRow dr = _jobs.Myjobs[_i].myTable.NewRow();
@@ -2725,6 +2736,11 @@ namespace WindowsFormsApplication1
                 this.dataGridView6.DataSource = _jobs.myjob6.myTable;//将List的数据绑定到DataGridView中
                 this.dataGridView7.DataSource = _jobs.myjob7.myTable;//将List的数据绑定到DataGridView中
                 this.dataGridView8.DataSource = _jobs.myjob8.myTable;//将List的数据绑定到DataGridView中
+                // ★功能修复④：相机9-12 绑定错误统计表（与上方建表循环扩到12配套）。
+                this.dataGridView9.DataSource = _jobs.myjob9.myTable;
+                this.dataGridView10.DataSource = _jobs.myjob10.myTable;
+                this.dataGridView11.DataSource = _jobs.myjob11.myTable;
+                this.dataGridView12.DataSource = _jobs.myjob12.myTable;
                 baoguang_set();
                 bnSetParam_Click(null, null);
                 bnGetParam_Click(null, null);// ch:获取参数 | en:Get parameters
@@ -4975,7 +4991,9 @@ namespace WindowsFormsApplication1
                             else
                             {
                                 #region 传图（序号递增）
-                                if (myjob.triggerMode != "连续运行")
+                                // ★功能修复③（第41轮·Form1 首个改动点）：triggerMode 判定一律收口
+                                //   NormalizeTriggerMode 归一化后再比较（原裸 == 对空白/大小写/变体漏判）。
+                                if (NormalizeTriggerMode(myjob.triggerMode) != "连续运行")
                                 {
                                     myjob.numberng++;
                                     if (myjob.numberng > 999)
@@ -5280,7 +5298,7 @@ namespace WindowsFormsApplication1
                                     }
                                 });
                             }
-                            if (gongjujilu == 1 && (myjob.trrigerEn == true || myjob.triggerMode == "通讯触发"))
+                            if (gongjujilu == 1 && (myjob.trrigerEn == true || NormalizeTriggerMode(myjob.triggerMode) == "通讯触发"))
                             {
                                 // ★ 按需创建（性能优先）：未启用工具记录的帧不再生成空转任务
                                 Task.Run(() =>
@@ -5293,7 +5311,7 @@ namespace WindowsFormsApplication1
                                 });
                             }
                            
-                            if (myjob.trrigerEn == true || myjob.triggerMode == "通讯触发" || cuntu == 1)
+                            if (myjob.trrigerEn == true || NormalizeTriggerMode(myjob.triggerMode) == "通讯触发" || cuntu == 1)
                             {
                                 temptime = DateTime.Now.ToLongTimeString().ToString();
                             }
@@ -5316,7 +5334,7 @@ namespace WindowsFormsApplication1
                                 {
                                     if (_jobs.yunxing)
                                     {
-                                        if (myjob.trrigerEn == true || myjob.triggerMode == "通讯触发")
+                                        if (myjob.trrigerEn == true || NormalizeTriggerMode(myjob.triggerMode) == "通讯触发")
                                         {
                                             int _n = int.Parse(myjob.path_number);
                                             // ★A fix：检测线程不再直读 WinForms 控件（P3.1 Debug 开跨线程校验时，读 CheckState/Items 会抛
@@ -5350,9 +5368,12 @@ namespace WindowsFormsApplication1
                                                     var _tbl = _jobs.Myjobs[_n - 1].myTable;
                                                     if (_statCheckBox[_n - 1].CheckState == CheckState.Checked)
                                                     {
-                                                        _dgv.Visible = false;
-                                                        UpdateJobErrorTable(_tbl, _d, _statErr);
-                                                        _dgv.Visible = true;
+                                                        // ★性能#8 + 功能（第41轮）：原 Visible=false→true 包住更新：每 NG 帧 Hide+Show 双重布局/闪烁，
+                                                        //   比被更新的表本身还贵；且无条件 Visible=true 会把被"表格"开关隐藏的统计表重新弹出来。
+                                                        //   改 SuspendLayout/ResumeLayout（同 CommGridUiSink 惯例），保持原可见性不变。
+                                                        _dgv.SuspendLayout();
+                                                        try { UpdateJobErrorTable(_tbl, _d, _statErr); }
+                                                        finally { _dgv.ResumeLayout(true); }
                                                     }
                                                 }
                                                 catch { }
@@ -5386,7 +5407,7 @@ namespace WindowsFormsApplication1
                                     {
                                         try
                                         {
-                                            if (myjob.trrigerEn == true || myjob.triggerMode == "通讯触发")
+                                            if (myjob.trrigerEn == true || NormalizeTriggerMode(myjob.triggerMode) == "通讯触发")
                                             {
                                                 if (tempout1 == "Accept")
                                                 {
@@ -5520,7 +5541,7 @@ namespace WindowsFormsApplication1
                                 //   避免线程池任务积压与追赶式写盘拉高 CPU 峰值、避免无界 COM 图像对象滞留。
                                 //   帧像素在检测线程此刻（bmp[camIdx] 仍有效）自包含复制，后台写盘不再依赖
                                 //   block.Inputs 的引用生命周期（消除旧 tempimage 被下帧 AssignBlockInputImage 释放的竞态）。
-                                bool gate = myjob.trrigerEn == true || myjob.triggerMode == "通讯触发" || cuntu == 1;
+                                bool gate = myjob.trrigerEn == true || NormalizeTriggerMode(myjob.triggerMode) == "通讯触发" || cuntu == 1;
                                 bool wantOk = gate && myjob.cunok && (tempout3 == "空" ? tempout1 == "Accept" : tempout3 == "Accept");
                                 bool wantNg = gate && myjob.cunng && (tempout3 == "空" ? tempout1 != "Accept" : tempout3 == "Reject");
                                 if ((wantOk || wantNg) && camIdx >= 0 && camIdx < 12
@@ -5782,7 +5803,7 @@ namespace WindowsFormsApplication1
                             if (manager1 == null) return;
                             for (int _i = 0; _i < 12; _i++)
                             {
-                                if ((_i == 0 || manager1.JobCount > _i) && _jobs.Myjobs[_i].triggerMode != "连续运行" && listBox2.Items.Count >= 6 + _i * 6)
+                                if ((_i == 0 || manager1.JobCount > _i) && NormalizeTriggerMode(_jobs.Myjobs[_i].triggerMode) != "连续运行" && listBox2.Items.Count >= 6 + _i * 6)
                                 {
                                     int _base = 1 + _i * 6;
                                     listBox2.Items[_base] = "检测数:" + _jobs.Myjobs[_i].sum.ToString();
@@ -8219,7 +8240,7 @@ namespace WindowsFormsApplication1
                 //   true 时设备级重连也不触发（与 TriggerFrameTimeoutMs 注释所述盲区同源）。
                 //   判据：软件认为在采集(IsCameraGrabbing=true) + 该槽启用(yun=1) + 模式为"连续运行"
                 //         + 相机在线 + 非恢复中 + SDK 未报断连 + 帧计数 ContFrameStallTimeoutMs 内无增长 → 重建取流。
-                if (_jobs.Myjobs[i] != null && _jobs.Myjobs[i].yun == 1 && _jobs.Myjobs[i].triggerMode == "连续运行"
+                if (_jobs.Myjobs[i] != null && _jobs.Myjobs[i].yun == 1 && NormalizeTriggerMode(_jobs.Myjobs[i].triggerMode) == "连续运行"
                     && IsCameraGrabbing(i)
                     && System.Threading.Volatile.Read(ref _grabRecoveryPending[i]) == 0
                     && System.Threading.Volatile.Read(ref _cameraSdkFault[i]) == 0

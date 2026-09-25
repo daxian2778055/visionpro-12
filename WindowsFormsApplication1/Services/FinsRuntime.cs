@@ -175,37 +175,38 @@ namespace WindowsFormsApplication1
                                 {
                                     shuju_temp = "";
                                     bool blockReadFailed = false; // ★R11：本块任一次读失败即置真，失败文案不得当“值”
+                                    int baseAddr = int.Parse(par.Value[1]);   // ★性能#4（复盘P2-3补齐连接2~4）：台账基准每块 hoist——原每寄存器重复解析 par.Value[1]
                                     for (int j = 0; j < int.Parse(par.Value[2]); j++)
                                     {
                                         if (par.Value[4] == "int")
                                         {
-                                            xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
-                                            DemoUtils.ReadResultRender1(_link.Client.ReadInt16("D" + (int.Parse(par.Value[1]) + j).ToString()), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                            ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            xuanzhong_temp = baseAddr - ctx.AddressBase + j;
+                                            DemoUtils.ReadResultRender1(_link.Client.ReadInt16("D" + (baseAddr + j).ToString()), "D" + (baseAddr + j).ToString(), out fins_temp);
+                                            ctx.UpdatePollCell(xuanzhong_temp, fins_temp);
                                             if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }
                                         else if (par.Value[4] == "string")
                                         {
-                                            xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
-                                            DemoUtils.ReadResultRender1(_link.Client.ReadString("D" + (int.Parse(par.Value[1]) + j).ToString(), 1), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                            ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            xuanzhong_temp = baseAddr - ctx.AddressBase + j;
+                                            DemoUtils.ReadResultRender1(_link.Client.ReadString("D" + (baseAddr + j).ToString(), 1), "D" + (baseAddr + j).ToString(), out fins_temp);
+                                            ctx.UpdatePollCell(xuanzhong_temp, fins_temp);
                                             if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }
                                         else if (par.Value[4] == "long" && j % 2 == 0)
                                         {
-                                            xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
-                                            DemoUtils.ReadResultRender1(_link.Client.ReadInt32("D" + (int.Parse(par.Value[1]) + j).ToString()), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                            ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            xuanzhong_temp = baseAddr - ctx.AddressBase + j;
+                                            DemoUtils.ReadResultRender1(_link.Client.ReadInt32("D" + (baseAddr + j).ToString()), "D" + (baseAddr + j).ToString(), out fins_temp);
+                                            ctx.UpdatePollCell(xuanzhong_temp, fins_temp);
                                             if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }
                                         else if (par.Value[4] == "float" && j % 2 == 0)
                                         {
-                                            xuanzhong_temp = int.Parse(par.Value[1]) - ctx.AddressBase + j;
-                                            DemoUtils.ReadResultRender1(_link.Client.ReadFloat("D" + (int.Parse(par.Value[1]) + j).ToString()), "D" + (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                            ctx.UpdatePollCell(int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                            xuanzhong_temp = baseAddr - ctx.AddressBase + j;
+                                            DemoUtils.ReadResultRender1(_link.Client.ReadFloat("D" + (baseAddr + j).ToString()), "D" + (baseAddr + j).ToString(), out fins_temp);
+                                            ctx.UpdatePollCell(xuanzhong_temp, fins_temp);
                                             if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                             shuju_temp += ctx.MiddleValue(fins_temp, " ", "\r");
                                         }

@@ -90,7 +90,12 @@ namespace WindowsFormsApplication1
                 }
             }
             if (!hasGreen)
-                dgv.Rows[e.RowIndex].DefaultCellStyle.BackColor = Color.LightBlue;
+            {
+                // ★性能#9（第41轮）：等值跳过——同色重复赋值无意义，还可能触发行样式失效重绘。
+                DataGridViewCellStyle _rowStyle = dgv.Rows[e.RowIndex].DefaultCellStyle;
+                if (_rowStyle.BackColor != Color.LightBlue)
+                    _rowStyle.BackColor = Color.LightBlue;
+            }
         }
 
         public static void EraseDataSections(ClassIni wdini, string sectionSuffix, int maxCount = 10)

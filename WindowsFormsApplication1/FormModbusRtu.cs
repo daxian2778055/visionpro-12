@@ -366,6 +366,9 @@ namespace WindowsFormsApplication1
             {
                 dataGridView1.Rows.Add();
             }
+            // ★功能修复②（第41轮）：禁用表头排序。fins_data/fins_name 存的是固定"列,行"显示坐标，
+            //   点表头会把存储行号与显示行错位 → 轮询值/回绿/双击回填全写到别人的块上（只读不等于不可排序）。
+            foreach (DataGridViewColumn _col in dataGridView1.Columns) _col.SortMode = DataGridViewColumnSortMode.NotSortable;
             _gridUi = new CommGridUiSink(dataGridView1);
             CommGridHelper.ApplyDataTabChrome(tabPage1, dataGridView1, b1, b2);
             CommGridHelper.StyleClearButton(b4);
@@ -1258,7 +1261,9 @@ namespace WindowsFormsApplication1
                 //   现直接拒绝并回退，不落盘。
                 if (!_qishiRevert)
                 {
-                    string bad = CommGridHelper.FindBlockOutOfRange(fins_dic, numericUpDown1.Value, fins_data.Count);
+                    // ★功能修复⑦（第41轮）：台账格位数=总长度（原 fins_data.Count=50 物理格，与新增块的
+                    //   qishi+zongchang 校验口径不一——总长度<50 时块可落在台账外仍"通过"）。
+                    string bad = CommGridHelper.FindBlockOutOfRange(fins_dic, numericUpDown1.Value, (int)Math.Truncate(address_length));
                     if (bad != null)
                     {
                         _qishiRevert = true;
@@ -1275,10 +1280,27 @@ namespace WindowsFormsApplication1
             }
         }
 
+        private bool _zongchangRevert;   // ★功能修复⑦（第41轮）：回退总长度时防本处理器重入
         private void numericUpDown2_ValueChanged(object sender, EventArgs e)
         {
             if (chushihua)
             {
+                // ★功能修复⑦：总长度改小同样可能让已有数据块落出台账——新增块一直按 qishi+zongchang 校验、
+                //   起始地址预检却按 50 物理格（三处口径不一）。这里按新长度预检：越界即拒绝回退，不落盘。
+                if (!_zongchangRevert)
+                {
+                    string bad = CommGridHelper.FindBlockOutOfRange(fins_dic, address_qishi, (int)Math.Truncate(numericUpDown2.Value));
+                    if (bad != null)
+                    {
+                        _zongchangRevert = true;
+                        try { numericUpDown2.Value = address_length; }
+                        finally { _zongchangRevert = false; }
+                        Log("总长度未改：" + bad + "（请先调整/删除该数据块）");
+                        MessageBox.Show("总长度未修改：" + bad + "\r\n\r\n请先调整或删除该数据块，再改总长度。",
+                            "配置越界", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
                 address_length = numericUpDown2.Value;
                 wdini.WriteString(ModbusRtuIniStore.ConnSection(_linkId), "zongchang", numericUpDown2.Value.ToString());
             }
@@ -2959,9 +2981,21 @@ namespace WindowsFormsApplication1
             FormOperationHelp.ShowHelp(this, "Modbus RTU");
         }
 
+        // ★性能#5（第41轮）：模式实参基本固定为 (" ","\r")，原每寄存器一次拼串 + new Regex 编译。
+        // 按 (sta,end) 缓存已编译实例（Regex 线程安全，编译后只读 Match）。
+        private static readonly Dictionary<string, Regex> _midValueRegexCache = new Dictionary<string, Regex>();
         public string GetMiddleValue(string str, string sta, string end)
         {
-            Regex rg = new Regex("(?<=(" + sta + "))[.\\s\\S]*?(?=(" + end + "))", RegexOptions.Multiline | RegexOptions.Singleline);
+            string key = (sta ?? "") + "\u0000" + (end ?? "");
+            Regex rg;
+            lock (_midValueRegexCache)
+            {
+                if (!_midValueRegexCache.TryGetValue(key, out rg))
+                {
+                    rg = new Regex("(?<=(" + sta + "))[.\\s\\S]*?(?=(" + end + "))", RegexOptions.Multiline | RegexOptions.Singleline);
+                    _midValueRegexCache[key] = rg;
+                }
+            }
             return rg.Match(str).Value;
         }
 
@@ -3176,6 +3210,8 @@ namespace WindowsFormsApplication1
                                 Dictionary<string, string[]> finsSnapshot = CommGridHelper.SnapshotFinsDic(fins_dic);
                                 if (finsSnapshot != null && finsSnapshot.Count > 0)
                                 {
+                                    // ★性能#10：相机绑定快照每圈取一次（原"触发"分支内每个触发块各拷一遍）；null=正被UI改，本圈触发块跳过
+                                    Dictionary<int, string[]> camSnapshot = CommGridHelper.SnapshotCameraDic(camera_dic);
                                     foreach (var par in finsSnapshot)
                                     {
                                         // ★P5：脏配置防御。qishi/changdu 解析不了时跳过本块并只记一次日志，
@@ -3190,6 +3226,8 @@ namespace WindowsFormsApplication1
                                                 Log("数据块 " + par.Key + " 的起始地址/长度非法，已跳过（请检查配置）");
                                             continue;
                                         }
+                                        // ★性能#4（第41轮）：台账基准每块 hoist——原每寄存器重复 int.Parse(par.Value[1])×2 + int.Parse(address_qishi.ToString())
+                                        int baseAddr = int.Parse(address_qishi.ToString());
                                         shuju_temp = "";
                                         bool blockReadFailed = false; // ★R11：本块任一次读失败即置真，失败文案不得当“值”
                                         for (int j = 0; j < blkChangdu; j++)
@@ -3197,37 +3235,37 @@ namespace WindowsFormsApplication1
                                             if (par.Value[4] == "int")
                                             {
 
-                                                xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
+                                                xuanzhong_temp = blkQishi - baseAddr + j;
                                                 // 读取short变量
-                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadInt16((int.Parse(par.Value[1]) + j).ToString())), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                                CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadInt16((blkQishi + j).ToString())), (blkQishi + j).ToString(), out fins_temp);
+                                                CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                                                 if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
                                             else if (par.Value[4] == "string")
                                             {
-                                                xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
+                                                xuanzhong_temp = blkQishi - baseAddr + j;
                                                 // 读取字符串
-                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadString((int.Parse(par.Value[1]) + j).ToString(), 1)), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                                CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadString((blkQishi + j).ToString(), 1)), (blkQishi + j).ToString(), out fins_temp);
+                                                CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                                                 if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
                                             else if (par.Value[4] == "long" && j % 2 == 0)
                                             {
-                                                xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
+                                                xuanzhong_temp = blkQishi - baseAddr + j;
                                                 // 读取字符串
-                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadInt32((int.Parse(par.Value[1]) + j).ToString())), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                                CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadInt32((blkQishi + j).ToString())), (blkQishi + j).ToString(), out fins_temp);
+                                                CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                                                 if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
                                             else if (par.Value[4] == "float" && j % 2 == 0)
                                             {
-                                                xuanzhong_temp = int.Parse(par.Value[1]) - int.Parse(address_qishi.ToString()) + j;
+                                                xuanzhong_temp = blkQishi - baseAddr + j;
                                                 // 读取字符串
-                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadFloat((int.Parse(par.Value[1]) + j).ToString())), (int.Parse(par.Value[1]) + j).ToString(), out fins_temp);
-                                                CommGridHelper.SetPollCell(_gridUi, fins_data, int.Parse(xuanzhong_temp.ToString()), fins_temp);
+                                                DemoUtils.ReadResultRender1(ReadLocked(() => busRtuClient.ReadFloat((blkQishi + j).ToString())), (blkQishi + j).ToString(), out fins_temp);
+                                                CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                                                 if (CommTriggerHelper.IsReadFailureText(fins_temp)) blockReadFailed = true; // ★R11
                                                 shuju_temp += GetMiddleValue(fins_temp, " ", "\r");
                                             }
@@ -3247,8 +3285,7 @@ namespace WindowsFormsApplication1
                                         }
                                         if (par.Value[3] == "触发")
                                         {
-                                            // ★P1：相机绑定表同样用快照遍历，避免与 UI 改绑定并发时抛 "Collection was modified"
-                                            Dictionary<int, string[]> camSnapshot = CommGridHelper.SnapshotCameraDic(camera_dic);
+                                            // ★P1：相机绑定表快照已在本圈循环顶部统一取（性能#10），此处仅保留空快照跳过
                                             if (camSnapshot == null) continue;
                                             foreach (var pap in camSnapshot)
                                             {
