@@ -281,6 +281,17 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
+        /// ★第33轮复审警告①：钳位 + 取整的读回包装。地址/长度/间隔只该是整数（界面 NUD DecimalPlaces=0 恒产出整数串），
+        /// 但 ReadIniDecimalBounded 只钳不截断——手改范围内的 2.5 会原样进字典，下游 grid 表头双击回填、轮询里的
+        /// int.Parse(值字符串) 抛 FormatException = 全局崩溃弹窗（且字典里有一个小数块就会带崩整次双击）。
+        /// 窗体读回与三个 IniStore 统一走这里，"钳位已兜住 int.Parse"的声明才严格成立。
+        /// </summary>
+        public static decimal ReadIniDecimalIntegral(string raw, decimal fallback, decimal min, decimal max, string where, Action<string> log)
+        {
+            return Math.Truncate(ReadIniDecimalBounded(raw, fallback, min, max, where, log));
+        }
+
+        /// <summary>
         /// ★第33轮复审②：ini → int 的安全读取。原调用点写法 `int x = (int)ReadIniDecimal(...)` 是受检转换：
         /// 手改 geshu=3000000000 能解析成合法 decimal，但强转 int 抛 OverflowException，
         /// 而写在强转之后的 if (x &gt; 上限) 钳位根本拦不到。这里先钳成 decimal 再强转，强转必然安全。

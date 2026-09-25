@@ -365,8 +365,8 @@ namespace WindowsFormsApplication1
                 for (int i = 0; i < geshu; i++)
                 {
                     fins_mingcheng = wdini.ReadString(ModbusTcpIniStore.BlockSection(_linkId, i + 1), "name", "").Replace("\0", "");
-                    fins_qishi = CommGridHelper.ReadIniDecimalBounded(wdini.ReadString(ModbusTcpIniStore.BlockSection(_linkId, i + 1), "qishi", "0"), 0, 0, 60000, "连接" + _linkId + "/块" + (i + 1) + "/qishi", Log);   // ★第33轮复审①：上限 60000 = 块起始 numericUpDown5.Maximum；手改更大的值让轮询/网格点击处的 int.Parse(qishi) 每圈抛 OverflowException
-                    fins_length = CommGridHelper.ReadIniDecimalBounded(wdini.ReadString(ModbusTcpIniStore.BlockSection(_linkId, i + 1), "changdu", "0"), 0, 0, 50, "连接" + _linkId + "/块" + (i + 1) + "/changdu", Log);   // ★第33轮复审③：上限 50 = 界面块长度 numericUpDown4.Maximum；手改更大的值不抛异常，只会让下方回绿循环空转（≥2^31 时 int 计数回绕=永久死循环）
+                    fins_qishi = CommGridHelper.ReadIniDecimalIntegral(wdini.ReadString(ModbusTcpIniStore.BlockSection(_linkId, i + 1), "qishi", "0"), 0, 0, 60000, "连接" + _linkId + "/块" + (i + 1) + "/qishi", Log);   // ★第33轮复审①：上限 60000 = 块起始 numericUpDown5.Maximum；手改更大的值让轮询/网格点击处的 int.Parse(qishi) 每圈抛 OverflowException。★第33轮复审警告①：改 Integral 版（钳位+取整）——只钳不截时范围内的小数（手改 2.5）会原样进 fins_dic，表头双击回填 dataGridView1_CellMouseDoubleClick 里无保护 int.Parse("2.5") 抛 FormatException = 全局崩溃弹窗
+                    fins_length = CommGridHelper.ReadIniDecimalIntegral(wdini.ReadString(ModbusTcpIniStore.BlockSection(_linkId, i + 1), "changdu", "0"), 0, 0, 50, "连接" + _linkId + "/块" + (i + 1) + "/changdu", Log);   // ★第33轮复审③：上限 50 = 界面块长度 numericUpDown4.Maximum；手改更大的值不抛异常，只会让下方回绿循环空转（≥2^31 时 int 计数回绕=永久死循环）。★第33轮复审警告①：改 Integral 版（钳位+取整），范围内小数同样截断，否则 int.Parse("2.5") 在表头双击/轮询处抛 FormatException
                     ABCD = wdini.ReadString(ModbusTcpIniStore.BlockSection(_linkId, i + 1), "gaodiwei", "触发").Replace("\0", "");
                     fins_style = wdini.ReadString(ModbusTcpIniStore.BlockSection(_linkId, i + 1), "geshi", "int").Replace("\0", "");
                     // ★第33轮：ini 里两个块同名（含两行都缺 name → 都是空串）时 Dictionary.Add 抛

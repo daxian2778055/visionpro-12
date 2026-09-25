@@ -218,14 +218,13 @@ namespace WindowsFormsApplication1
         /// ★第33轮复审建议①：本 Store 的读取直连 LinkContext / 轮询线程（连接 2~4 不经三协议窗体的启动读回段），
         /// 钳位必须落在这里——手改 ini 的 changdu=10⁹ 会让该连接轮询线程每圈做 10⁹ 次网络读
         /// （≥2³¹ 时连 int.Parse 都抛 OverflowException = 异常风暴），比启动阶段假死更隐蔽；qishi≥2³¹ 同型。
-        /// 与 CommGridHelper.ReadIniDecimalBounded 同口径；本处无日志句柄，log 传 null = 静默钳位
+        /// 与三窗体读回同口径（CommGridHelper.ReadIniDecimalIntegral = 钳位 + 取整）；本处无日志句柄，log 传 null = 静默处理
         /// （连接 1 由窗体读回段记日志）。
         /// </summary>
         private static decimal ReadDecimalBounded(ClassIni ini, string sec, string key, decimal def, decimal min, decimal max)
         {
-            decimal v = CommGridHelper.ReadIniDecimalBounded(ini.ReadString(sec, key, def.ToString()), def, min, max, sec + "/" + key, null);
-            // 地址/长度/间隔本就只该是整数，且下游轮询用 int.Parse(本值的字符串)——留小数（手改 2.5）会每圈抛 FormatException
-            return Math.Truncate(v);
+            // ★第33轮复审警告①：钳位+取整统一收口到 CommGridHelper.ReadIniDecimalIntegral（与三窗体读回同口径）
+            return CommGridHelper.ReadIniDecimalIntegral(ini.ReadString(sec, key, def.ToString()), def, min, max, sec + "/" + key, null);
         }
 
         /// <summary>★第33轮复审建议①：块个数同样钳到 MaxDataBlocks——手改 geshu=2000000000 原会让
