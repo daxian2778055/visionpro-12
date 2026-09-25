@@ -408,7 +408,7 @@ namespace WindowsFormsApplication1
                 for (int i = 0; i < geshu; i++)
                 {
                     fins_mingcheng= wdini.ReadString(FinsIniStore.BlockSection(_linkId, i+1), "name", "").Replace("\0", "");
-                    fins_qishi = CommGridHelper.ReadIniDecimal(wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "qishi", "0"), 0, "连接" + _linkId + "/块" + (i + 1) + "/qishi", Log);
+                    fins_qishi = CommGridHelper.ReadIniDecimalBounded(wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "qishi", "0"), 0, 0, 60000, "连接" + _linkId + "/块" + (i + 1) + "/qishi", Log);   // ★第33轮复审①：上限 60000 = 块起始 numericUpDown5.Maximum；手改更大的值让轮询/网格点击处的 int.Parse(qishi) 每圈抛 OverflowException
                     fins_length= CommGridHelper.ReadIniDecimalBounded(wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "changdu", "0"), 0, 0, 50, "连接" + _linkId + "/块" + (i + 1) + "/changdu", Log);   // ★第33轮复审③：上限 50 = 界面块长度 numericUpDown4.Maximum；手改更大的值不抛异常，只会让下方回绿循环空转（≥2^31 时 int 计数回绕=永久死循环）
                     ABCD= wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "gaodiwei", "触发").Replace("\0", "");
                     fins_style = wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "geshi", "int").Replace("\0", "");

@@ -22,6 +22,11 @@ namespace WindowsFormsApplication1
         public const int MaxDataBlocks = 10;    // 数据块上限（与既有逻辑一致）
         public const int MaxCameras = 13;       // 相机绑定上限（1..13）
         public const int MaxChangeTypes = 12;   // 切型/方案条目上限（1..12）
+        // ★第33轮复审建议①：地址/长度/轮询间隔量程——与三协议窗体的界面控件一致（超出即无意义配置）
+        internal const decimal MaxAddress = 60000;        // 连接起始 numericUpDown1.Maximum / 块起始 numericUpDown5.Maximum
+        internal const decimal MaxTotalLength = 50;       // 总长度 numericUpDown2.Maximum
+        internal const decimal MaxBlockLength = 50;       // 块长度 numericUpDown4.Maximum
+        internal const decimal MaxPollInterval = 2000;    // 轮询间隔 numericUpDown3.Maximum
 
         // 连接 1 沿用既有段名（无下划线，与 FormModbusRtu 原始 Load 一致）；连接 N 追加数字。
         internal static string ConnSection(int link) => link == 1 ? "modbusrtu" : "modbusrtu" + link;
@@ -63,12 +68,12 @@ namespace WindowsFormsApplication1
                 Parity = ini.ReadString(sec, "Parity", "None").Replace("\0", ""),
                 Station = ini.ReadString(sec, "station", "1").Replace("\0", ""),
                 Abcd = ini.ReadString(sec, "abcd", "CDAB").Replace("\0", ""),
-                Qishi = ReadDecimal(ini, sec, "qishi", 0),
-                Zongchang = ReadDecimal(ini, sec, "zongchang", 1),
-                LunxunTime = ReadDecimal(ini, sec, "lunxun_time", 20),
+                Qishi = ReadDecimalBounded(ini, sec, "qishi", 0, 0, MaxAddress),
+                Zongchang = ReadDecimalBounded(ini, sec, "zongchang", 1, 0, MaxTotalLength),
+                LunxunTime = ReadDecimalBounded(ini, sec, "lunxun_time", 20, 0, MaxPollInterval),
                 ModbusEn = ini.ReadBool(sec, "modbusrtu_en", false),
                 ModbusLunxunen = ini.ReadBool(sec, "modbusrtu_lunxunen", false),
-                Geshu = ini.ReadInteger(sec, "geshu", 0),
+                Geshu = ReadGeshuBounded(ini, sec),
             };
 
             // 数据块：1..Geshu
@@ -79,8 +84,8 @@ namespace WindowsFormsApplication1
                 {
                     Index = n,
                     Name = ini.ReadString(bsec, "name", "").Replace("\0", ""),
-                    Qishi = ReadDecimal(ini, bsec, "qishi", 0),
-                    Changdu = ReadDecimal(ini, bsec, "changdu", 0),
+                    Qishi = ReadDecimalBounded(ini, bsec, "qishi", 0, 0, MaxAddress),
+                    Changdu = ReadDecimalBounded(ini, bsec, "changdu", 0, 0, MaxBlockLength),
                     Gaodiwei = ini.ReadString(bsec, "gaodiwei", "触发").Replace("\0", ""),
                     Geshi = ini.ReadString(bsec, "geshi", "int").Replace("\0", ""),
                 });
@@ -211,11 +216,25 @@ namespace WindowsFormsApplication1
             ini.EraseSection(PathSection(linkId));
         }
 
-        private static decimal ReadDecimal(ClassIni ini, string sec, string key, decimal def)
+        /// <summary>
+        /// ★第33轮复审建议①：本 Store 的读取直连 LinkContext / 轮询线程（连接 2~4 不经三协议窗体的启动读回段），
+        /// 钳位必须落在这里——手改 ini 的 changdu=10⁹ 会让该连接轮询线程每圈做 10⁹ 次网络读
+        /// （≥2³¹ 时连 int.Parse 都抛 OverflowException = 异常风暴），比启动阶段假死更隐蔽；qishi≥2³¹ 同型。
+        /// 与 CommGridHelper.ReadIniDecimalBounded 同口径；本处无日志句柄，log 传 null = 静默钳位
+        /// （连接 1 由窗体读回段记日志）。
+        /// </summary>
+        private static decimal ReadDecimalBounded(ClassIni ini, string sec, string key, decimal def, decimal min, decimal max)
         {
-            string s = ini.ReadString(sec, key, def.ToString()).Replace("\0", "");
-            decimal v;
-            return decimal.TryParse(s, out v) ? v : def;
+            decimal v = CommGridHelper.ReadIniDecimalBounded(ini.ReadString(sec, key, def.ToString()), def, min, max, sec + "/" + key, null);
+            // 地址/长度/间隔本就只该是整数，且下游轮询用 int.Parse(本值的字符串)——留小数（手改 2.5）会每圈抛 FormatException
+            return Math.Truncate(v);
+        }
+
+        /// <summary>★第33轮复审建议①：块个数同样钳到 MaxDataBlocks——手改 geshu=2000000000 原会让
+        /// Load 的 1..Geshu 循环构造 20 亿个块配置对象（加载即假死/OOM）。</summary>
+        private static int ReadGeshuBounded(ClassIni ini, string sec)
+        {
+            return CommGridHelper.ReadIniInt(ini.ReadString(sec, "geshu", "0"), 0, 0, MaxDataBlocks, sec + "/geshu", null);
         }
     }
 }

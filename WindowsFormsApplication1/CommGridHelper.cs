@@ -241,7 +241,7 @@ namespace WindowsFormsApplication1
         private static void LogOnce(string key, string message, Action<string> log)
         {
             bool first;
-            lock (_badIniNumberLogged) { first = _badIniNumberLogged.Add(key); }
+            lock (_badIniNumberLogged) { first = _badIniNumberLogged.Add(key ?? ""); }
             if (!first || log == null) return;
             try { log(message); }
             catch { }
