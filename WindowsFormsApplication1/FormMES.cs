@@ -297,16 +297,24 @@ namespace WindowsFormsApplication1
 
         private const string EncPrefix = "enc:";
 
-        // 口令加密（DPAPI，当前用户作用域，依赖本机 Windows 凭据，异地/换用户不可解）
+        // ★第33轮 S6（用户拍板）：作用域 CurrentUser → LocalMachine。
+        // 语义如实记录：LocalMachine = 本机**任意 Windows 用户**都能解（CurrentUser 只有本用户能解）；
+        // DPAPI 始终绑定本机主密钥，**换机拷贝仍解不开**——"跨机复用"要靠应用级密钥，不是这个开关能给的。
+        // 写入只用 LocalMachine；读取先 LocalMachine、失败再回退 CurrentUser，
+        // 兼容本次改造之前存下的密文，避免升级后现场凭据头/URL 被整批清空。
         private static string Protect(string plain)
         {
-            byte[] data = ProtectedData.Protect(Encoding.UTF8.GetBytes(plain ?? ""), null, DataProtectionScope.CurrentUser);
+            byte[] data = ProtectedData.Protect(Encoding.UTF8.GetBytes(plain ?? ""), null, DataProtectionScope.LocalMachine);
             return Convert.ToBase64String(data);
         }
         private static string Unprotect(string enc)
         {
-            byte[] data = ProtectedData.Unprotect(Convert.FromBase64String(enc), null, DataProtectionScope.CurrentUser);
-            return Encoding.UTF8.GetString(data);
+            byte[] data = Convert.FromBase64String(enc);
+            try { return Encoding.UTF8.GetString(ProtectedData.Unprotect(data, null, DataProtectionScope.LocalMachine)); }
+            catch (CryptographicException)
+            {
+                return Encoding.UTF8.GetString(ProtectedData.Unprotect(data, null, DataProtectionScope.CurrentUser));
+            }
         }
 
         /// <summary>★第32轮 S4：只有"形状像 DPAPI base64"的内容才当密文解，
@@ -323,7 +331,8 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>★第32轮 S4：载入时解码一个配置字段——带 enc: 且形状像密文才解；
-        /// 解不开（换机/换用户拷贝）置 unreadable 并留空，普通明文与偶然以 enc: 开头的原样返回。</summary>
+        /// 解不开（★第33轮 S6 后只剩"换机拷贝"这一种，本机任意用户均可解）置 unreadable 并留空，
+        /// 普通明文与偶然以 enc: 开头的原样返回。</summary>
         private static string UnprotectField(string value, ref bool unreadable)
         {
             if (string.IsNullOrEmpty(value) || !value.StartsWith(EncPrefix)) return value;

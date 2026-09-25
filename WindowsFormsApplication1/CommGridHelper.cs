@@ -234,10 +234,16 @@ namespace WindowsFormsApplication1
         /// <summary>★第33轮：脏 ini 值只按"位置"记一次日志（where 需自带连接号）。</summary>
         private static void LogBadIniOnce(string where, string raw, string fallbackText, Action<string> log)
         {
+            LogOnce(where, "配置项「" + where + "」的值 \"" + raw + "\" 无法解析，已按默认 " + fallbackText + " 处理（手改 ini 所致，请在界面上重新设置后保存）", log);
+        }
+
+        /// <summary>★第33轮复审：同一位置只记一次的通用日志（解析失败与超范围共用去重表）。</summary>
+        private static void LogOnce(string key, string message, Action<string> log)
+        {
             bool first;
-            lock (_badIniNumberLogged) { first = _badIniNumberLogged.Add(where ?? ""); }
+            lock (_badIniNumberLogged) { first = _badIniNumberLogged.Add(key); }
             if (!first || log == null) return;
-            try { log("配置项「" + where + "」的值 \"" + raw + "\" 无法解析，已按默认 " + fallbackText + " 处理（手改 ini 所致，请在界面上重新设置后保存）"); }
+            try { log(message); }
             catch { }
         }
 
@@ -255,6 +261,33 @@ namespace WindowsFormsApplication1
             if (decimal.TryParse(s, out v)) return v;
             LogBadIniOnce(where, s, fallback.ToString(), log);
             return fallback;
+        }
+
+        /// <summary>
+        /// ★第33轮复审③：解析后立刻按 decimal 钳到 [min,max]。
+        /// 用于"值是合法数字但量级离谱"的手改 ini（如块长度 changdu=1000000000）：这类值不会抛异常，
+        /// 只会让启动回绿循环空转约 10^9 圈（≥2^31 时 int 计数回绕 = 永久死循环），界面写不出、仅手改可触发。
+        /// </summary>
+        public static decimal ReadIniDecimalBounded(string raw, decimal fallback, decimal min, decimal max, string where, Action<string> log)
+        {
+            decimal v = ReadIniDecimal(raw, fallback, where, log);
+            if (v < min || v > max)
+            {
+                decimal clamped = v < min ? min : max;
+                LogOnce(where + "(范围)", "配置项「" + where + "」的值 " + v + " 超出可用范围 [" + min + ", " + max + "]，已按 " + clamped + " 处理（手改 ini 所致，请在界面上重新设置后保存）", log);
+                v = clamped;
+            }
+            return v;
+        }
+
+        /// <summary>
+        /// ★第33轮复审②：ini → int 的安全读取。原调用点写法 `int x = (int)ReadIniDecimal(...)` 是受检转换：
+        /// 手改 geshu=3000000000 能解析成合法 decimal，但强转 int 抛 OverflowException，
+        /// 而写在强转之后的 if (x &gt; 上限) 钳位根本拦不到。这里先钳成 decimal 再强转，强转必然安全。
+        /// </summary>
+        public static int ReadIniInt(string raw, int fallback, int min, int max, string where, Action<string> log)
+        {
+            return (int)ReadIniDecimalBounded(raw, fallback, min, max, where, log);
         }
 
         /// <summary>★第33轮：同上口径的 bool 读回（fins_lunxunen / fins_en 的裸 bool.Parse 同型）。</summary>

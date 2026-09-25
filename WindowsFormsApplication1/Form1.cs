@@ -2817,12 +2817,9 @@ namespace WindowsFormsApplication1
 
                 // ★第33轮：裸 int.Parse——手改 [canshu]geshu 成非数字即在本巨型 try 内抛，被 catch 成
                 //   "半初始化 + Frm2.start=1"（与本轮三协议 ini 读回段同型）。改安全读取 + 上限钳位。
-                int geshu = (int)CommGridHelper.ReadIniDecimal(_config.ReadString("canshu", "geshu", "0"), 0, "canshu/geshu(方案下拉个数)", _logger.WriteLog);
-                if (geshu > 200)
-                {
-                    _logger.WriteLog("[canshu]geshu 配置 " + geshu + " 超出合理范围，按 200 处理");
-                    geshu = 200;
-                }
+                // ★第33轮复审②：原写法 int geshu = (int)ReadIniDecimal(...) 的强转是受检转换，
+                //   手改 geshu=3000000000 解析得值但强转抛 OverflowException，钳位在其后拦不住；改 ReadIniInt（0..200）。
+                int geshu = CommGridHelper.ReadIniInt(_config.ReadString("canshu", "geshu", "0"), 0, 0, 200, "canshu/geshu(方案下拉个数)", _logger.WriteLog);
                 if (geshu > 0)
                 {
                     for (int i = 0; i < geshu; i++)
@@ -3766,7 +3763,10 @@ namespace WindowsFormsApplication1
                             listBox11.Items.Clear();
                             listBox12.Items.Clear();
                             listBox13.Items.Clear();
-                            _jobs.myjob1.dlg.Dispose();
+                            // ★第33轮复审①：原先此处紧跟 _jobs.myjob1.dlg.Dispose()——每次点【运行】都释放
+                            //   一个启动期创建、之后反复 ShowDialog 复用的常驻对话框（半截地雷：.NET 4.6 的
+                            //   FolderBrowserDialog.Dispose 恰好不释放状态才没出事）。已移出运行路径，
+                            //   收口到 SafeCleanupBeforeDispose 的退出路径。
                         }));
 
                         Task.Run(() =>
@@ -7456,6 +7456,22 @@ namespace WindowsFormsApplication1
                 }
                 catch { }
             }
+            // ★第33轮复审①：常驻 FolderBrowserDialog 的释放收口到退出路径（原实现在 button1_Click 的
+            //   运行流程里每次点【运行】Dispose 一次，被 ShowPictureList 复用后即成半截地雷）。
+            //   myjob2.dlg 同样在 InitializeJobManager 创建（当前无 ShowDialog 调用方），一并收口。
+            try
+            {
+                foreach (var dlgJob in new[] { _jobs.myjob1, _jobs.myjob2 })
+                {
+                    if (dlgJob == null || dlgJob.dlg == null) continue;
+                    try { dlgJob.dlg.Dispose(); } catch { }
+                    dlgJob.dlg = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.WriteLog("dlg 退出释放异常: " + ex.Message);
+            }
             // ★P2-1：退出路径主动释放 12 路相机输出队列，避免残留后台线程
             try
             {
@@ -9166,7 +9182,10 @@ namespace WindowsFormsApplication1
         {
             if (_jobs.yunxing == false)
             {
-                _jobs.myjob1.dlg.Dispose();
+                // ★第33轮：删掉此处原有的 dlg.Dispose()——myjobN.dlg 是启动期一次性创建、之后反复复用的
+                //   常驻对话框，"每次先 Dispose 再 ShowDialog"= 复用已 Dispose 的对象；只是 .NET 4.6 的
+                //   FolderBrowserDialog.Dispose 恰好不释放任何状态才没出事（同款 FileDialog 这样会抛
+                //   ObjectDisposedException）。真正的释放已收口到退出路径 SafeCleanupBeforeDispose。
                 if (_jobs.myjob1.dlg.ShowDialog() == DialogResult.OK)
                 {
                     string dir = _jobs.myjob1.dlg.SelectedPath;

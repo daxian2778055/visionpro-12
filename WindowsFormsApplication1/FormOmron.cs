@@ -396,16 +396,12 @@ namespace WindowsFormsApplication1
                 //   FINS 启动建链统一由 InitializeForm 末尾的 Task.Run 异步执行一次。
             }
             // ★第33轮：geshu / 每块 qishi·changdu 原为裸 Parse，手改 ini 非数字即在启动段抛
-            //   FormatException（后果同下 A5 注释），改走 ReadIniDecimal 取默认值 + 记日志。
-            geshu = (int)CommGridHelper.ReadIniDecimal(wdini.ReadString(FinsIniStore.ConnSection(_linkId), "geshu", "0"), 0, "连接" + _linkId + "/geshu(块个数)", Log);
+            //   FormatException（后果同下 A5 注释），改走安全读取取默认值 + 记日志。
             // ★第33轮：块个数上限 10 来自界面上"添加数据块"处的 fins_dic.Count < 10 判断，
-            //   手改 geshu 成更大值只会让本循环去读不存在的节（每轮名都空→更该早退），
-            //   故钳回上限，兼防日志刷屏。
-            if (geshu > 10)
-            {
-                Log("geshu(块个数) 配置 " + geshu + " 超出上限，按 10 处理");
-                geshu = 10;
-            }
+            //   手改 geshu 成更大值只会让本循环去读不存在的节，故钳回上限，兼防日志刷屏。
+            // ★第33轮复审②：原写法 (int)ReadIniDecimal(...) 的强转是受检转换，手改 3000000000
+            //   解析得值但强转抛 OverflowException，钳位写在强转之后拦不住；ReadIniInt 先钳后转。
+            geshu = CommGridHelper.ReadIniInt(wdini.ReadString(FinsIniStore.ConnSection(_linkId), "geshu", "0"), 0, 0, 10, "连接" + _linkId + "/geshu(块个数)", Log);
             int greenSkipped = 0;
             if (geshu > 0)
             {
@@ -413,7 +409,7 @@ namespace WindowsFormsApplication1
                 {
                     fins_mingcheng= wdini.ReadString(FinsIniStore.BlockSection(_linkId, i+1), "name", "").Replace("\0", "");
                     fins_qishi = CommGridHelper.ReadIniDecimal(wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "qishi", "0"), 0, "连接" + _linkId + "/块" + (i + 1) + "/qishi", Log);
-                    fins_length= CommGridHelper.ReadIniDecimal(wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "changdu", "0"), 0, "连接" + _linkId + "/块" + (i + 1) + "/changdu", Log);
+                    fins_length= CommGridHelper.ReadIniDecimalBounded(wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "changdu", "0"), 0, 0, 50, "连接" + _linkId + "/块" + (i + 1) + "/changdu", Log);   // ★第33轮复审③：上限 50 = 界面块长度 numericUpDown4.Maximum；手改更大的值不抛异常，只会让下方回绿循环空转（≥2^31 时 int 计数回绕=永久死循环）
                     ABCD= wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "gaodiwei", "触发").Replace("\0", "");
                     fins_style = wdini.ReadString(FinsIniStore.BlockSection(_linkId, i + 1), "geshi", "int").Replace("\0", "");
                     // ★第33轮：ini 里两个块同名（含两行都缺 name → 都是空串）时 Dictionary.Add 抛
