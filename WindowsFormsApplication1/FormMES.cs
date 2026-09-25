@@ -255,14 +255,38 @@ namespace WindowsFormsApplication1
             return IsSecretName(key);
         }
 
-        /// <summary>★第32轮 S3：URL 把凭据写在查询串里（?api_key=xxx&token=yyy）同样算明文泄露。
-        /// 只按参数名判定，命中则整条 URL 加密存放。</summary>
-        private static bool UrlHasSecretQuery(string url)
+        /// <summary>★第32轮 S3 + 第33轮：URL 把凭据写进串里的三种形态都要整条加密存放——
+        /// ① 查询串参数名命中关键词（?api_key=xxx、&token=yyy）；
+        /// ② userinfo 段（http://user:pass@host/...，'@' 落在协议头之后、路径之前）；
+        /// ③ fragment 段（#access_token=xxx&token_type=bearer，前端/回调地址常见）。
+        /// 只按"参数名/有 userinfo"判定，宁可多加密也不漏；路径里出现 '@'（…/a@b.com/）不算凭据形态。</summary>
+        private static bool UrlHasSecret(string url)
         {
             if (string.IsNullOrEmpty(url)) return false;
+            // ② userinfo：'@' 必须出现在 authority 段内（第一个 '/' 之前）
+            int scheme = url.IndexOf("://");
+            int at = url.IndexOf('@');
+            int firstSlash = url.IndexOf('/', scheme < 0 ? 0 : scheme + 3);
+            if (at > 0 && (firstSlash < 0 || at < firstSlash)) return true;
+            // ① 查询串（到 fragment 为止）
             int q = url.IndexOf('?');
-            if (q < 0 || q == url.Length - 1) return false;
-            foreach (string pair in url.Substring(q + 1).Split('&'))
+            if (HasSecretParam(q >= 0 ? url.Substring(q + 1) : null, '#')) return true;
+            // ③ fragment
+            int h = url.IndexOf('#');
+            if (HasSecretParam(h >= 0 ? url.Substring(h + 1) : null, '\0')) return true;
+            return false;
+        }
+
+        /// <summary>按 &amp; 切分一段"k=v&k=v"，逐个键名比对凭据关键词；stop 为段的终止字符（'\0'=不终止）。</summary>
+        private static bool HasSecretParam(string segment, char stop)
+        {
+            if (string.IsNullOrEmpty(segment)) return false;
+            if (stop != '\0')
+            {
+                int cut = segment.IndexOf(stop);
+                if (cut >= 0) segment = segment.Substring(0, cut);
+            }
+            foreach (string pair in segment.Split('&'))
             {
                 int eq = pair.IndexOf('=');
                 if (eq <= 0) continue;
@@ -342,9 +366,10 @@ namespace WindowsFormsApplication1
 
             var sb = new StringBuilder();
             bool secretFailed = false;
-            // ★第32轮 S3：凭据写在查询串里（?api_key=… / ?token=…）同样是明文泄露——整条 URL 加密存放
+            // ★第32轮 S3 + 第33轮：凭据写在查询串（?api_key=…）、userinfo（user:pass@host）
+            //   或 fragment（#access_token=…）里同样是明文泄露——整条 URL 加密存放
             string urlField = CleanField(txtUrl.Text.Trim());
-            if (UrlHasSecretQuery(urlField))
+            if (UrlHasSecret(urlField))
             {
                 try { urlField = EncPrefix + Protect(urlField); }
                 catch { secretFailed = true; }
@@ -368,6 +393,8 @@ namespace WindowsFormsApplication1
                 return;
             }
             // Body 放最后一项（内部换行/制表符替换为空格，避免破坏分隔）
+            // ★第33轮核实口径：Body 明文落盘（DPAPI 加密后现场无法直接查看/复制报文，代价大于收益），
+            //   凭据请放请求头或 URL——两者已按 enc: 加密。若日后确需带口令的报文模板，再单独处理。
             sb.Append('\t').Append(txtBody.Text.Replace('\t', ' ').Replace("\r\n", " ").Replace('\n', ' '));
             lines.Add(sb.ToString());
 

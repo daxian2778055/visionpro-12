@@ -2489,6 +2489,9 @@ namespace WindowsFormsApplication1
                 //    checkBox70_CheckedChanged(null, null);
                 //}
                 textBox3.Text = _config.ReadString("camera1", "outtime", "100");
+                // ★第33轮：ini 里若存着历史非法值，TextChanged 已不再回填（避免逐字编辑被顶回），
+                //   故在启动读回处显式把显示值对齐到生效值。
+                EnforceOutputTimeDisplay("启动读回");
                 if (_config.ReadString("camera1", "serial", "true") == "true")
                     checkBox27.CheckState = CheckState.Checked;
                 else
@@ -2812,7 +2815,14 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog("无流程3");
                 }
 
-                int geshu = int.Parse(_config.ReadString("canshu", "geshu", "0"));
+                // ★第33轮：裸 int.Parse——手改 [canshu]geshu 成非数字即在本巨型 try 内抛，被 catch 成
+                //   "半初始化 + Frm2.start=1"（与本轮三协议 ini 读回段同型）。改安全读取 + 上限钳位。
+                int geshu = (int)CommGridHelper.ReadIniDecimal(_config.ReadString("canshu", "geshu", "0"), 0, "canshu/geshu(方案下拉个数)", _logger.WriteLog);
+                if (geshu > 200)
+                {
+                    _logger.WriteLog("[canshu]geshu 配置 " + geshu + " 超出合理范围，按 200 处理");
+                    geshu = 200;
+                }
                 if (geshu > 0)
                 {
                     for (int i = 0; i < geshu; i++)

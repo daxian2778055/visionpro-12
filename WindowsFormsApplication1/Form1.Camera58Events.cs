@@ -1246,19 +1246,12 @@ namespace WindowsFormsApplication1
             //   FormatException（全局"程序崩溃"弹窗 + minidump）；启动期从 code.ini 读回历史非法值时
             //   更是在启动巨型 try 内抛出 = 静默半初始化。改 TryParse + ≥1（timespace 同时用作
             //   Timer.Interval 与 Thread.Sleep 参数，0/负值均非法），非法则保持各路原值、只记日志。
+            // ★第33轮：本方法不再回填输入框——逐字修改时"清空即被生效值顶回、光标跳位"使操作员
+            //   只能全选重输。非法期间什么都不做（生效值保持不变），回填交给 textBox3_Leave
+            //   与启动读回处的 EnforceOutputTimeDisplay。
             int temp_time = 0;
             string text = (textBox3.Text ?? "").Trim();
-            if (!int.TryParse(text, out temp_time) || temp_time < 1)
-            {
-                try { _logger.WriteLog("输出时间输入非法（需 ≥1 的整数毫秒），保持原值: \"" + text + "\""); } catch { }
-                // ★第32轮 S5：不能停在"框里显示 abc、实际生效 100"的状态——直接把生效值回填，
-                //   界面显示与实际用时始终一致。回填会以合法文本再次进入本方法，那次只走正常赋值，
-                //   且同值赋值不再触发 TextChanged，不会递归。
-                int effective = 100;
-                try { effective = _jobs.myjob1.timespace >= 1 ? _jobs.myjob1.timespace : 100; } catch { }
-                try { textBox3.Text = effective.ToString(); } catch { }
-                return;
-            }
+            if (!int.TryParse(text, out temp_time) || temp_time < 1) return;
             _jobs.myjob1.timespace = temp_time;
             _jobs.myjob2.timespace = temp_time;
             _jobs.myjob3.timespace = temp_time;
@@ -1271,6 +1264,27 @@ namespace WindowsFormsApplication1
             _jobs.myjob10.timespace = temp_time;
             _jobs.myjob11.timespace = temp_time;
             _jobs.myjob12.timespace = temp_time;
+        }
+
+        private void textBox3_Leave(object sender, EventArgs e)
+        {
+            EnforceOutputTimeDisplay("编辑结束");
+        }
+
+        /// <summary>
+        /// ★第33轮：把"输出时间"框的显示值钉成实际生效值——框里是非法文本（空/非数字/&lt;1）时，
+        /// 生效值仍是各路原值，界面却显示着没生效的文本，操作员会误判节拍。
+        /// 只在离开输入框与启动读回两处回填（TextChanged 里回填会造成逐字编辑被顶回、光标跳位）。
+        /// </summary>
+        private void EnforceOutputTimeDisplay(string where)
+        {
+            int v;
+            string text = (textBox3.Text ?? "").Trim();
+            if (int.TryParse(text, out v) && v >= 1) return;   // 已一致（合法文本必已写入各路）
+            int effective = 100;
+            try { effective = _jobs.myjob1 != null && _jobs.myjob1.timespace >= 1 ? _jobs.myjob1.timespace : 100; } catch { }
+            try { _logger.WriteLog("输出时间输入非法（需 ≥1 的整数毫秒），" + where + "回填生效值: \"" + text + "\" → " + effective); } catch { }
+            try { textBox3.Text = effective.ToString(); } catch { }
         }
 
         private void checkBox1_CheckedChanged(object sender, EventArgs e)

@@ -229,6 +229,57 @@ namespace WindowsFormsApplication1
             return null;
         }
 
+        private static readonly HashSet<string> _badIniNumberLogged = new HashSet<string>();
+
+        /// <summary>★第33轮：脏 ini 值只按"位置"记一次日志（where 需自带连接号）。</summary>
+        private static void LogBadIniOnce(string where, string raw, string fallbackText, Action<string> log)
+        {
+            bool first;
+            lock (_badIniNumberLogged) { first = _badIniNumberLogged.Add(where ?? ""); }
+            if (!first || log == null) return;
+            try { log("配置项「" + where + "」的值 \"" + raw + "\" 无法解析，已按默认 " + fallbackText + " 处理（手改 ini 所致，请在界面上重新设置后保存）"); }
+            catch { }
+        }
+
+        /// <summary>
+        /// ★第33轮：ini → 数值 的安全读取（三协议窗体 InitializeForm 的参数读回段）。
+        /// 这些位置原先是裸 int.Parse / decimal.Parse：界面上写不出非数字（值恒来自 NumericUpDown），
+        /// 但手改 code.ini 成一个非数字串就会在启动巨型 try 内抛 FormatException，后果与第32轮 A5
+        /// 修复前同型——连接 1 走全局"程序崩溃"弹窗，连接 2~4 被管理器 try{EnsureHandleCreated()}catch{}
+        /// 吞掉且 _formLoaded 已置真 = 该连接永久不轮询。现降级为"取该键本来的默认值 + 记一条日志"。
+        /// </summary>
+        public static decimal ReadIniDecimal(string raw, decimal fallback, string where, Action<string> log)
+        {
+            decimal v;
+            string s = (raw ?? "").Replace("\0", "").Trim();
+            if (decimal.TryParse(s, out v)) return v;
+            LogBadIniOnce(where, s, fallback.ToString(), log);
+            return fallback;
+        }
+
+        /// <summary>★第33轮：同上口径的 bool 读回（fins_lunxunen / fins_en 的裸 bool.Parse 同型）。</summary>
+        public static bool ReadIniBool(string raw, bool fallback, string where, Action<string> log)
+        {
+            bool v;
+            string s = (raw ?? "").Replace("\0", "").Trim();
+            if (bool.TryParse(s, out v)) return v;
+            LogBadIniOnce(where, s, fallback.ToString(), log);
+            return fallback;
+        }
+
+        /// <summary>
+        /// ★第33轮：ini→NumericUpDown 赋值前钳位（Form1.cs 的 R7 私有 ClampToNud 同口径）。
+        /// "值是数字但超出控件量程"与"值不是数字"是同一崩溃面的两种形态——都发生在启动读回段，
+        /// 越界赋值抛 ArgumentOutOfRangeException 同样打断 InitializeForm。
+        /// </summary>
+        public static decimal ClampToNud(NumericUpDown nud, decimal v)
+        {
+            if (nud == null) return v;
+            if (v < nud.Minimum) return nud.Minimum;
+            if (v > nud.Maximum) return nud.Maximum;
+            return v;
+        }
+
         /// <summary>轮询线程安全写单元格（合并刷新，不阻塞读循环）。</summary>
         public static void SetPollCell(CommGridUiSink sink, Dictionary<int, int[]> finsData, int idx, object value)
         {

@@ -376,14 +376,22 @@ namespace WindowsFormsApplication1
                 fins_value.Add(i, new byte[] { 0x00, 0x00 });
             }
 
-            fins_lunxunen = bool.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "modbusrtu_lunxunen", "false"));
-            fins_en = bool.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "modbusrtu_en", "false"));
-            address_qishi = decimal.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "qishi", "0"));
-            address_length = decimal.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "zongchang", "1"));
-            lunxun_time = decimal.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "lunxun_time", "20"));
-            numericUpDown1.Value = address_qishi;
-            numericUpDown2.Value = address_length;
-            numericUpDown3.Value = lunxun_time;
+            // ★第33轮：本段原为裸 bool.Parse / decimal.Parse——界面上写不出非法值（恒为复选/NumericUpDown），
+            //   但手改 code.ini 即会在启动巨型 try 内抛 FormatException，后果与第32轮 A5 同型
+            //   （连接1 全局崩溃弹窗；连接2~4 被管理器 catch 吞掉且 _formLoaded 已置真 = 永久不轮询）。
+            fins_lunxunen = CommGridHelper.ReadIniBool(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "modbusrtu_lunxunen", "false"), false, "连接" + _linkId + "/modbusrtu_lunxunen", Log);
+            fins_en = CommGridHelper.ReadIniBool(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "modbusrtu_en", "false"), false, "连接" + _linkId + "/modbusrtu_en", Log);
+            address_qishi = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "qishi", "0"), 0, "连接" + _linkId + "/qishi(总起始地址)", Log);
+            address_length = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "zongchang", "1"), 1, "连接" + _linkId + "/zongchang(总长度)", Log);
+            lunxun_time = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "lunxun_time", "20"), 20, "连接" + _linkId + "/lunxun_time", Log);
+            // ★第33轮：赋值前钳位，且让派生变量与界面同取钳后值（R7 口径）——
+            //   数字合法但超出控件量程同样会在启动读回段抛 ArgumentOutOfRangeException。
+            numericUpDown1.Value = CommGridHelper.ClampToNud(numericUpDown1, address_qishi);
+            numericUpDown2.Value = CommGridHelper.ClampToNud(numericUpDown2, address_length);
+            numericUpDown3.Value = CommGridHelper.ClampToNud(numericUpDown3, lunxun_time);
+            address_qishi = numericUpDown1.Value;
+            address_length = numericUpDown2.Value;
+            lunxun_time = numericUpDown3.Value;
 
             comboBox1.Text = wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "Parity", "无").Replace("\0", "");
             comboBox3.Text = wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "PortName", "COM3").Replace("\0", "");
@@ -402,17 +410,33 @@ namespace WindowsFormsApplication1
                 // ★ 2026-09-12：移除此处同步 button1_Click，避免与下方 Task.Run 延迟建链重复建链（重复建链会造成闪断）。
                 //   ModbusRTU 连接1 启动建链统一由本方法末尾 Task.Run 异步执行一次（对齐 FINS 的修复）。
             }
-            geshu = int.Parse(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "geshu", "0"));
+            // ★第33轮：geshu / 每块 qishi·changdu 原为裸 Parse，手改 ini 非数字即在启动段抛
+            //   FormatException（后果同上方注释），改走 ReadIniDecimal 取默认值 + 记日志。
+            geshu = (int)CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusRtuIniStore.ConnSection(_linkId), "geshu", "0"), 0, "连接" + _linkId + "/geshu(块个数)", Log);
+            // ★第33轮：块个数上限 10 来自界面上"添加数据块"处的 fins_dic.Count < 10 判断，
+            //   手改更大值只会读到不存在的节，故钳回上限，兼防日志刷屏。
+            if (geshu > 10)
+            {
+                Log("geshu(块个数) 配置 " + geshu + " 超出上限，按 10 处理");
+                geshu = 10;
+            }
             int greenSkipped = 0;
             if (geshu > 0)
             {
                 for (int i = 0; i < geshu; i++)
                 {
                     fins_mingcheng = wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "name", "").Replace("\0", "");
-                    fins_qishi = decimal.Parse(wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "qishi", "0"));
-                    fins_length = decimal.Parse(wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "changdu", "0"));
+                    fins_qishi = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "qishi", "0"), 0, "连接" + _linkId + "/块" + (i + 1) + "/qishi", Log);
+                    fins_length = CommGridHelper.ReadIniDecimal(wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "changdu", "0"), 0, "连接" + _linkId + "/块" + (i + 1) + "/changdu", Log);
                     ABCD = wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "gaodiwei", "触发").Replace("\0", "");
                     fins_style = wdini.ReadString(ModbusRtuIniStore.BlockSection(_linkId, i + 1), "geshi", "int").Replace("\0", "");
+                    // ★第33轮：ini 里两个块同名（含两行都缺 name → 都是空串）时 Dictionary.Add 抛
+                    //   ArgumentException 打断启动 = 与 A5 同型后果，改为跳过该重复块并记日志。
+                    if (fins_dic.ContainsKey(fins_mingcheng))
+                    {
+                        Log("第" + (i + 1) + "个数据块名 \"" + fins_mingcheng + "\" 与已有块重复，已跳过该块（请改个不重名的块）");
+                        continue;
+                    }
                     fins_dic.Add(fins_mingcheng, new string[] { fins_mingcheng, fins_qishi.ToString(), fins_length.ToString(), ABCD, (fins_style ?? "").Trim().ToLowerInvariant() });   // ★N5：格式列归一化（读侧裸比较 == "int"，配成 "Int" 时读回恒空→每圈误触发回写）
                     for (int j = 0; j < fins_length; j++)
                     {
@@ -1429,6 +1453,12 @@ namespace WindowsFormsApplication1
                                     if (chongdie)
                                     {
                                         MessageBox.Show("数据有重叠");
+                                    }
+                                    else if (fins_dic.ContainsKey(t1.Text))
+                                    {
+                                        // ★第33轮：重叠检查只看地址段，同名两块（地址不重叠时）会一路走到
+                                        //   fins_dic.Add 抛 ArgumentException = 全局"程序崩溃"弹窗。改为明确提示。
+                                        MessageBox.Show("已存在同名数据块「" + t1.Text + "」，请换一个名称。");
                                     }
                                     else
                                     {
