@@ -13547,7 +13547,7 @@ namespace WindowsFormsApplication1
             this.label148.Name = "label148";
             this.label148.Size = new System.Drawing.Size(82, 21);
             this.label148.TabIndex = 125;
-            this.label148.Text = "YA0925";
+            this.label148.Text = "YA0926";
             // 
             // timer17
             // 
