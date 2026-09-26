@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    单元测试工程（★第43轮：测试维从 0 起步）。
+    设计要点：
+    1) 源码链接（Compile Include 直链主工程源文件），而非 ProjectReference 主工程——
+       主工程是 WinExe + Cognex VisionPro 绝对路径 HintPath，托管 CI runner 上根本编不过、也装不了 Cognex；
+       源码链接后测试程序集零第三方依赖，windows-latest 托管 runner 即可 dotnet test 真跑。
+       链接是"活链接"：主工程源文件改动后测试永远编译的是同一份最新源。
+    2) net48（GitHub 托管 runner 自带 .NET Framework 4.8 开发包；主工程 net46 可被 net48 引用，
+       但这里不引用其程序集，只共享源码）。
+    3) 只链被测文件及其最小依赖闭包，链错/漏链会在编译期立刻暴露。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <RootNamespace>WindowsFormsApplication1.Tests</RootNamespace>
+    <AssemblyName>WindowsFormsApplication1.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.6.1" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.6.1" />
+    <!-- ★第43轮：Modbus TCP 回环测试用。与主工程 bin\Debug 本地 dll 同版本(7.0.1.0)，
+         走 NuGet 是为了让 CI runner（无本地 dll）也能编译运行回环用例 -->
+    <PackageReference Include="HslCommunication" Version="7.0.1" />
+  </ItemGroup>
+
+  <!-- 链接源文件所需的框架引用（SDK 风格工程不会自动加 WinForms/Drawing） -->
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+  <!-- ===== 被测源码（与主工程同一份文件，活链接） ===== -->
+  <ItemGroup>
+    <!-- ClassIni：★复盘P1-1 合成键落盘根修、P2-1 stat 守卫、缓存失效语义 -->
+    <Compile Include="..\WindowsFormsApplication1\ClassIni.cs" Link="Linked\ClassIni.cs" />
+    <!-- RunLog：★复盘P0 AppendLineSafe、P1-2 字节级追加守卫、功能⑥⑧、性能#3 序号缓存 -->
+    <Compile Include="..\WindowsFormsApplication1\RunLog.cs" Link="Linked\RunLog.cs" />
+    <!-- RunLog 的依赖闭包：ErrorLog → Core.Logging（均为纯 BCL，可独立编译） -->
+    <Compile Include="..\WindowsFormsApplication1\ErrorLog.cs" Link="Linked\ErrorLog.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Core\Logging\ILogger.cs" Link="Linked\ILogger.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Core\Logging\Log.cs" Link="Linked\Log.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Core\Logging\LogManager.cs" Link="Linked\LogManager.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Core\Logging\AsyncFileLogger.cs" Link="Linked\AsyncFileLogger.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Core\Logging\RateLimitedLog.cs" Link="Linked\RateLimitedLog.cs" />
+    <!-- CommGridHelper：★第33轮 ini 安全读取三件套（钳位/取整/去重日志）、camera_name P0 相关口径 -->
+    <Compile Include="..\WindowsFormsApplication1\CommGridHelper.cs" Link="Linked\CommGridHelper.cs" />
+    <!-- CommGridHelper 的类型依赖：SetPollCell 形参 -->
+    <Compile Include="..\WindowsFormsApplication1\CommGridUiSink.cs" Link="Linked\CommGridUiSink.cs" />
+    <!-- FinsIniStore：分段名映射 + ini 安全读（依赖 ClassIni + CommGridHelper，已在上文） -->
+    <Compile Include="..\WindowsFormsApplication1\Services\FinsIniStore.cs" Link="Linked\FinsIniStore.cs" />
+    <!-- FinsIniStore 的类型依赖：FinsLinkConfig/FinsDataBlockConfig 等配置类 -->
+    <Compile Include="..\WindowsFormsApplication1\Services\FinsConfig.cs" Link="Linked\FinsConfig.cs" />
+    <!-- PendingCameraTriggers：★通讯触发队列（容量不驱逐在途/失败即撤/FIFO/Clear 等发送锁串行） -->
+    <Compile Include="..\WindowsFormsApplication1\Services\PendingCameraTriggers.cs" Link="Linked\PendingCameraTriggers.cs" />
+    <!-- 其类型依赖 CommTriggerSource（★第43轮自 Myjob.cs 抽出：Myjob.cs 依赖 Cognex，无法链接） -->
+    <Compile Include="..\WindowsFormsApplication1\CommTriggerSource.cs" Link="Linked\CommTriggerSource.cs" />
+
+    <!-- ===== ★第43轮：Modbus TCP 回环（127.0.0.1 自建 FC3 从站，无硬件跑完整轮询链）=====
+         闭包：Runtime + Link + 配置 + 接口 + 渲染/助手类（HslCommunication 走 NuGet，见上） -->
+    <Compile Include="..\WindowsFormsApplication1\Services\ModbusTcpRuntime.cs" Link="Linked\ModbusTcpRuntime.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Services\ModbusTcpLink.cs" Link="Linked\ModbusTcpLink.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Services\ModbusTcpConfig.cs" Link="Linked\ModbusTcpConfig.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Services\ICommLink.cs" Link="Linked\ICommLink.cs" />
+    <Compile Include="..\WindowsFormsApplication1\DemoUtils.cs" Link="Linked\DemoUtils.cs" />
+    <Compile Include="..\WindowsFormsApplication1\CommTriggerHelper.cs" Link="Linked\CommTriggerHelper.cs" />
+    <Compile Include="..\WindowsFormsApplication1\CommReconnectHelper.cs" Link="Linked\CommReconnectHelper.cs" />
+  </ItemGroup>
+
+</Project>

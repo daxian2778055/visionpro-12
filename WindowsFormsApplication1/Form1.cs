@@ -3758,6 +3758,10 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
+                // ★★第43轮 lock/Invoke 审计不变式（两条同时成立才有"无死锁"结论，违反任意一条即复活死锁）：
+                //  1) _locker_open/_close 全仓仅此一处加锁，且只在后台线程持锁——UI 线程永远不取这两把锁；
+                //  2) 锁体内 this.Invoke 的委托内禁止 .Wait()/.Result/.Join()/WaitOne 等任何同步等待，
+                //     禁止在委托内再取其他共享锁或弹不泵消息的窗体——否则形成"后台持锁等 UI、UI 等后台"的环。
                 lock (_locker_open)
                 {
                     DisarmCommTrigger();

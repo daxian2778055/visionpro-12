@@ -622,11 +622,15 @@ namespace WindowsFormsApplication1
 
         private void listBox3_MouseDown_1(object sender, MouseEventArgs e)
         {
+            // ★第43轮线程审计4-2：SelectedItem 只能在 UI 线程读——原实现在 Task.Run 里后台直读，
+            // 与改选/关窗竞争（NRE/ODE 被 catch 吞成"图片打不开且无提示"）。先取快照再进后台。
+            object picked = listBox3.SelectedItem;
+            if (picked == null) return;
             Task.Run(() =>
             {
                 try
                 {
-                    string[] time111 = listBox3.SelectedItem.ToString().Split(':');
+                    string[] time111 = picked.ToString().Split(':');
                     int ttt1 = int.Parse(time111[0] + time111[1] + time111[2]);
                     string ttt2 = time111[3];
                     int ttt3 = int.Parse(time111[4]);
