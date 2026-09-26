@@ -5,7 +5,7 @@ namespace WindowsFormsApplication1
 {
     internal static class BuildInfo
     {
-        public const string Version = "2026.09.25+ca052de";
-        public const string BuildTime = "2026-09-25 21:48:32";
+        public const string Version = "2026.09.26+29efdf0";
+        public const string BuildTime = "2026-09-26 10:07:13";
     }
 }
