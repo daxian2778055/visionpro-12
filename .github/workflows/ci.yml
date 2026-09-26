@@ -7,7 +7,7 @@ on:
 jobs:
   # 单元测试：WindowsFormsApplication1.Tests 采用"源码链接"设计（Compile Include 直链主工程源文件，
   # 不引用主工程程序集），因此不依赖 Cognex VisionPro（主工程的绝对路径 HintPath 在托管 runner 上不存在）
-  # 即可真实编译并运行 41 个用例。
+  # 即可真实编译并运行 52 个用例。
   # 注：含 E:\ 统计根目录的端到端用例在无 E 盘的 runner 上会自动 Inconclusive 跳过，本机 verify.ps1 覆盖。
   # 主工程本身（WinExe + Cognex 引用）只能在装有 VisionPro 的开发机编译：本机跑 verify.ps1。
   unit-tests:
