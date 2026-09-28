@@ -228,17 +228,12 @@ namespace WindowsFormsApplication1
                 if (!string.Equals(safeName, textBox2.Text, StringComparison.Ordinal))
                     textBox2.Text = safeName;
 
-                // ★第48轮复审P3①：模板保存同样先清死引用——训练图可能是已被释放的采集帧，
-                //   死图留在序列化图里必然抛"无法访问已释放的对象"（与方案保存同款清洗，模板是单工具树）。
-                int cleaned = 0, nulled = 0;
-                List<string> sites = new List<string>();
-                Form1.SanitizeToolTree(Inspect1, "模板", sites, ref cleaned, ref nulled);
-
+                // ★第49轮：模板保存不再清洗——反射够不到 CogPatInspectMultiTool 深层（Operator.Items[]）
+                //   里的训练图，够得到的部分又会把训练图置空。改由编辑会话钉住退役输入帧
+                //   （RetireInputImage）保证训练图存活，模板保存回到纯快照。
                 AtomicFileSave.Write(Application.StartupPath + "//模板//" + safeName + ".vpp",
                     tmp => CogSerializer.SaveObjectToFile(Inspect1, tmp));
-                tishi = (cleaned + nulled > 0)
-                    ? "保存模板成功（已修复失效图像引用 " + (cleaned + nulled) + " 处）"
-                    : "保存模板成功";
+                tishi = "保存模板成功";
             }
             catch (Exception ex)
             {

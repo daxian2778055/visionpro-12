@@ -1370,6 +1370,9 @@ namespace WindowsFormsApplication1
         }
         private void jiankong_Huamian(Myjob myjob)
         {
+            // ★第49轮：监控画面里嵌的就是配置工具窗，可就地训练模板——进入编辑会话，
+            //   换帧退役的输入图不再立即释放，保证训练完模板直接保存能存住。
+            BeginEditHold("监控画面");
             // ★G4 修复（2026-09-23）：ControlCollection 枚举器不做版本校验——循环内 Close() 会把窗体从
             //   panel1.Controls 移除，原 foreach 会静默跳过后一个元素（≥2 个嵌入式子窗时永远关不干净、
             //   旧 Form8 逐次堆积）。先快照收集再逐个关闭，并各自 try 防单窗关闭异常中断整轮。

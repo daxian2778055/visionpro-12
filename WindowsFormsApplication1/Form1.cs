@@ -3747,6 +3747,10 @@ namespace WindowsFormsApplication1
                 this.Invoke(new Action(() => { label133.Text = "未加载方案，请先在配置窗加载方案"; }));
                 return;
             }
+            // ★第49轮：点【启动检测】= 恢复生产，此刻起训练图不再需要常驻——释放编辑会话钉住的退役帧
+            //   （也顺带兜住"编辑窗忘了关、帧池一直被钉着"的情况）。放在锁流 Task.Run 之前，保证
+            //   释放与后续换帧的竞争只发生一次，且不会把释放动作拖到启动流程失败时被跳过。
+            EndEditHold("启动检测");
             // ★M12：启动流程哨兵——上一次启动流程未结束时忽略本次点击（防连点排队重复启动）
             if (Interlocked.CompareExchange(ref _startFlowRunning, 1, 0) != 0)
             {
@@ -4713,231 +4717,77 @@ namespace WindowsFormsApplication1
                 : new CogImage8Grey(src);
             block.Inputs["Input"].Value = next;
             if (!object.ReferenceEquals(old, next))
-                TryDisposeCogImage(old);
+                RetireInputImage(old);   // ★第49轮：退役帧改走"编辑会话钉住"，不立即释放（病根见 RetireInputImage 注释）
         }
 
-        /// <summary>
-        /// 保存方案前清洗失效的图像引用。
-        /// VisionPro 在程序长时间运行、或相机未采集时，工具输入图像的底层句柄可能已被系统回收，
-        /// 此时直接序列化保存整个工作管理器，会因访问"已释放对象"(ObjectDisposedException)而崩溃
-        /// （客户现场表现为"保存方案失败/一闪崩溃"，重启后重新采集句柄有效即恢复）。
-        /// <para>
-        /// ★ N1：不再只清洗名为 "Input" 的那一个终端 —— 遍历**全部输入终端**，把"已失效"的图像统一
-        /// 替换成有效、自拥有的空白图（保存 .vpp 本就不包含运行时输入帧，替换不影响方案内容，
-        /// 加载后再喂真实帧）。
-        /// </para>
-        /// <para>
-        /// ★ 第47轮（现场"保存方案失败: 无法访问已释放的对象 对象名:CogImage8Grey"）三处扩面：
-        /// ① 下钻根从 mj.block 改为 job.VisionTool —— SaveObjectToFile 序列化的是
-        ///   manager1→job→CogToolGroup→外层block→内层block 全树，且 mj.block 可能是外置 .vpp
-        ///   加载的独立块（根本不进 manager1 序列化图，旧实现等于清了个寂寞）；
-        /// ② 输出终端从"只测不改"改为同样替换 —— 失效输出=读取即抛的死引用，无结果语义可保留，
-        ///   只测不改正是"清洗了保存仍失败"的一个出口；
-        /// ③ 新增两类此前完全没清的对象：叶子工具运行图（CogPMAlignTool/Blob 等的 InputImage，
-        ///   正被逐帧 AssignBlockInputImage 释放）与 PMAlign 模板 TrainImage/TrainImageMask
-        ///   （死图留在序列化图里必然抛现场那个错）。
-        ///   清洗不到的深层引用由 AtomicFileSave 原子写兜底：保存失败绝不损坏原 .vpp。
-        /// </para>
-        /// </summary>
-        private void SanitizeSchemeImagesForSave()
-        {
-            if (_jobs?.Myjobs == null || manager1 == null) return;
-            int cleaned = 0;   // 终端替换数
-            int nulled = 0;    // 工具运行图/模板训练图置空数
-            List<string> sites = new List<string>();   // 前几个修复位置，进日志供现场定位
-            System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();   // ★第48轮复审P2-2：先量化再决定要不要优化
+        // ★第49轮（现场"建第2个模板时保存方案失败：无法访问已释放的对象 CogImage8Grey"）根修：
+        //   VisionPro 的 PMAlign / CogPatInspect 训练时把"训练图"存成**图像引用**而不是拷贝，
+        //   训练所用的那一帧正是本类 AssignBlockInputImage 换帧时的 old——换一个输入就立刻
+        //   TryDisposeCogImage 掉它，此后保存方案序列化到该引用即抛现场那句"无法访问已释放的对象"。
+        //   现场流程：图A 训模板1 → 再拍一张照片（图B 换帧 → 图A 被释放）→ 加模板2 → 保存失败。
+        //   旁证：根目录历史 Form1.cs（另一套程序）在此处同样立即 Dispose、保存同样是裸
+        //   CogSerializer.SaveObjectToFile（无清洗、无暂停），它能存并不说明保存写法有别，只说明它
+        //   没踩同一个坑（没在"换帧之后"再去存一个训练过旧帧的方案）。病根在释放时机，不在保存写法。
+        //   对策（下面三个方法）：编辑/训练会话期间把退役帧**钉住不释放**，直到用户点【启动检测】/
+        //   切方案/退出才统一释放。会话外维持立即释放，第23轮的防泄漏不变式不动；会话内最多
+        //   EditHoldFrameCap 张，超出按先进先出淘汰（长时间开着编辑窗又跑连续检测时的兜底）。
+        //   注：这里刻意**不**在编辑入口做 StopAccepting 停检——getrecord 的 TryEnter 门同时挡住
+        //   手动回图(trgger==1)与软触发帧，一停就把现场"再拍一张照片"这个动作也一起挡了。
+        private const int EditHoldFrameCap = 16;
+        private bool _editHoldActive;                          // 编辑会话是否进行中
+        private readonly List<object> _editHeldFrames = new List<object>();   // 会话内退役、暂不释放的输入帧
 
-            int jobIdx = 0;
-            foreach (var mj in _jobs.Myjobs)
-            {
-                jobIdx++;
-                if (mj == null) continue;
-                try
-                {
-                    ICogTool root = mj.job != null ? mj.job.VisionTool : null;
-                    if (root == null) root = mj.block;   // job 未挂上（加载异常态）：退回覆盖 mj.block
-                    if (root != null)
-                        SanitizeToolTree(root, "job" + jobIdx, sites, ref cleaned, ref nulled);
-                }
-                catch { }
-            }
-
-            sw.Stop();
-            // ★第48轮复审P2-2：清洗落在"已停检→序列化"的暂停窗口内、UI 线程上跑全树反射——
-            //   序列化本就吃这段暂停，新增的是遍历时间，暂停变长会撞"PLC 超时判 NG"的既有约定。
-            //   把耗时写进日志（含无修复的常规路径，否则占大头的干净样本测不到），实测明显再决定
-            //   要不要挪线程/缓存/减反射面。
-            string head = (cleaned > 0 || nulled > 0)
-                ? "保存前已修复失效图像引用 " + (cleaned + nulled) + " 处（终端替换 "
-                    + cleaned + " / 工具图像置空 " + nulled + "），避免序列化崩溃"
-                : "保存前清洗：未发现失效图像引用（全树扫描）";
-            string tail = sites.Count > 0 ? "；位置: " + string.Join("; ", sites.ToArray()) : "";
-            _logger.WriteLog(head + "；清洗耗时 " + sw.ElapsedMilliseconds + " ms" + tail);
-        }
-
-        /// <summary>递归清洗一棵工具树（★第47轮）：容器下钻、终端失效图替换、工具运行图与模板训练图置空。
-        /// ★第48轮复审P3①：改 internal static——Form9 模板保存同款清洗复用（模板是单工具树）。</summary>
-        internal static void SanitizeToolTree(ICogTool tool, string scope, List<string> sites, ref int cleaned, ref int nulled)
-        {
-            if (tool == null) return;
-            try
-            {
-                CogToolBlock blk = tool as CogToolBlock;
-                if (blk != null)
-                {
-                    SanitizeTerminals(blk.Inputs, scope + "/" + blk.Name + ".In", sites, ref cleaned);
-                    SanitizeTerminals(blk.Outputs, scope + "/" + blk.Name + ".Out", sites, ref cleaned);
-                }
-                // 模板对象下钻（原 SanitizePmAlignPattern 通用化并入）——PMAlign/CogPatInspect 等一并覆盖
-                SanitizeImageProperties(tool, scope, sites, ref nulled);
-
-                if (blk != null)
-                {
-                    foreach (ICogTool child in blk.Tools)
-                        SanitizeToolTree(child, scope + "/" + blk.Name, sites, ref cleaned, ref nulled);
-                    foreach (ICogTool child in blk.DisabledTools)   // 停用工具同样在序列化图里
-                        SanitizeToolTree(child, scope + "/" + blk.Name + "(停用)", sites, ref cleaned, ref nulled);
-                }
-                else
-                {
-                    CogToolGroup grp = tool as CogToolGroup;
-                    if (grp != null)
-                    {
-                        foreach (ICogTool child in grp.Tools)
-                            SanitizeToolTree(child, scope + "/" + grp.Name, sites, ref cleaned, ref nulled);
-                        foreach (ICogTool child in grp.DisabledTools)
-                            SanitizeToolTree(child, scope + "/" + grp.Name + "(停用)", sites, ref cleaned, ref nulled);
-                    }
-                }
-            }
-            catch { }   // 单点清洗异常不阻断其余路与保存本体
-        }
-
-        /// <summary>终端失效图像 → 同类型空白图。读不出的引用跳过（无法修复，由原子写兜底）。</summary>
-        private static void SanitizeTerminals(CogToolBlockTerminalCollection terminals, string scope,
-            List<string> sites, ref int cleaned)
-        {
-            if (terminals == null) return;
-            for (int i = 0; i < terminals.Count; i++)
-            {
-                try
-                {
-                    object v;
-                    try { v = terminals[i].Value; } catch { continue; }
-                    ICogImage img = v as ICogImage;
-                    if (img == null || IsCogImageUsable(img)) continue;
-
-                    terminals[i].Value = MakeBlankImageForTerminal(terminals[i], v);
-                    TryDisposeCogImage(v);   // 该对象已失效：结束它的生命周期，其它共享点由后续遍历清到
-                    cleaned++;
-                    AddRepairSite(sites, scope + "[" + terminals[i].Name + "]");
-                }
-                catch { }
-            }
-        }
-
-        /// <summary>空白图类型跟终端声明走（ValueType 名含"8"即8Bit 灰度，与加载处判定一致）。</summary>
-        private static ICogImage MakeBlankImageForTerminal(CogToolBlockTerminal terminal, object old)
-        {
-            string vt = "";
-            try { vt = terminal.ValueType != null ? terminal.ValueType.ToString() : ""; } catch { }
-            bool grey = vt.Length > 0 ? vt.Contains("8") : old is CogImage8Grey;
-            return grey
-                ? (ICogImage)new CogImage8Grey(640, 480)
-                : new CogImage24PlanarColor(640, 480);
-        }
-
-        /// <summary>
-        /// 工具上类型为 ICogImage 的可写属性（CogPMAlignTool/Blob 等的 InputImage 运行时帧引用，
-        /// 正被逐帧 AssignBlockInputImage 释放）——失效即置 null（置空=未运行状态，运行态属性无方案语义）。
-        /// <para>
-        /// ★第48轮复审P3①：外加一层"模板下钻"——名字/类型含 Pattern 的属性（CogPMAlignTool.Pattern、
-        /// Form9 的 CogPatInspectTool.Pattern 等）取值后扫其自身的 ICogImage 可写属性
-        /// （TrainImage/TrainImageMask），失效同样置空：死图留在序列化图里必然抛
-        /// "无法访问已释放的对象"（现场主报错），而 TrainShapeModels 等匹配数据不动（模板仍可工作）。
-        /// 原 CogPMAlignTool 专用路径由此通用化，模板保存（Form9）一并覆盖。只下钻一层——
-        /// 更深层（如 Multi 的 Operator.Items[]）不遍历，漏网由 AtomicFileSave 原子写兜底。
-        /// </para>
-        /// </summary>
-        private static void SanitizeImageProperties(ICogTool tool, string scope,
-            List<string> sites, ref int nulled)
+        /// <summary>打开编辑/训练窗时开启编辑会话（幂等：多路或重开编辑窗不重复入列）。</summary>
+        private void BeginEditHold(string where)
         {
             try
             {
-                foreach (System.Reflection.PropertyInfo pi in tool.GetType().GetProperties(
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                lock (_editHeldFrames)
                 {
-                    if (pi.GetIndexParameters().Length != 0) continue;
-                    if (typeof(ICogImage).IsAssignableFrom(pi.PropertyType))
-                    {
-                        if (!pi.CanWrite) continue;
-                        if (TryNullDeadImageProp(tool, pi))
-                        {
-                            nulled++;
-                            AddRepairSite(sites, scope + "/" + tool.Name + "." + pi.Name);
-                        }
-                    }
-                    else if (pi.CanRead && !pi.PropertyType.IsPrimitive && !pi.PropertyType.IsEnum
-                        && pi.PropertyType != typeof(string)
-                        && (pi.Name.Contains("Pattern") || pi.PropertyType.Name.Contains("Pattern")))
-                    {
-                        object pat;
-                        try { pat = pi.GetValue(tool, null); } catch { continue; }
-                        if (pat == null) continue;
-                        SanitizePatternObject(pat, tool.Name + "." + pi.Name, scope, sites, ref nulled);
-                    }
+                    if (_editHoldActive) return;
+                    _editHoldActive = true;
                 }
+                _logger.WriteLog("编辑会话开始(" + where + ")：换帧退役的输入图暂不释放，保证本次编辑训练后方案可保存；点【启动检测】后释放");
             }
             catch { }
         }
 
-        /// <summary>模板对象（CogPMAlignPattern/CogPatInspectPattern 等）内持有的失效图像 → 置 null。</summary>
-        private static void SanitizePatternObject(object pat, string patPath, string scope,
-            List<string> sites, ref int nulled)
+        /// <summary>退役的输入帧：编辑会话内钉住不释放，会话外维持立即释放（第23轮防泄漏不变式）。</summary>
+        private void RetireInputImage(object old)
         {
-            try
+            if (old == null) return;
+            lock (_editHeldFrames)
             {
-                foreach (System.Reflection.PropertyInfo pi in pat.GetType().GetProperties(
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                if (!_editHoldActive) { TryDisposeCogImage(old); return; }
+                _editHeldFrames.Add(old);
+                while (_editHeldFrames.Count > EditHoldFrameCap)
                 {
-                    if (pi.GetIndexParameters().Length != 0) continue;
-                    if (!pi.CanWrite) continue;
-                    if (!typeof(ICogImage).IsAssignableFrom(pi.PropertyType)) continue;
-                    if (TryNullDeadImageProp(pat, pi))
-                    {
-                        nulled++;
-                        AddRepairSite(sites, scope + "/" + patPath + "." + pi.Name);
-                    }
+                    object drop = _editHeldFrames[0];
+                    _editHeldFrames.RemoveAt(0);
+                    TryDisposeCogImage(drop);
                 }
             }
-            catch { }
         }
 
-        /// <summary>属性持有的图像若已失效 → 置 null 并返回 true（读不出/本就有效/置空失败均返回 false）。</summary>
-        private static bool TryNullDeadImageProp(object holder, System.Reflection.PropertyInfo pi)
+        /// <summary>结束编辑会话并释放期间钉住的退役帧（【启动检测】/切方案/退出调用）。</summary>
+        private void EndEditHold(string where)
         {
+            List<object> drop;
+            lock (_editHeldFrames)
+            {
+                if (!_editHoldActive && _editHeldFrames.Count == 0) return;
+                drop = new List<object>(_editHeldFrames);
+                _editHeldFrames.Clear();
+                _editHoldActive = false;
+            }
+            int n = 0;
+            for (int i = 0; i < drop.Count; i++) { TryDisposeCogImage(drop[i]); n++; }
             try
             {
-                object v;
-                try { v = pi.GetValue(holder, null); } catch { return false; }
-                ICogImage img = v as ICogImage;
-                if (img == null || IsCogImageUsable(img)) return false;
-                pi.SetValue(holder, null, null);
-                return true;
+                if (n > 0)
+                    _logger.WriteLog("编辑会话结束(" + where + ")：释放钉住的退役输入帧 " + n + " 张。此后再改模板直接保存需重新训练（训练图已释放）");
             }
-            catch { return false; }
-        }
-
-        private static void AddRepairSite(List<string> sites, string site)
-        {
-            if (sites.Count < 6) sites.Add(site);   // 日志只要前几个够现场定位
-        }
-
-        /// <summary>图像对象是否仍可访问（底层句柄未被释放）。</summary>
-        private static bool IsCogImageUsable(ICogImage img)
-        {
-            try { int w = img.Width; int h = img.Height; return true; }
-            catch { return false; }
+            catch { }
         }
 
         #endregion
@@ -7612,6 +7462,10 @@ namespace WindowsFormsApplication1
         #region 资源清理与程序退出
         private void SafeCleanupBeforeDispose()
         {
+            // ★第49轮：退出时释放编辑会话钉住的退役输入帧（正常路径已由【启动检测】/切方案释放，
+            //   此处兜住"编辑完直接关软件"的路径）。
+            try { EndEditHold("程序退出"); } catch { }
+
             // ★第32轮 W1 配套：存图清理定时器改为字段持有后不会再被 GC"顺带"回收，
             //   退出时必须显式停掉，否则线程池回调会在 _jobs/日志资源收尾后继续访问它们。
             try
@@ -9773,7 +9627,7 @@ namespace WindowsFormsApplication1
             try
             {
                 保存ToolStripMenuItem.Enabled = false;
-                // ★G4 修复（2026-09-23）：检测线程 block.Run 与 Sanitize 的 block.Inputs 读写会和
+                // ★G4 修复（2026-09-23）：检测线程 block.Run 对 block.Inputs 的读写会和
                 //   SaveObjectToFile 序列化并发 → 存出损坏/半改写方案或 COM 异常。复用切方案同款
                 //   "关门排空"：StopAccepting → WaitForIdle 再序列化；若别的流程已关门则不再重复关门/开门。
                 bool saveNeedResume = !_inspectionLifecycle.IsPaused;
@@ -9786,7 +9640,11 @@ namespace WindowsFormsApplication1
                     //   （与 W1 修的"早退跳过 Resume"同类错误。）
                     if (saveNeedResume && !_inspectionLifecycle.WaitForIdle(5000))
                         throw new TimeoutException("保存中止：等待在途检测静止超时(5s)，检测仍在运行，此时序列化可能写坏方案");
-                    SanitizeSchemeImagesForSave();
+                    // ★第49轮：不再做"保存前清洗"——反射只能下钻一层，CogPatInspectMultiTool 的
+                    //   Operator.Items[] 里那些模板训练图够不到（现场"多模板保存失败"清洗后照旧失败即此），
+                    //   而够得到的部分又会把工具运行图/训练图一并置空。改为根修：编辑/训练会话期间退役的
+                    //   输入帧不释放（见 RetireInputImage），训练用的那一帧因此一直活着。保存即纯快照；
+                    //   真有别的死引用则明着失败，AtomicFileSave 保证原 .vpp 分毫不动。
                     // ★第47轮：原子写——先写 .saving 临时文件，全部成功才替换目标（旧文件滚动 .bak）。
                     //   现场"一保存就把好方案写成残文件"即因直写目标、序列化中途异常留半截所致。
                     AtomicFileSave.Write(path_1, tmp => CogSerializer.SaveObjectToFile(manager1, tmp));
@@ -9812,7 +9670,7 @@ namespace WindowsFormsApplication1
                 MessageBox.Show(lost
                     ? "保存方案失败！落位异常，请按消息中的 .bak 备份核对并恢复原方案：\r\n" + ex.Message
                     : deadImage
-                        ? "保存方案失败！原方案文件未被改动。\r\n方案中仍有已释放的图像引用（多为工具运行图或模板训练图）。\r\n建议：重启软件 → 重新采集一帧 →（若有模板）重新训练后立即保存。\r\n" + ex.Message
+                        ? "保存方案失败！原方案文件未被改动。\r\n方案中仍有已释放的图像引用（多为工具运行图或模板训练图）。\r\n处理：打开【配置工具/模板窗口】重新进入编辑会话 → 重新采集一帧 → 把用到旧图的模板重训一次 → 立刻保存（重训后点【启动检测】再回来改会再次失效）。\r\n" + ex.Message
                         : "保存方案失败！原方案文件未被改动。若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
             }
             finally
@@ -11060,7 +10918,8 @@ namespace WindowsFormsApplication1
                     //   一次静止等待超时即永久停检（同"保存"处，已一并修正）。
                     if (saveNeedResume && !_inspectionLifecycle.WaitForIdle(5000))
                         throw new TimeoutException("另存为中止：等待在途检测静止超时(5s)，检测仍在运行，此时序列化可能写坏方案");
-                    SanitizeSchemeImagesForSave();
+                    // ★第49轮：同"保存"菜单——取消保存前清洗（够不到 Multi 深层模板训练图），靠
+                    //   编辑会话钉住退役输入帧保证训练图存活（见 RetireInputImage）。
                     // ★第47轮：原子写——先写 .saving 临时文件，全部成功才替换目标（旧文件滚动 .bak）。
                     //   现场"一保存就把好方案写成残文件"即因直写目标、序列化中途异常留半截所致。
                     AtomicFileSave.Write(path_1, tmp => CogSerializer.SaveObjectToFile(manager1, tmp));
@@ -11092,7 +10951,7 @@ namespace WindowsFormsApplication1
                 MessageBox.Show(lost
                     ? "另存为失败！已恢复显示原方案，内存未受影响；但目标文件旧内容状态异常，请按消息中的 .bak 备份核对恢复：\r\n" + ex.Message
                     : deadImage
-                        ? "另存为失败！已恢复显示原方案，未改动任何文件。\r\n方案中仍有已释放的图像引用（多为工具运行图或模板训练图）。\r\n建议：重启软件 → 重新采集一帧 →（若有模板）重新训练后重试。\r\n" + ex.Message
+                        ? "另存为失败！已恢复显示原方案，未改动任何文件。\r\n方案中仍有已释放的图像引用（多为工具运行图或模板训练图）。\r\n处理：打开【配置工具/模板窗口】重新进入编辑会话 → 重新采集一帧 → 把用到旧图的模板重训一次 → 立刻另存为（重训后点【启动检测】再回来改会再次失效）。\r\n" + ex.Message
                         : "另存为失败！已恢复显示原方案，未改动任何文件。若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
             }
         }
@@ -11334,6 +11193,9 @@ namespace WindowsFormsApplication1
                 _inspectionLifecycle.StopAccepting();
                 DisarmCommTrigger();
                 DrainPendingFrames();
+                // ★第49轮：旧工具树整体作废，编辑会话钉住的退役帧（它们属于旧块）必须在此释放，
+                //   否则既泄漏、又会在新方案下释放一堆与新块无关的图。
+                EndEditHold("切换方案");
 
                 if (_comm.Omron.qiehuanzhong == 0)
                 {
