@@ -220,7 +220,8 @@ namespace WindowsFormsApplication1
         {
             try
             {
-                CogSerializer.SaveObjectToFile(Inspect1, Application.StartupPath + "//模板//" + textBox2.Text + ".vpp");
+                AtomicFileSave.Write(Application.StartupPath + "//模板//" + textBox2.Text + ".vpp",
+                    tmp => CogSerializer.SaveObjectToFile(Inspect1, tmp));
                 tishi = "保存模板成功";
             }
             catch (Exception ex)
