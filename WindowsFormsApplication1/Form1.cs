@@ -3310,6 +3310,10 @@ namespace WindowsFormsApplication1
             _userActivityFilter = new UserActivityFilter(this);
             Application.AddMessageFilter(_userActivityFilter);
 
+            // ★第51.6轮：挂"手动诊断"菜单入口。只加菜单项、失败也不影响启动（下面单独兜底）。
+            try { InstallManualDiagnosisEntry(); }
+            catch (Exception exMenu) { _logger.WriteLog("手动诊断菜单挂载失败: " + exMenu.Message); }
+
             int dayt = 0;
             int dayz = 0;
             int authV1 = 0;   // ★ 2026-09-07：授权到期日期（用于统一计算 _authExpired，见下方）
@@ -4797,6 +4801,47 @@ namespace WindowsFormsApplication1
             catch { }
         }
 
+        // ===== ★第51.6轮：诊断的**主动触发入口**（补上挂了 5 轮的欠账）=====
+        // 此前只有一条路径会跑诊断：保存 / 另存为失败的 catch。于是诊断"有单测、无实跑"
+        // 连挂 5 轮，而 51.4 / 51.5 的两处口径缺陷恰恰都是**外部构造状态测出来的**——读代码
+        // 和跑单测都抓不到"调用到底有没有生效"。现在给它一个菜单入口，让常态（保存成功）
+        // 也能跑一次，直接拿到真实的耗时 / 节点 / 覆盖路数 / 发现数，不必等现场出错。
+        // 入口在运行时挂到"设置"菜单尾部，**不改 Form1.Designer.cs 与 .resx**——
+        // resx 里的非字符串资源 dotnet CLI 不可再生（见 verify.ps1 头部口径，踩过）。
+        private ToolStripMenuItem _manualDiagItem;
+
+        private void InstallManualDiagnosisEntry()
+        {
+            if (_manualDiagItem != null) return;   // 幂等：Form1_Load 只会走一次，但不赌
+            _manualDiagItem = new ToolStripMenuItem("已释放图像诊断（只读）");
+            _manualDiagItem.Name = "手动诊断ToolStripMenuItem";
+            _manualDiagItem.ToolTipText = "只读扫描工具树里已失效的图像引用，不修改任何对象";
+            _manualDiagItem.Click += 手动诊断ToolStripMenuItem_Click;
+            // 注意：设置菜单每次打开会按 Menu.ini 重建带 SchemeHistoryMenuTag 的历史项，
+            // 本项 Tag 为 null，不在重建范围内，不会被它删掉。
+            this.设置ToolStripMenuItem.DropDownItems.Add(new ToolStripSeparator());
+            this.设置ToolStripMenuItem.DropDownItems.Add(_manualDiagItem);
+            // 挂载成功必须留痕：这行是"入口到底装上没有"的唯一可观测证据，
+            // 同时直接告诉操作者去哪儿点——否则又变成"看不见的改动"。
+            _logger.WriteLog("手动诊断入口已挂载：菜单 设置 → 已释放图像诊断（只读）");
+        }
+
+        private void 手动诊断ToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            // 判定式在 DeadImageScan.ManualEntryRefusal（有单测），日志与弹窗用同一句话，避免两处说法不一。
+            string refusal = DeadImageScan.ManualEntryRefusal(_jobs.yunxing, _switchingScheme);
+            if (refusal != null)
+            {
+                _logger.WriteLog("【手动诊断】已忽略：" + refusal);
+                MessageBox.Show(this, refusal, "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            _logger.WriteLog("【手动诊断】开始：只读扫描（不修改任何对象），时间上限 "
+                + DeadImageScan.MaxElapsedMs + "ms，期间界面会短暂卡住一下，属正常");
+            DiagnoseDeadImages("手动诊断");
+            _logger.WriteLog("【手动诊断】结束。判读口径：看上一行的耗时/节点/覆盖，结论若出现截断字样说明没查全，按其给出的原因判断");
+        }
+
         // ★第51轮：保存失败后的**只读**诊断——把"哪一个工具的哪一条路径上的哪张图已经死了"
         //   原样打进日志。第47/48轮的保存前清洗是"边猜边改"：反射够不到 Multi 的
         //   Operator/Items[] 深层，清洗到的部分又会把模板训练图置空（现场表现"模板发白"），
@@ -4822,7 +4867,8 @@ namespace WindowsFormsApplication1
             //      预算若在最后一路中途到点，原写法会打"走到第 12/12 路"却伴随 BudgetExhausted——
             //      读者以为全走完了（外部模拟实测：Nodes=20001、BudgetExhausted=True 正是这个组合）。
             //      ⇒ 预算耗尽时把最后一路标成"未完"。
-            int totalTrees = 0, reachedTrees = 0, lastMyjob = 0;
+            int totalTrees = 0, reachedTrees = 0, lastMyjob = 0, failedTrees = 0;
+            string firstJobError = "";
             try
             {
                 foreach (var mj in _jobs.Myjobs)
@@ -4841,9 +4887,31 @@ namespace WindowsFormsApplication1
                     {
                         ICogTool root = mj.job != null ? mj.job.VisionTool : null;
                         if (root == null) root = mj.block;   // job 未挂上（加载异常态）：退回覆盖 mj.block
-                        if (root != null) WalkToolForDeadImages(root, "job" + myjobIdx, scan, 0);
+                        if (root == null)
+                        {
+                            // 分母已按 mj.job != null 计了它，却取不到根工具 ⇒ 必须记为异常：
+                            // 否则覆盖数会把它算成"走到了"，而实际一个节点都没进。
+                            failedTrees++;
+                            if (firstJobError == "")
+                                firstJobError = "job" + myjobIdx + " 未取到根工具（job 未挂上且 block 为空）";
+                        }
+                        else
+                        {
+                            WalkToolForDeadImages(root, "job" + myjobIdx, scan, 0);
+                        }
                     }
-                    catch { }
+                    catch (Exception exJob)
+                    {
+                        // ★第51.6轮：这一路走进去了却没走完。原实现是 catch{} 静默吞掉 ⇒ 12 路全炸
+                        //   也会显示"走到第 12/12 路"且一句不提，与 51.5 修的"末路未完不标"同一类冒充。
+                        failedTrees++;
+                        if (firstJobError == "")
+                        {
+                            string em = exJob.Message ?? "";
+                            if (em.Length > 160) em = em.Substring(0, 160) + "...";
+                            firstJobError = "job" + myjobIdx + " " + exJob.GetType().Name + ": " + em;
+                        }
+                    }
                 }
                 // ★第51.1轮：结论必须区分"没查完"与"真没有"（DeadImageScan.Conclusion）——
                 //   截断时如实说可能漏报，否则"预算耗尽"会被读成"树里没有死引用"。
@@ -4853,12 +4921,15 @@ namespace WindowsFormsApplication1
                     + "ms、访问 " + scan.Nodes + " 节点、"
                     + scan.CoverageText(totalTrees, reachedTrees, lastMyjob)
                     + " —— " + scan.Conclusion());
+                // ★第51.6轮：异常跳过的路必须单独说——不说的话"走到第 N/M"会把它们算成走完了。
+                if (failedTrees > 0)
+                    _logger.WriteLog("    ⚠ " + failedTrees + " 路遍历中途异常、已跳过（覆盖数含这几路，但结论对它们无效），第一处：" + firstJobError);
                 for (int i = 0; i < scan.Dead.Count && i < 20; i++) _logger.WriteLog("    " + scan.Dead[i]);
             }
             catch (Exception exDiag)
             {
                 // 异常分支同样报覆盖口径：跑到一半崩了时，"走到第几棵"是判断进度的唯一线索。
-                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms、" + scan.CoverageText(totalTrees, reachedTrees, lastMyjob) + "）: " + exDiag.Message); } catch { }
+                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms、" + scan.CoverageText(totalTrees, reachedTrees, lastMyjob) + (failedTrees > 0 ? "、异常 " + failedTrees + " 路" : "") + "）: " + exDiag.Message); } catch { }
             }
         }
 

@@ -298,5 +298,41 @@ namespace WindowsFormsApplication1.Tests
                 "第 0 路若不解释，会被读成'走了 0 路还查完了'");
             Assert.IsFalse(text.Contains("myjob0"), "没走到任何一路就不该编造 myjob 序号");
         }
+
+        // ===== ★第51.6轮：手动诊断入口的守卫（菜单"已释放图像诊断"） =====
+        // 从保存失败的 catch 里搬出来做成可测判定，是为了不让它变成"无人测试的 UI 胶水"——
+        // 这几轮的缺陷无一例外出在没被测试覆盖的接缝上。拒绝的理由是**可信度**，不是安全。
+
+        [TestMethod]
+        public void 检测运行中_手动诊断必须拒绝并要求先停检测()
+        {
+            string why = DeadImageScan.ManualEntryRefusal(detectionRunning: true, schemeSwitching: false);
+            Assert.IsNotNull(why, "运行中反射读到的是执行到一半的瞬时状态，扫出来的结论可能是假的");
+            StringAssert.Contains(why, "停止检测");
+        }
+
+        [TestMethod]
+        public void 方案切换中_手动诊断必须拒绝()
+        {
+            string why = DeadImageScan.ManualEntryRefusal(detectionRunning: false, schemeSwitching: true);
+            Assert.IsNotNull(why, "切换时整棵工具树正在被替换，扫到的是新旧混合");
+            StringAssert.Contains(why, "稍候");
+        }
+
+        [TestMethod]
+        public void 两种状态都空闲_手动诊断必须放行()
+        {
+            Assert.IsNull(DeadImageScan.ManualEntryRefusal(false, false),
+                "常态（保存成功、检测已停）正是本入口要服务的场景，不能被自己挡掉");
+        }
+
+        [TestMethod]
+        public void 两种拒绝理由同时成立_以运行中优先()
+        {
+            string why = DeadImageScan.ManualEntryRefusal(true, true);
+            Assert.IsNotNull(why);
+            StringAssert.Contains(why, "停止检测",
+                "先答更本质的那条：即便切完方案，运行中依然不可信");
+        }
     }
 }

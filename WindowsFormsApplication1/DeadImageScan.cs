@@ -146,6 +146,22 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
+        /// 手动诊断入口（★第51.6轮，菜单"已释放图像诊断"）是否该拒绝本次运行。
+        /// 返回 null = 放行；否则返回给操作者的拒绝理由（日志与弹窗共用同一句话，避免两处说法不一）。
+        /// <para>
+        /// 拒绝的理由是**可信度**，不是安全：检测运行中，工具正被 Cognex 执行到一半，此刻反射读到的
+        /// 是瞬时状态——扫出来的"没死引用/已死引用"都可能是假的。诊断一旦说谎，代价比没诊断更大
+        ///（第47/48轮的老路）。方案切换同理：整棵工具树正在被替换。
+        /// </para>
+        /// </summary>
+        public static string ManualEntryRefusal(bool detectionRunning, bool schemeSwitching)
+        {
+            if (detectionRunning) return "检测正在运行，此刻读到的是瞬时状态、结论不可信：请先停止检测再诊断";
+            if (schemeSwitching) return "方案切换进行中，工具树正在被替换：请稍候再试";
+            return null;
+        }
+
+        /// <summary>
         /// 把扫描结果翻译成给日志的结论。**必须区分"没查完"与"真没有"**：
         /// 截断时如实说原因与可能漏报，否则"预算耗尽/深度到顶"会被读成"树里没有死引用"。
         /// </summary>
