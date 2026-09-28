@@ -7,6 +7,11 @@
     .\verify.ps1                 # Debug：先编主工程再跑测试（完整验收）
     .\verify.ps1 -Configuration Release
     .\verify.ps1 -SkipMainBuild  # 只跑测试（CI 托管 runner 同款口径）
+  真编译口径（第51.4轮补充，踩过坑）：
+    要确认真编译 -> touch 单个源文件后再 dotnet build <csproj>，或直接跑本脚本。
+    永远不要用 dotnet build -t:Rebuild，也不要先 Clean：Clean 之后 dotnet CLI 无法再生
+    本工程 .resx 里的非字符串资源（8x MSB3822/3823），会把 bin 下的 exe 清掉且不可恢复，
+    只能改用 VS2022 MSBuild（Find-MSBuild 的 D 盘兜底路径）重建。
   退出码：0 = 全部通过；非 0 = 失败步骤的退出码。
 #>
 param(

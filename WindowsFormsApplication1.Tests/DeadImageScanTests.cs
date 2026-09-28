@@ -203,5 +203,40 @@ namespace WindowsFormsApplication1.Tests
             Assert.IsFalse(scan.Truncated, "刚建好就报截断说明计时口径写错了");
             Assert.AreEqual(1500, DeadImageScan.MaxElapsedMs, "时间预算口径若改动，日志注释需同步");
         }
+
+        // ===== ★第51.4轮 P2：留痕原因与"整趟停止原因"是两件事 =====
+        // 51.3 之后留痕不再停遍历，于是"第一个原因"和"最后让 CountNode 返回 false 的原因"分叉；
+        // 只印前者会让读者以为树基本走完、只有一支被挡，而实情是时间预算到点、后面几路一个节点没走。
+
+        [TestMethod]
+        public void 首个留痕原因与停止原因不同_结论必须两者并列()
+        {
+            var scan = new DeadImageScan(0);          // 时间预算 0ms，必停
+            scan.MarkTruncated("下钻深度超过 10 层");   // 先留一个**不挡遍历**的痕
+            System.Threading.Thread.Sleep(10);
+
+            Assert.IsFalse(scan.CountNode());
+            Assert.IsTrue(scan.BudgetExhausted);
+            Assert.AreEqual("耗时上限 0ms", scan.BudgetStopReason, "停止原因必须单独存");
+            Assert.AreEqual("下钻深度超过 10 层", scan.TruncatedReason, "首个留痕原因不得被覆盖（既有口径）");
+
+            string text = scan.Conclusion();
+            StringAssert.Contains(text, "下钻深度超过 10 层");
+            StringAssert.Contains(text, "整趟停止原因：耗时上限 0ms",
+                "两者不同时必须并列，否则归因会骗人——这是本轮要消灭的那一类");
+        }
+
+        [TestMethod]
+        public void 未发生预算停止时_结论不得编造停止原因()
+        {
+            var scan = new DeadImageScan();
+            scan.MarkTruncated("集合元素超过 200 个");
+            Assert.IsTrue(scan.CountNode());
+
+            string text = scan.Conclusion();
+            Assert.IsFalse(text.Contains("整趟停止原因"),
+                "只是留痕、整趟没停，就不该出现停止原因");
+            StringAssert.Contains(text, "集合元素超过 200 个");
+        }
     }
 }

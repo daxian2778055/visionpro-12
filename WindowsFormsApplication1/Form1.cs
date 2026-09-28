@@ -4812,13 +4812,19 @@ namespace WindowsFormsApplication1
             //   诊断谎报"没问题"比没有诊断更糟：它会让人基于错误信息继续猜（第47/48轮的老路）。
             // ★第51.3轮：实例提到 try 之外——异常分支也要报得出耗时口径（否则"跑到一半崩了"看不出花了多久）。
             DeadImageScan scan = new DeadImageScan();
+            // ★第51.4轮 P2：配一套"走到第几路 job"的覆盖口径——只有耗时 + 节点 + 路数三者齐了，
+            //   才判断得出诊断是走完了还是被掐在哪一路。声明在 try 外，异常分支也报得出。
+            int totalJobs = 0, reachedJobs = 0;
             try
             {
+                foreach (var mj in _jobs.Myjobs) { if (mj != null) totalJobs++; }
                 int jobIdx = 0;
                 foreach (var mj in _jobs.Myjobs)
                 {
-                    jobIdx++;
                     if (mj == null) continue;
+                    if (scan.BudgetExhausted) break;   // ★预算已尽：后面几路一个节点都进不去，不空转
+                    jobIdx++;
+                    reachedJobs = jobIdx;              // 这一路是"实际走进去"的最后一路
                     try
                     {
                         ICogTool root = mj.job != null ? mj.job.VisionTool : null;
@@ -4830,14 +4836,15 @@ namespace WindowsFormsApplication1
                 // ★第51.1轮：结论必须区分"没查完"与"真没有"（DeadImageScan.Conclusion）——
                 //   截断时如实说可能漏报，否则"预算耗尽"会被读成"树里没有死引用"。
                 // ★第51.3轮：补上耗时/节点口径（第47轮"清洗耗时"那条日志在删清洗时没跟着搬过来）。
-                //   没有它就判断不出"诊断是不是被时间预算提前掐断了"。
+                // ★第51.4轮：再补走到第 N/共 M 路 job——三者齐了才能归因到"掐在哪一路"。
                 _logger.WriteLog("【" + scene + "】已释放图像诊断：耗时 " + scan.ElapsedMs
-                    + "ms、访问 " + scan.Nodes + " 节点 —— " + scan.Conclusion());
+                    + "ms、访问 " + scan.Nodes + " 节点、走到第 " + reachedJobs + "/" + totalJobs
+                    + " 路 job —— " + scan.Conclusion());
                 for (int i = 0; i < scan.Dead.Count && i < 20; i++) _logger.WriteLog("    " + scan.Dead[i]);
             }
             catch (Exception exDiag)
             {
-                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms）: " + exDiag.Message); } catch { }
+                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms、走到第 " + reachedJobs + "/" + totalJobs + " 路 job）: " + exDiag.Message); } catch { }
             }
         }
 

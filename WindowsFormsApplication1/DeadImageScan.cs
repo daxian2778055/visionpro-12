@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 
@@ -35,9 +34,12 @@ namespace WindowsFormsApplication1
         /// <summary>报告条数上限：日志只用来定位，几十条足够，封顶防止刷爆日志文件。</summary>
         public const int MaxReport = 60;
 
-        /// <summary>时间预算（毫秒）。实测 Cognex 工具对象"一次 GetProperties + 全部可读属性 GetValue"
-        /// ≈ 0.23ms/节点，2 万节点走完 ≈ 4.6 秒——诊断在 UI 线程、弹窗之前，取 1.5 秒把最坏冻结压到
-        /// 约三分之一，同时仍允许约 6500 个节点，够走完一棵正常的工具树。可用单测注入更小的值。</summary>
+        /// <summary>时间预算（毫秒）。诊断在 UI 线程、MessageBox 之前跑，必须封顶。
+        /// 上限依据：外部实测 Cognex 工具对象"一次 GetProperties + 全部可读属性 GetValue" ≈ 0.23ms/节点，
+        /// 2 万节点走完 ≈ 4.6 秒 ⇒ 取 1.5 秒把最坏冻结压到约三分之一。
+        /// **"1.5 秒 ≈ 6500 节点"是按该外部实测量出来的，不是承诺**：现场跑 Debug 时反射更慢，
+        /// 实际可达节点数只会更少——以日志里的"耗时/节点"实测为准，别把这个数当保证。
+        /// 可用单测注入更小的值。</summary>
         public const int MaxElapsedMs = 1500;
 
         /// <summary>已确认失效的图像引用路径。</summary>
@@ -68,6 +70,12 @@ namespace WindowsFormsApplication1
         /// <summary>预算是否用尽（节点/报告/耗时三者之一）。只有它才让 <see cref="CountNode"/> 返回 false。</summary>
         public bool BudgetExhausted { get; private set; }
 
+        /// <summary>整趟**真正**停下的原因（★第51.4轮 P2）。它与 <see cref="TruncatedReason"/> 可能不同：
+        /// TruncatedReason 是"第一个留痕原因"（先撞到哪个算哪个，而且留痕不再停遍历），
+        /// 这个才是"最后让 CountNode 返回 false 的那个预算"。只印前者会让人以为
+        /// "树基本走完、只有一支深了"，实情可能是时间预算到点、后面几路 job 一个节点都没走。</summary>
+        public string BudgetStopReason { get; private set; }
+
         /// <summary>已耗时毫秒——诊断在 catch 里，异常分支也要能报出耗时口径。</summary>
         public int ElapsedMs { get { return (int)((Stopwatch.GetTimestamp() - _startedAt) * _msPerTick); } }
 
@@ -87,13 +95,23 @@ namespace WindowsFormsApplication1
         public bool CountNode()
         {
             if (BudgetExhausted) return false;
-            if (ElapsedMs > _maxElapsedMs) { BudgetExhausted = true; MarkTruncated("耗时上限 " + _maxElapsedMs + "ms"); return false; }
-            if (++Nodes > MaxNodes) { BudgetExhausted = true; MarkTruncated("节点预算 " + MaxNodes + " 已用尽"); return false; }
-            if (Dead.Count >= MaxReport) { BudgetExhausted = true; MarkTruncated("报告条数已达 " + MaxReport); return false; }
+            if (ElapsedMs > _maxElapsedMs) return Stop("耗时上限 " + _maxElapsedMs + "ms");
+            if (++Nodes > MaxNodes) return Stop("节点预算 " + MaxNodes + " 已用尽");
+            if (Dead.Count >= MaxReport) return Stop("报告条数已达 " + MaxReport);
             return true;
         }
 
-        /// <summary>记录一条死引用路径（达报告上限后丢弃，由 CountNode 标记截断）。</summary>
+        /// <summary>预算用尽：记下"整趟真正停下的原因"，同时按既有口径留首个痕迹，然后停止。</summary>
+        private bool Stop(string reason)
+        {
+            BudgetExhausted = true;
+            BudgetStopReason = reason;
+            MarkTruncated(reason);   // TruncatedReason 只在"还没留过痕"时才写（见 MarkTruncated）
+            return false;
+        }
+
+        /// <summary>记录一条死引用路径。达报告上限后丢弃。截断标记由**两处**负责：CountNode 判定
+        /// 节点/报告/耗时上限时会标；集合环里的调用方在自己 break 时也会标（见 Form1 集合遍历处）。</summary>
         public void Add(string path)
         {
             if (Dead.Count < MaxReport) Dead.Add(path);
@@ -112,6 +130,12 @@ namespace WindowsFormsApplication1
         public string Conclusion()
         {
             string why = string.IsNullOrEmpty(TruncatedReason) ? "扫描上限" : TruncatedReason;
+            // ★第51.4轮 P2：留痕原因与"整趟停止原因"在 51.3 之后分叉了（留痕不再停遍历），
+            //   只印前者是**归因骗人**——会让读者以为树基本走完、只有一支被挡，而实情可能是
+            //   时间预算到点、后面几路 job 一个节点都没走。两者不同时并列输出。
+            //   （"首个留痕原因为准"的既有口径不动，见 MarkTruncated。）
+            if (BudgetExhausted && !string.IsNullOrEmpty(BudgetStopReason) && BudgetStopReason != why)
+                why = why + "；整趟停止原因：" + BudgetStopReason;
             if (Dead.Count > 0)
             {
                 return "共 " + Dead.Count + " 处"
