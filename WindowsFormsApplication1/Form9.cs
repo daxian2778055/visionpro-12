@@ -229,8 +229,9 @@ namespace WindowsFormsApplication1
                     textBox2.Text = safeName;
 
                 // ★第49轮：模板保存不再清洗——反射够不到 CogPatInspectMultiTool 深层（Operator.Items[]）
-                //   里的训练图，够得到的部分又会把训练图置空。改由编辑会话钉住退役输入帧
-                //   （RetireInputImage）保证训练图存活，模板保存回到纯快照。
+                //   里的训练图，够得到的部分又会把训练图置空。
+                //   ★第51轮：训练图存活改由退役输入帧不 Dispose、交给 GC 来保证（Form1.RetireInputImage），
+                //   模板保存回到纯快照；不存在编辑会话、启动检测会再次失效这类时机问题（第51.2轮清理措辞）。
                 AtomicFileSave.Write(Application.StartupPath + "//模板//" + safeName + ".vpp",
                     tmp => CogSerializer.SaveObjectToFile(Inspect1, tmp));
                 tishi = "保存模板成功";

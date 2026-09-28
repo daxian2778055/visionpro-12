@@ -114,5 +114,46 @@ namespace WindowsFormsApplication1.Tests
             Assert.IsTrue(scan.TryVisit(hash + 1), "不同实例不应被误挡");
             Assert.AreEqual(2, scan.Seen.Count);
         }
+
+        // ===== ★第51.2轮 P2：截断必须留痕（深度/集合上限原先是静默 return/break） =====
+
+        [TestMethod]
+        public void 深度或集合截断_结论必须带出原因_而不是断言没问题()
+        {
+            var scan = new DeadImageScan();
+            scan.MarkTruncated("下钻深度超过 10 层");
+
+            Assert.IsTrue(scan.Truncated);
+            Assert.AreEqual("下钻深度超过 10 层", scan.TruncatedReason);
+
+            string text = scan.Conclusion();
+            StringAssert.Contains(text, "下钻深度超过 10 层");
+            StringAssert.Contains(text, "可能不完整");
+            Assert.IsFalse(text.Contains("未在工具树里找到"),
+                "深度截断不得输出'未找到'——这与第51.1轮修的 static 计数是同一类谎报");
+        }
+
+        [TestMethod]
+        public void 有发现且被截断_结论同时给出条数与截断原因()
+        {
+            var scan = new DeadImageScan();
+            scan.Add("job1/CogPMAlignMultiTool1.Operator.Items[2].Pattern.TrainImage  →  CogImage8Grey");
+            scan.MarkTruncated("集合元素超过 200 个");
+
+            string text = scan.Conclusion();
+            StringAssert.Contains(text, "共 1 处");
+            StringAssert.Contains(text, "集合元素超过 200 个");
+            StringAssert.Contains(text, "可能存在更多");
+        }
+
+        [TestMethod]
+        public void 重复标记截断_以最先撞到的原因为准()
+        {
+            var scan = new DeadImageScan();
+            scan.MarkTruncated("第一个原因");
+            scan.MarkTruncated("第二个原因");
+            Assert.AreEqual("第一个原因", scan.TruncatedReason,
+                "先撞到的才是把扫描挡住的那个，后续原因不应覆盖它");
+        }
     }
 }

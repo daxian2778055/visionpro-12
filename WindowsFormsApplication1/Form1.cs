@@ -4695,13 +4695,6 @@ namespace WindowsFormsApplication1
             m_nSaveImageBufSize[camIndex] = needSize;
         }
 
-        private static void TryDisposeCogImage(object old)
-        {
-            IDisposable d = old as IDisposable;
-            if (d == null) return;
-            try { d.Dispose(); } catch { }
-        }
-
         private void AssignBlockInputImage(CogToolBlock block, Bitmap src, bool color)
         {
             if (block == null || src == null || !block.Inputs.Contains("Input"))
@@ -4713,7 +4706,7 @@ namespace WindowsFormsApplication1
                 : new CogImage8Grey(src);
             block.Inputs["Input"].Value = next;
             if (!object.ReferenceEquals(old, next))
-                RetireInputImage(old);   // ★第49轮：退役帧改走"编辑会话钉住"，不立即释放（病根见 RetireInputImage 注释）
+                RetireInputImage(old);   // ★第51轮：退役帧不再 Dispose、交给 GC（病根与实测依据见 RetireInputImage 上方注释）
         }
 
         // ★第49轮（现场"建第2个模板时保存方案失败：无法访问已释放的对象 CogImage8Grey"）根修：
@@ -4739,9 +4732,23 @@ namespace WindowsFormsApplication1
         //   手动回图(trgger==1)与软触发帧，一停就把现场"再拍一张照片"这个动作也一起挡了。
         //
         //   代价与补偿：GC 只按**托管堆**压力决定何时回收，而图像像素在非托管侧、GC 看不见，
-        //   所以必须配一个内存触发阀——每 32 张退役帧查一次进程工作集，超阈值触发一次
-        //   GCCollectionMode.Optimized 的 GC 并记日志（优化式：GC 自认不划算就不动，代价小）。
+        //   所以必须配一个内存触发阀——每 32 张退役帧查一次进程工作集，超阈值就**强制**一次 Gen2。
+        //
+        // ★第51.2轮（P1，外部实测对照修正第51轮的错误写法）：第51轮写的是
+        //   GC.Collect(2, GCCollectionMode.Optimized, false)，还自以为"优化式代价小"。实测
+        //   （本机 csc 现编 x64 对照程序，1024×1024 帧 300 张，每模式独立进程读 WorkingSet）证明
+        //   它是**零回收**：
+        //     · 逐张 Dispose（第48轮及以前）    51MB 全程持平  ✅ 对照组
+        //     · 不 Dispose、不 GC               352MB 线性增长
+        //     · Optimized（连做两次）           352MB —— 与"什么都不做"逐点一致
+        //     · 单次 GC.Collect(2,Forced,true)  50MB 全程持平  ✅ 终结器确实会释放非托管像素
+        //   原因：图像包装对象在托管堆上极小，GC 只看托管压力，在这个负载下"让 GC 自己决定"
+        //   永远决定什么都不做；而终结器只在**真正发生的 Gen2 回收**里才跑。
+        //   更糟的是它与第51.1轮的迟滞互相锁死：工作集不回落 ⇒ _gcValveFired 永真 ⇒ 整个进程
+        //   生命期只跑一次 no-op GC，此后连试都不试。故本阀现在是：突破时立刻 Forced + 等终结器，
+        //   之后只要仍超阈值就按 256 帧节流**反复**强制；日志仍只在状态翻转时记，不刷屏。
         private const int RetiredFrameGcCheckMask = 31;        // 每 32 张退役帧查一次内存
+        private const int RetiredFrameGcRetryMask = 255;       // 高位期间每 256 张退役帧（≈8.5 秒@30fps）最多再强制一次
         private const long RetiredFrameGcBytesLimit = 1536L * 1024 * 1024;   // 工作集超 1.5GB 才触发
         private int _retiredFrameTicks;                        // 退役帧计数（Interlocked，不持锁）
         private volatile bool _gcValveFired;                   // 安全阀是否处于"已突破"状态（迟滞用）
@@ -4757,24 +4764,35 @@ namespace WindowsFormsApplication1
             {
                 long ws = Environment.WorkingSet;
                 bool over = ws > RetiredFrameGcBytesLimit;
-                // ★第51.1轮（自审第51轮抓到的 BUG）：原来写的是"超过阈值就触发 GC + 记日志"。
-                //   两处不妥：① GCCollectionMode.Optimized 允许 GC 自认"不划算"而什么都不做，工作集
-                //   不回落时每 32 帧（30fps≈1 秒）记一条，日志被刷屏；② 每秒一次无效 GC 白耗 CPU。
-                //   改为**迟滞**：只在"由低到高突破"这一刻触发并记一条，回落到阈值以下才复位再记一条。
-                //   多相机线程并发下最多把这两条各多记一次（bool 竞态），无害。
-                if (over && !_gcValveFired)
+                if (!over)
+                {
+                    // 低于阈值：零开销、零日志（第51.1轮的"刷屏"只可能发生在高位，这里彻底避开）
+                    if (_gcValveFired)
+                    {
+                        _gcValveFired = false;
+                        _logger.WriteLog("安全阀复位：进程工作集已回落到 " + (ws / 1024 / 1024) + "MB");
+                    }
+                    return;
+                }
+                // 日志迟滞：只在"由低到高突破"记一条、回落记一条，持续高位不重复记
+                // （多相机线程并发下最多各多记一次——bool 竞态，无害）。
+                bool crossed = !_gcValveFired;
+                if (crossed)
                 {
                     _gcValveFired = true;
-                    GC.Collect(2, GCCollectionMode.Optimized, false);
-                    _logger.WriteLog("退役输入帧已改由 GC 回收：进程工作集 " + (ws / 1024 / 1024)
+                    _logger.WriteLog("退役输入帧由 GC 回收：进程工作集 " + (ws / 1024 / 1024)
                         + "MB 超过 " + (RetiredFrameGcBytesLimit / 1024 / 1024)
-                        + "MB，触发一次优化式 GC（持续高位只记本次，回落到阈值以下才复位）");
+                        + "MB，强制一次 Gen2 并等待终结器（持续高位不重复记，回落到阈值以下即复位）");
                 }
-                else if (!over && _gcValveFired)
-                {
-                    _gcValveFired = false;
-                    _logger.WriteLog("安全阀复位：进程工作集已回落到 " + (ws / 1024 / 1024) + "MB");
-                }
+                // ★第51.2轮 P1：突破时立刻强制一次；之后只要仍超阈值，每 256 张退役帧再强制一次。
+                //   只在突破那一刻试一次的话，若工作集始终降不到阈值以下，迟滞会让 _gcValveFired
+                //   永真 → 此后整个进程生命期**再也不 GC**；而托管堆极小、不会自然触发 Gen2，
+                //   新退役的帧就只能线性累积朝 OOM 走。节流间隔内不做任何事。
+                if (!crossed && (ticks & RetiredFrameGcRetryMask) != 0) return;
+                // ★第51.2轮 P1（实测依据见上方注释）：Optimized 在本负载下恒为 no-op，必须 Forced；
+                //   且必须等终结器跑完，否则像素还没还给系统、工作集不回落、复位条件永远不满足。
+                GC.Collect(2, GCCollectionMode.Forced, true);
+                GC.WaitForPendingFinalizers();
             }
             catch { }
         }
@@ -4821,7 +4839,13 @@ namespace WindowsFormsApplication1
 
         private static void WalkToolForDeadImages(ICogTool tool, string scope, DeadImageScan scan, int depth)
         {
-            if (tool == null || depth > DeadImageScan.MaxDepth) return;
+            if (tool == null) return;
+            // ★第51.2轮 P2：到深度上限也要留痕——直接 return 会把"没走到底"说成"没有"
+            if (depth > DeadImageScan.MaxDepth)
+            {
+                scan.MarkTruncated("下钻深度超过 " + DeadImageScan.MaxDepth + " 层");
+                return;
+            }
             if (!scan.CountNode()) return;
             string name = "";
             try { name = tool.Name; } catch { }
@@ -4882,7 +4906,13 @@ namespace WindowsFormsApplication1
         /// <summary>非工具对象（Operator / Pattern / 集合元素）里的图像引用：直接测 + 再递归一层属性。</summary>
         private static void WalkValueForDeadImages(object v, string path, DeadImageScan scan, int depth)
         {
-            if (v == null || depth > DeadImageScan.MaxDepth) return;
+            if (v == null) return;
+            // ★第51.2轮 P2：同上，深度截断必须留痕
+            if (depth > DeadImageScan.MaxDepth)
+            {
+                scan.MarkTruncated("下钻深度超过 " + DeadImageScan.MaxDepth + " 层");
+                return;
+            }
             if (!scan.CountNode()) return;
             if (!scan.TryVisit(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(v))) return;   // 同一实例只下钻一次（防环/防重复）
             if (v is string || v.GetType().IsPrimitive) return;
@@ -4899,7 +4929,9 @@ namespace WindowsFormsApplication1
                         if (item is ICogImage) ReportIfDead(item, path + "[" + i + "]", scan);
                         else WalkValueForDeadImages(item, path + "[" + i + "]", scan, depth + 1);
                         i++;
-                        if (i > 200 || scan.Dead.Count >= DeadImageScan.MaxReport) break;   // 防超大集合
+                        if (scan.Dead.Count >= DeadImageScan.MaxReport)
+                        { scan.MarkTruncated("报告条数已达 " + DeadImageScan.MaxReport); break; }
+                        if (i > 200) { scan.MarkTruncated("集合元素超过 200 个"); break; }   // ★第51.2轮 P2：截断留痕
                     }
                 }
                 catch { }
@@ -9836,7 +9868,7 @@ namespace WindowsFormsApplication1
                 MessageBox.Show(lost
                     ? "保存方案失败！落位异常，请按消息中的 .bak 备份核对并恢复原方案：\r\n" + ex.Message
                     : deadImage
-                        ? "保存方案失败！原方案文件未被改动。\r\n方案中仍有已释放的图像引用（多为工具运行图或模板训练图）。\r\n处理：打开【配置工具/模板窗口】重新进入编辑会话 → 重新采集一帧 → 把用到旧图的模板重训一次 → 立刻保存（重训后点【启动检测】再回来改会再次失效）。\r\n" + ex.Message
+                        ? "保存方案失败！原方案文件未被改动。\r\n方案中仍有已释放的图像引用（多为模板训练图或工具运行图）。\r\n处理：把用到这些图的模板重新训练一次 → 立刻保存；若仍失败，把日志里【保存方案】已释放图像诊断 的几行原样发给我们——它会列出死引用的确切路径。\r\n" + ex.Message
                         : "保存方案失败！原方案文件未被改动。若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
             }
             finally
@@ -11084,8 +11116,9 @@ namespace WindowsFormsApplication1
                     //   一次静止等待超时即永久停检（同"保存"处，已一并修正）。
                     if (saveNeedResume && !_inspectionLifecycle.WaitForIdle(5000))
                         throw new TimeoutException("另存为中止：等待在途检测静止超时(5s)，检测仍在运行，此时序列化可能写坏方案");
-                    // ★第49轮：同"保存"菜单——取消保存前清洗（够不到 Multi 深层模板训练图），靠
-                    //   编辑会话钉住退役输入帧保证训练图存活（见 RetireInputImage）。
+                    // ★第49轮：同"保存"菜单——取消保存前清洗（够不到 Multi 深层模板训练图）。
+                    // ★第51轮：训练图存活改由"退役帧不 Dispose、交给 GC"保证（见 RetireInputImage），
+                    //   不存在"编辑会话/启动检测"这类时机问题（第51.2轮已清理该陈旧措辞）。
                     // ★第47轮：原子写——先写 .saving 临时文件，全部成功才替换目标（旧文件滚动 .bak）。
                     //   现场"一保存就把好方案写成残文件"即因直写目标、序列化中途异常留半截所致。
                     AtomicFileSave.Write(path_1, tmp => CogSerializer.SaveObjectToFile(manager1, tmp));
@@ -11118,7 +11151,7 @@ namespace WindowsFormsApplication1
                 MessageBox.Show(lost
                     ? "另存为失败！已恢复显示原方案，内存未受影响；但目标文件旧内容状态异常，请按消息中的 .bak 备份核对恢复：\r\n" + ex.Message
                     : deadImage
-                        ? "另存为失败！已恢复显示原方案，未改动任何文件。\r\n方案中仍有已释放的图像引用（多为工具运行图或模板训练图）。\r\n处理：打开【配置工具/模板窗口】重新进入编辑会话 → 重新采集一帧 → 把用到旧图的模板重训一次 → 立刻另存为（重训后点【启动检测】再回来改会再次失效）。\r\n" + ex.Message
+                        ? "另存为失败！已恢复显示原方案，未改动任何文件。\r\n方案中仍有已释放的图像引用（多为模板训练图或工具运行图）。\r\n处理：把用到这些图的模板重新训练一次 → 立刻另存为；若仍失败，把日志里【另存为】已释放图像诊断 的几行原样发给我们——它会列出死引用的确切路径。\r\n" + ex.Message
                         : "另存为失败！已恢复显示原方案，未改动任何文件。若反复失败，请先重启软件后再保存。\r\n" + ex.Message);
             }
         }
