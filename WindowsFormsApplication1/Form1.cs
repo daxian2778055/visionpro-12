@@ -3747,10 +3747,10 @@ namespace WindowsFormsApplication1
                 this.Invoke(new Action(() => { label133.Text = "未加载方案，请先在配置窗加载方案"; }));
                 return;
             }
-            // ★第49轮：点【启动检测】= 恢复生产，此刻起训练图不再需要常驻——释放编辑会话钉住的退役帧
-            //   （也顺带兜住"编辑窗忘了关、帧池一直被钉着"的情况）。放在锁流 Task.Run 之前，保证
-            //   释放与后续换帧的竞争只发生一次，且不会把释放动作拖到启动流程失败时被跳过。
-            EndEditHold("启动检测");
+            // ★第49轮：点【启动检测】= 恢复生产，此刻起新到的帧不再算"训练候选"，结束编辑会话
+            //   （生产期换帧恢复立即释放）。注意这里**不能**顺手把保留池释放掉——pattern 的 TrainImage
+            //   还指着那些帧，释放=该模板缩略图空白、下次保存报死引用（第50轮修正）。
+            EndEditSession("启动检测");
             // ★M12：启动流程哨兵——上一次启动流程未结束时忽略本次点击（防连点排队重复启动）
             if (Interlocked.CompareExchange(ref _startFlowRunning, 1, 0) != 0)
             {
@@ -4728,64 +4728,102 @@ namespace WindowsFormsApplication1
         //   旁证：根目录历史 Form1.cs（另一套程序）在此处同样立即 Dispose、保存同样是裸
         //   CogSerializer.SaveObjectToFile（无清洗、无暂停），它能存并不说明保存写法有别，只说明它
         //   没踩同一个坑（没在"换帧之后"再去存一个训练过旧帧的方案）。病根在释放时机，不在保存写法。
-        //   对策（下面三个方法）：编辑/训练会话期间把退役帧**钉住不释放**，直到用户点【启动检测】/
-        //   切方案/退出才统一释放。会话外维持立即释放，第23轮的防泄漏不变式不动；会话内最多
-        //   EditHoldFrameCap 张，超出按先进先出淘汰（长时间开着编辑窗又跑连续检测时的兜底）。
+        //   对策：编辑/训练会话期间退役的输入帧进入"保留池"**一直不释放**，直到切方案/程序退出。
         //   注：这里刻意**不**在编辑入口做 StopAccepting 停检——getrecord 的 TryEnter 门同时挡住
         //   手动回图(trgger==1)与软触发帧，一停就把现场"再拍一张照片"这个动作也一起挡了。
-        private const int EditHoldFrameCap = 16;
-        private bool _editHoldActive;                          // 编辑会话是否进行中
-        private readonly List<object> _editHeldFrames = new List<object>();   // 会话内退役、暂不释放的输入帧
+        //
+        // ★第50轮复审（现场"打开多模版匹配，偶尔有些模版看不到/发白"）修正第49轮的一个错：
+        //   第49轮把释放点放在【启动检测】，等于"恢复生产那一刻把训练图全释放了"。而 pattern 的
+        //   TrainImage 正指向这些帧——一释放，CogPMAlignMultiTool 的 Multi Params 网格里该 pattern
+        //   的 Image 列就读不出图，显示成空白（同行 Edit 列仍正常，因为它读的是训练出来的模型而不是
+        //   图像引用），下一次保存同样会撞死引用。现在把两个概念拆开：
+        //     · 编辑会话（_editHoldActive）：只决定"这一帧是不是训练候选"。【启动检测】结束会话，
+        //       于是生产期退役的帧恢复立即释放——第23轮防泄漏不变式原样回来；
+        //     · 保留池（_keptFrames）：会话期内退役的帧是"训练候选"，一直留到切方案/退出才释放。
+        //   保留池按先进先出封顶 KeptFrameCap 张，淘汰时记日志（被淘汰=那个 pattern 后续会空白）。
+        private const int KeptFrameCap = 128;   // 保留池上限；640×480 彩图约 0.9MB/张 → 最坏约 115MB
+        private bool _editHoldActive;                            // 编辑/训练会话是否进行中
+        private readonly List<object> _keptFrames = new List<object>();   // 训练候选帧，留到切方案/退出
 
         /// <summary>打开编辑/训练窗时开启编辑会话（幂等：多路或重开编辑窗不重复入列）。</summary>
         private void BeginEditHold(string where)
         {
             try
             {
-                lock (_editHeldFrames)
+                lock (_keptFrames)
                 {
                     if (_editHoldActive) return;
                     _editHoldActive = true;
                 }
-                _logger.WriteLog("编辑会话开始(" + where + ")：换帧退役的输入图暂不释放，保证本次编辑训练后方案可保存；点【启动检测】后释放");
+                _logger.WriteLog("编辑会话开始(" + where + ")：换帧退役的输入图进入保留池不释放，保证本次编辑训练后方案可保存");
             }
             catch { }
         }
 
-        /// <summary>退役的输入帧：编辑会话内钉住不释放，会话外维持立即释放（第23轮防泄漏不变式）。</summary>
+        /// <summary>退役的输入帧：编辑会话内进保留池不释放，会话外维持立即释放（第23轮防泄漏不变式）。</summary>
         private void RetireInputImage(object old)
         {
             if (old == null) return;
-            lock (_editHeldFrames)
+            int evicted = 0;
+            lock (_keptFrames)
             {
                 if (!_editHoldActive) { TryDisposeCogImage(old); return; }
-                _editHeldFrames.Add(old);
-                while (_editHeldFrames.Count > EditHoldFrameCap)
+                _keptFrames.Add(old);
+                while (_keptFrames.Count > KeptFrameCap)
                 {
-                    object drop = _editHeldFrames[0];
-                    _editHeldFrames.RemoveAt(0);
+                    object drop = _keptFrames[0];
+                    _keptFrames.RemoveAt(0);
                     TryDisposeCogImage(drop);
+                    evicted++;
                 }
+            }
+            if (evicted > 0)
+            {
+                try
+                {
+                    _logger.WriteLog("保留池已满(" + KeptFrameCap + "张)，淘汰最早的 " + evicted
+                        + " 张训练帧：若某模板训练用的正是被淘汰的那张，它的缩略图会空白、保存该方案会报死引用");
+                }
+                catch { }
             }
         }
 
-        /// <summary>结束编辑会话并释放期间钉住的退役帧（【启动检测】/切方案/退出调用）。</summary>
-        private void EndEditHold(string where)
+        /// <summary>结束编辑会话（【启动检测】调用）。**只结束会话、不释放保留池**——
+        /// 生产期退役的帧从此恢复立即释放，但会话期内攒下的训练帧必须留着：pattern 的 TrainImage
+        /// 还指着它们，释放=下次打开多模版匹配该模板空白、再保存报死引用。</summary>
+        private void EndEditSession(string where)
+        {
+            try
+            {
+                int kept;
+                lock (_keptFrames)
+                {
+                    if (!_editHoldActive) return;
+                    _editHoldActive = false;
+                    kept = _keptFrames.Count;
+                }
+                _logger.WriteLog("编辑会话结束(" + where + ")：生产期换帧恢复立即释放；保留池内 " + kept
+                    + " 张训练帧继续存活（切方案或退出软件时才释放）");
+            }
+            catch { }
+        }
+
+        /// <summary>释放保留池（切方案/程序退出调用）——旧工具树整体作废，训练帧没有存在意义了。</summary>
+        private void ReleaseKeptFrames(string where)
         {
             List<object> drop;
-            lock (_editHeldFrames)
+            lock (_keptFrames)
             {
-                if (!_editHoldActive && _editHeldFrames.Count == 0) return;
-                drop = new List<object>(_editHeldFrames);
-                _editHeldFrames.Clear();
                 _editHoldActive = false;
+                if (_keptFrames.Count == 0) return;
+                drop = new List<object>(_keptFrames);
+                _keptFrames.Clear();
             }
             int n = 0;
             for (int i = 0; i < drop.Count; i++) { TryDisposeCogImage(drop[i]); n++; }
             try
             {
-                if (n > 0)
-                    _logger.WriteLog("编辑会话结束(" + where + ")：释放钉住的退役输入帧 " + n + " 张。此后再改模板直接保存需重新训练（训练图已释放）");
+                _logger.WriteLog("释放保留池(" + where + ")：" + n + " 张训练帧已释放；若本轮未保存就切方案/退出，这些模板的训练图需重训");
             }
             catch { }
         }
@@ -7462,9 +7500,9 @@ namespace WindowsFormsApplication1
         #region 资源清理与程序退出
         private void SafeCleanupBeforeDispose()
         {
-            // ★第49轮：退出时释放编辑会话钉住的退役输入帧（正常路径已由【启动检测】/切方案释放，
+            // ★第49轮：退出时释放保留池里的训练帧（正常路径已由切方案释放，
             //   此处兜住"编辑完直接关软件"的路径）。
-            try { EndEditHold("程序退出"); } catch { }
+            try { ReleaseKeptFrames("程序退出"); } catch { }
 
             // ★第32轮 W1 配套：存图清理定时器改为字段持有后不会再被 GC"顺带"回收，
             //   退出时必须显式停掉，否则线程池回调会在 _jobs/日志资源收尾后继续访问它们。
@@ -11193,9 +11231,9 @@ namespace WindowsFormsApplication1
                 _inspectionLifecycle.StopAccepting();
                 DisarmCommTrigger();
                 DrainPendingFrames();
-                // ★第49轮：旧工具树整体作废，编辑会话钉住的退役帧（它们属于旧块）必须在此释放，
-                //   否则既泄漏、又会在新方案下释放一堆与新块无关的图。
-                EndEditHold("切换方案");
+                // ★第49轮：旧工具树整体作废，编辑会话与保留池里的训练帧（它们属于旧块）必须在此释放，
+                //   否则既泄漏、又会在新方案下持有一堆与新块无关的图。
+                ReleaseKeptFrames("切换方案");
 
                 if (_comm.Omron.qiehuanzhong == 0)
                 {
