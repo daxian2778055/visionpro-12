@@ -155,5 +155,53 @@ namespace WindowsFormsApplication1.Tests
             Assert.AreEqual("第一个原因", scan.TruncatedReason,
                 "先撞到的才是把扫描挡住的那个，后续原因不应覆盖它");
         }
+
+        // ===== ★第51.3轮 P2-1：留痕与"停止"必须是两个状态（51.2 的回归点） =====
+        // 51.2 把 if (Truncated) return false 放在 CountNode 开头，于是任一子树撞深度上限
+        // 都会让其余 11 路 job 全部不再遍历——留痕做到了，覆盖率反而掉到 51.1 以下。
+
+        [TestMethod]
+        public void 仅留痕不设预算_扫描必须继续走完其余分支()
+        {
+            var scan = new DeadImageScan();
+            scan.MarkTruncated("下钻深度超过 10 层");
+
+            for (int i = 0; i < 5; i++)
+                Assert.IsTrue(scan.CountNode(), "留痕不应停整趟扫描——51.2 的回归正是这一行");
+
+            Assert.AreEqual(5, scan.Nodes, "节点计数必须继续前进，不能被留痕冻结");
+            Assert.IsFalse(scan.BudgetExhausted, "仅留痕不等于预算用尽");
+            Assert.IsTrue(scan.Truncated, "但'结果不完整'这个记号要留下");
+
+            // 记号还在，结论仍要说可能不完整——留痕与放行互不干扰
+            string text = scan.Conclusion();
+            StringAssert.Contains(text, "下钻深度超过 10 层");
+            StringAssert.Contains(text, "可能不完整");
+        }
+
+        [TestMethod]
+        public void 耗时超预算_停止扫描并留痕_原因写明耗时上限()
+        {
+            var scan = new DeadImageScan(0);          // 注入 0ms 时间预算（单测专用构造）
+            System.Threading.Thread.Sleep(10);
+
+            Assert.IsFalse(scan.CountNode(), "超时预算后必须停止，否则 UI 会一直冻结在 catch 里");
+            Assert.IsTrue(scan.BudgetExhausted);
+            StringAssert.Contains(scan.TruncatedReason, "耗时上限");
+            Assert.IsFalse(scan.CountNode(), "停止是持久的");
+
+            string text = scan.Conclusion();
+            StringAssert.Contains(text, "可能不完整");
+            Assert.IsFalse(text.Contains("未在工具树里找到"), "超时截断同样不得断言'未找到'");
+        }
+
+        [TestMethod]
+        public void 时间预算有值时_正常小扫描不会被误判超时()
+        {
+            var scan = new DeadImageScan();           // 默认 1500ms
+            Assert.IsTrue(scan.CountNode());
+            Assert.IsFalse(scan.Truncated, "刚建好就报截断说明计时口径写错了");
+            Assert.AreEqual(1500, DeadImageScan.MaxElapsedMs, "时间预算口径若改动，日志注释需同步");
+        }
     }
 }

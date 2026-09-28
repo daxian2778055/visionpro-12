@@ -4806,13 +4806,14 @@ namespace WindowsFormsApplication1
         //   这一层——反射不按属性名过滤，而是对所有非原始类型的可读属性递归下钻（深度/环/数量三重限制）。
         private void DiagnoseDeadImages(string scene)
         {
+            // ★第51.1轮（自审第51轮抓到的 BUG）：扫描状态改为**每次新建的对象**。
+            //   原实现在本类里放 static int 计数、且 DiagnoseDeadImages 从不复位——
+            //   第二次诊断一进函数就被 2 万节点预算耗尽挡住，于是照样打出"未找到失效图像引用"。
+            //   诊断谎报"没问题"比没有诊断更糟：它会让人基于错误信息继续猜（第47/48轮的老路）。
+            // ★第51.3轮：实例提到 try 之外——异常分支也要报得出耗时口径（否则"跑到一半崩了"看不出花了多久）。
+            DeadImageScan scan = new DeadImageScan();
             try
             {
-                // ★第51.1轮（自审第51轮抓到的 BUG）：扫描状态改为**每次新建的对象**。
-                //   原实现在本类里放 static int 计数、且 DiagnoseDeadImages 从不复位——
-                //   第二次诊断一进函数就被 2 万节点预算耗尽挡住，于是照样打出"未找到失效图像引用"。
-                //   诊断谎报"没问题"比没有诊断更糟：它会让人基于错误信息继续猜（第47/48轮的老路）。
-                DeadImageScan scan = new DeadImageScan();
                 int jobIdx = 0;
                 foreach (var mj in _jobs.Myjobs)
                 {
@@ -4828,12 +4829,15 @@ namespace WindowsFormsApplication1
                 }
                 // ★第51.1轮：结论必须区分"没查完"与"真没有"（DeadImageScan.Conclusion）——
                 //   截断时如实说可能漏报，否则"预算耗尽"会被读成"树里没有死引用"。
-                _logger.WriteLog("【" + scene + "】已释放图像诊断：" + scan.Conclusion());
+                // ★第51.3轮：补上耗时/节点口径（第47轮"清洗耗时"那条日志在删清洗时没跟着搬过来）。
+                //   没有它就判断不出"诊断是不是被时间预算提前掐断了"。
+                _logger.WriteLog("【" + scene + "】已释放图像诊断：耗时 " + scan.ElapsedMs
+                    + "ms、访问 " + scan.Nodes + " 节点 —— " + scan.Conclusion());
                 for (int i = 0; i < scan.Dead.Count && i < 20; i++) _logger.WriteLog("    " + scan.Dead[i]);
             }
             catch (Exception exDiag)
             {
-                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果）: " + exDiag.Message); } catch { }
+                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms）: " + exDiag.Message); } catch { }
             }
         }
 

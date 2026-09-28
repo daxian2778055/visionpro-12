@@ -1,29 +1,32 @@
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace WindowsFormsApplication1
 {
     /// <summary>
-    /// 死引用诊断的一次扫描状态（★第51.1轮自 Form1.cs 抽出；第51.2轮补截断留痕）。
-    /// 抽出的三个目的：
-    /// 1) 修 BUG：原实现在 Form1.cs 里用 **static int** 计数且从不复位——第二次诊断一进函数
-    ///    就被 2 万节点预算耗尽挡住，于是照样打出"未找到失效图像引用"。诊断谎报"没问题"
-    ///    比没有诊断更糟：它会让人基于错误信息继续猜（这正是第47/48轮反复修错的模式）。
-    ///    改成"每次新建一个实例"，预算天然从 0 开始，两个扫描实例互不干扰。
-    /// 2) ★第51.2轮（P2）：截断**必须留痕**。仅"节点预算"会标记 Truncated 是不够的——
-    ///    下钻深度到顶、集合元素超限这两处直接 return/break 不标记，被挡在门外的那部分
-    ///    照样会输出"未在工具树里找到失效图像引用"，与第1条是同一类谎报。现在所有截断点
-    ///    统一调 MarkTruncated(reason)，结论里带上原因。
-    /// 3) 让"预算/截断/去重/结论口径"这类纯逻辑可被单元测试覆盖——它不依赖 Cognex，
-    ///    因此可以按本工程既有的"源码链接"方式（见 WindowsFormsApplication1.Tests.csproj）
-    ///    直接链进测试程序集，测试零第三方依赖、CI 可跑。
+    /// 死引用诊断的一次扫描状态（★第51.1轮自 Form1.cs 抽出；51.2 补截断留痕；51.3 拆开"留痕"与"停"）。
+    /// 演进里踩过的三个坑，都是"诊断说谎"的变体，留档防复发：
+    /// 51.1 —— 节点计数放 static 且从不复位 ⇒ 第二次诊断一进函数就被预算挡住，照样打"未找到"。
+    ///         改为每次新建实例，计数天然归零。
+    /// 51.2 —— 只有"节点预算"会标记截断，深度到顶/集合超限是静默 return/break ⇒ 被挡在门外的部分
+    ///         照样输出"未找到"。改为所有截断点统一 MarkTruncated(reason) 并把原因带进结论。
+    /// 51.3 —— 但 51.2 把两件事塞进了同一个开关：CountNode() 开头的 if (Truncated) return false
+    ///         让 MarkTruncated（**只该留痕**）变成了"整趟停止"。任一子树撞深度上限，其余 job
+    ///         全部不再遍历——覆盖率反而比 51.1 还差，而日志还诚实地说"被截断（深度）"，
+    ///         看起来正常。现在分成两个状态：
+    ///           · Truncated/TruncatedReason —— 只是"结果不完整"的记号，**不挡任何遍历**；
+    ///           · BudgetExhausted —— 节点预算/报告上限/耗时上限用尽，才让 CountNode 返回 false 停止。
+    /// 另注：诊断跑在保存失败的 catch 里、UI 线程、弹窗之前，所以必须有**时间**预算，
+    ///       否则 2 万节点 × 实测 0.23ms/节点 ≈ 4.6 秒的界面冻结。
     /// 与 Form1.cs 的分工：本类只管"扫描到哪了、报什么结论"，不碰任何 Cognex 类型。
     /// </summary>
     internal sealed class DeadImageScan
     {
         /// <summary>下钻深度上限。★第51.2轮由 6 提到 10：
         /// 现场加载路径是 group → 外层 CogToolBlock → 内层 CogToolBlock → 工具，光两层块嵌套就吃掉 2 层，
-        /// 再加 Operator/Items[]/Pattern 才够到 TrainImage——6 层正卡在边沿。既然截断现在会如实报
-        /// （见 MarkTruncated），就必须真能走到底，否则日志永远是"可能不完整"。代价由 MaxNodes 兜底。</summary>
+        /// 再加 Operator/Items[]/Pattern 才够到 TrainImage——6 层正卡在边沿。既然截断会如实报，
+        /// 就必须真能走到底，否则日志永远是"可能不完整"。撞到它的代价只是留痕，不再停整趟（见类注释 51.3）。</summary>
         public const int MaxDepth = 10;
 
         /// <summary>单次扫描的节点预算：防反射遍历在超大工具树上把保存失败后的 UI 线程拖死。</summary>
@@ -32,22 +35,44 @@ namespace WindowsFormsApplication1
         /// <summary>报告条数上限：日志只用来定位，几十条足够，封顶防止刷爆日志文件。</summary>
         public const int MaxReport = 60;
 
+        /// <summary>时间预算（毫秒）。实测 Cognex 工具对象"一次 GetProperties + 全部可读属性 GetValue"
+        /// ≈ 0.23ms/节点，2 万节点走完 ≈ 4.6 秒——诊断在 UI 线程、弹窗之前，取 1.5 秒把最坏冻结压到
+        /// 约三分之一，同时仍允许约 6500 个节点，够走完一棵正常的工具树。可用单测注入更小的值。</summary>
+        public const int MaxElapsedMs = 1500;
+
         /// <summary>已确认失效的图像引用路径。</summary>
         public readonly List<string> Dead = new List<string>();
 
         /// <summary>已访问实例的参考标识（防环 + 防同一实例多处引用重复下钻）。</summary>
         public readonly HashSet<int> Seen = new HashSet<int>();
 
-        /// <summary>本次扫描已访问的节点数。每次新建实例即从 0 开始（见类注释第 1 条）。</summary>
+        private readonly int _maxElapsedMs;
+        private readonly long _startedAt = Stopwatch.GetTimestamp();
+        private readonly double _msPerTick = 1000.0 / Stopwatch.Frequency;
+
+        /// <summary>默认按 <see cref="MaxElapsedMs"/> 计时。</summary>
+        public DeadImageScan() : this(MaxElapsedMs) { }
+
+        /// <summary>可注入时间预算——单测用（主工程仍走无参构造）。</summary>
+        public DeadImageScan(int maxElapsedMs) { _maxElapsedMs = maxElapsedMs; }
+
+        /// <summary>本次扫描已访问的节点数。每次新建实例即从 0 开始。</summary>
         public int Nodes { get; private set; }
 
-        /// <summary>扫描是否被截断。为 true 时结果**不完整**，"没找到"不能当结论用。</summary>
+        /// <summary>结果是否不完整（节点/报告/耗时/深度/集合任一原因）。**只记账，不阻止遍历。**</summary>
         public bool Truncated { get; private set; }
 
         /// <summary>截断原因（首个原因为准），随结论一起打进日志。</summary>
         public string TruncatedReason { get; private set; }
 
-        /// <summary>标记"扫描被截断"及原因。只记第一次的原因——先撞到的才是把扫描挡住的那个。</summary>
+        /// <summary>预算是否用尽（节点/报告/耗时三者之一）。只有它才让 <see cref="CountNode"/> 返回 false。</summary>
+        public bool BudgetExhausted { get; private set; }
+
+        /// <summary>已耗时毫秒——诊断在 catch 里，异常分支也要能报出耗时口径。</summary>
+        public int ElapsedMs { get { return (int)((Stopwatch.GetTimestamp() - _startedAt) * _msPerTick); } }
+
+        /// <summary>标记"结果不完整"及原因。只记第一次的原因——先撞到的才是把扫描挡住的那个。
+        /// **它不设置 BudgetExhausted**：深度/集合这类截断只影响当前这一支，其余分支必须继续走。</summary>
         public void MarkTruncated(string reason)
         {
             if (Truncated) return;
@@ -56,17 +81,19 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
-        /// 计一个节点。超出节点预算、或已达报告上限，则标记截断并返回 false——调用方据此停止本支。
+        /// 计一个节点。**只有预算用尽**才返回 false（调用方据此停止本支）；单纯的"结果不完整"记号
+        /// 不影响放行——否则一处深度截断会连带废掉整个扫描（51.2 的回归，见类注释）。
         /// </summary>
         public bool CountNode()
         {
-            if (Truncated) return false;
-            if (++Nodes > MaxNodes) { MarkTruncated("节点预算 " + MaxNodes + " 已用尽"); return false; }
-            if (Dead.Count >= MaxReport) { MarkTruncated("报告条数已达 " + MaxReport); return false; }
+            if (BudgetExhausted) return false;
+            if (ElapsedMs > _maxElapsedMs) { BudgetExhausted = true; MarkTruncated("耗时上限 " + _maxElapsedMs + "ms"); return false; }
+            if (++Nodes > MaxNodes) { BudgetExhausted = true; MarkTruncated("节点预算 " + MaxNodes + " 已用尽"); return false; }
+            if (Dead.Count >= MaxReport) { BudgetExhausted = true; MarkTruncated("报告条数已达 " + MaxReport); return false; }
             return true;
         }
 
-        /// <summary>记录一条死引用路径（达报告上限后丢弃，由调用方/CountNode 标记截断）。</summary>
+        /// <summary>记录一条死引用路径（达报告上限后丢弃，由 CountNode 标记截断）。</summary>
         public void Add(string path)
         {
             if (Dead.Count < MaxReport) Dead.Add(path);
