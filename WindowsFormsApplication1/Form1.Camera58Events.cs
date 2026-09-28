@@ -4731,7 +4731,6 @@ namespace WindowsFormsApplication1
                 if (old != null && !old.IsDisposed) old.Close();
             }
             catch { }
-            BeginEditHold("模板窗口:" + title);   // ★第49轮：模板窗里训练，退役输入帧同样钉住不释放
             f9[slot] = new Form9(block);
             f9[slot].Show();
             f9[slot].label2.Text = title;
@@ -5214,7 +5213,6 @@ namespace WindowsFormsApplication1
         }
         private void ccdshow(CogToolBlock block_temp)
         {
-            BeginEditHold("CCD子块配置");   // ★第49轮：子块里同样会训练模板，同样走编辑会话钉住退役帧
             Form10 frm10 = new Form10(block_temp);
             frm10.Show();
         }
@@ -5635,9 +5633,6 @@ namespace WindowsFormsApplication1
         private void ShowForm6For(Myjob job)
         {
             if (job == null) return;
-            // ★第49轮：进入训练/编辑会话——换帧退役的输入图从此刻起不再立即释放，
-            //   保证"图A训模板1 → 拍图B → 加模板2 → 保存"整个过程里训练图都还活着。
-            BeginEditHold("配置工具" + (job.path_number ?? ""));
             for (int i = frm6.Count - 1; i >= 0; i--)
             {
                 Form6 f = frm6[i];

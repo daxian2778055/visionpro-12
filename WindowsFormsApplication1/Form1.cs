@@ -3747,10 +3747,6 @@ namespace WindowsFormsApplication1
                 this.Invoke(new Action(() => { label133.Text = "未加载方案，请先在配置窗加载方案"; }));
                 return;
             }
-            // ★第49轮：点【启动检测】= 恢复生产，此刻起新到的帧不再算"训练候选"，结束编辑会话
-            //   （生产期换帧恢复立即释放）。注意这里**不能**顺手把保留池释放掉——pattern 的 TrainImage
-            //   还指着那些帧，释放=该模板缩略图空白、下次保存报死引用（第50轮修正）。
-            EndEditSession("启动检测");
             // ★M12：启动流程哨兵——上一次启动流程未结束时忽略本次点击（防连点排队重复启动）
             if (Interlocked.CompareExchange(ref _startFlowRunning, 1, 0) != 0)
             {
@@ -4722,110 +4718,242 @@ namespace WindowsFormsApplication1
 
         // ★第49轮（现场"建第2个模板时保存方案失败：无法访问已释放的对象 CogImage8Grey"）根修：
         //   VisionPro 的 PMAlign / CogPatInspect 训练时把"训练图"存成**图像引用**而不是拷贝，
-        //   训练所用的那一帧正是本类 AssignBlockInputImage 换帧时的 old——换一个输入就立刻
+        //   训练所用的那一帧正是本类 AssignBlockInputImage 换帧时的 old。此前换一个输入就立刻
         //   TryDisposeCogImage 掉它，此后保存方案序列化到该引用即抛现场那句"无法访问已释放的对象"。
         //   现场流程：图A 训模板1 → 再拍一张照片（图B 换帧 → 图A 被释放）→ 加模板2 → 保存失败。
         //   旁证：根目录历史 Form1.cs（另一套程序）在此处同样立即 Dispose、保存同样是裸
-        //   CogSerializer.SaveObjectToFile（无清洗、无暂停），它能存并不说明保存写法有别，只说明它
-        //   没踩同一个坑（没在"换帧之后"再去存一个训练过旧帧的方案）。病根在释放时机，不在保存写法。
-        //   对策：编辑/训练会话期间退役的输入帧进入"保留池"**一直不释放**，直到切方案/程序退出。
-        //   注：这里刻意**不**在编辑入口做 StopAccepting 停检——getrecord 的 TryEnter 门同时挡住
+        //   CogSerializer.SaveObjectToFile（无清洗、无暂停），它能存并不说明保存写法有别。
+        //
+        // ★第51轮（第49/50轮"保留池"方案作废，改为**不再 Dispose、交给 GC**）：
+        //   第49轮做"编辑会话期保留池(16张)→【启动检测】释放"，第50轮改成"保留到切方案/退出(128张)"，
+        //   两次都是在**猜**哪些帧还有人用，既漏又带来新的失效窗口（现场又报"多模版匹配模板发白"）。
+        //   本轮反射确认了一件决定性的事：Cognex.VisionPro.CogImage8Grey **自带 Finalize**
+        //   （GetMethod("Finalize",Instance|NonPublic).DeclaringType == CogImage8Grey 自身）。
+        //   于是根本不需要我们调用 Dispose：
+        //     · 还被 pattern.TrainImage / tool.InputImage 指着的帧 = 托管堆上的**强引用**，
+        //       GC 永远不会回收它 → 保存必然成功，且不限编辑会话、不限跨不跨【启动检测】、无数量上限；
+        //     · 没人指着的帧 = 没有引用，GC 终结器自动回收，内存不会无限涨。
+        //   "谁还指着这张图"这件事，引用关系本身就说得准，比我们按时间窗/数量去猜可靠得多。
+        //   同时这也让第49/50轮那套保留池/会话/释放时机整体删除，代码回到单一职责。
+        //   注：仍然刻意**不**在编辑入口做 StopAccepting 停检——getrecord 的 TryEnter 门同时挡住
         //   手动回图(trgger==1)与软触发帧，一停就把现场"再拍一张照片"这个动作也一起挡了。
         //
-        // ★第50轮复审（现场"打开多模版匹配，偶尔有些模版看不到/发白"）修正第49轮的一个错：
-        //   第49轮把释放点放在【启动检测】，等于"恢复生产那一刻把训练图全释放了"。而 pattern 的
-        //   TrainImage 正指向这些帧——一释放，CogPMAlignMultiTool 的 Multi Params 网格里该 pattern
-        //   的 Image 列就读不出图，显示成空白（同行 Edit 列仍正常，因为它读的是训练出来的模型而不是
-        //   图像引用），下一次保存同样会撞死引用。现在把两个概念拆开：
-        //     · 编辑会话（_editHoldActive）：只决定"这一帧是不是训练候选"。【启动检测】结束会话，
-        //       于是生产期退役的帧恢复立即释放——第23轮防泄漏不变式原样回来；
-        //     · 保留池（_keptFrames）：会话期内退役的帧是"训练候选"，一直留到切方案/退出才释放。
-        //   保留池按先进先出封顶 KeptFrameCap 张，淘汰时记日志（被淘汰=那个 pattern 后续会空白）。
-        private const int KeptFrameCap = 128;   // 保留池上限；640×480 彩图约 0.9MB/张 → 最坏约 115MB
-        private bool _editHoldActive;                            // 编辑/训练会话是否进行中
-        private readonly List<object> _keptFrames = new List<object>();   // 训练候选帧，留到切方案/退出
+        //   代价与补偿：GC 只按**托管堆**压力决定何时回收，而图像像素在非托管侧、GC 看不见，
+        //   所以必须配一个内存触发阀——每 32 张退役帧查一次进程工作集，超阈值触发一次
+        //   GCCollectionMode.Optimized 的 GC 并记日志（优化式：GC 自认不划算就不动，代价小）。
+        private const int RetiredFrameGcCheckMask = 31;        // 每 32 张退役帧查一次内存
+        private const long RetiredFrameGcBytesLimit = 1536L * 1024 * 1024;   // 工作集超 1.5GB 才触发
+        private int _retiredFrameTicks;                        // 退役帧计数（Interlocked，不持锁）
 
-        /// <summary>打开编辑/训练窗时开启编辑会话（幂等：多路或重开编辑窗不重复入列）。</summary>
-        private void BeginEditHold(string where)
+        /// <summary>退役的输入帧：**不再释放**——见上方注释。GC 负责回收"没人引用"的帧，
+        /// 而仍被模板训练图/工具运行图引用的帧由引用关系保活，从而保证方案随时可存。</summary>
+        private void RetireInputImage(object old)
         {
+            if (old == null) return;
+            int ticks = System.Threading.Interlocked.Increment(ref _retiredFrameTicks);
+            if ((ticks & RetiredFrameGcCheckMask) != 0) return;
             try
             {
-                lock (_keptFrames)
+                long ws = Environment.WorkingSet;
+                if (ws > RetiredFrameGcBytesLimit)
                 {
-                    if (_editHoldActive) return;
-                    _editHoldActive = true;
+                    // 优化式：交给 GC 自己判断值不值，划算才收；不划算时下一轮 32 帧后再看。
+                    GC.Collect(2, GCCollectionMode.Optimized, false);
+                    _logger.WriteLog("退役输入帧已改由 GC 回收：进程工作集 " + (ws / 1024 / 1024)
+                        + "MB 超过 " + (RetiredFrameGcBytesLimit / 1024 / 1024) + "MB，触发一次优化式 GC");
                 }
-                _logger.WriteLog("编辑会话开始(" + where + ")：换帧退役的输入图进入保留池不释放，保证本次编辑训练后方案可保存");
             }
             catch { }
         }
 
-        /// <summary>退役的输入帧：编辑会话内进保留池不释放，会话外维持立即释放（第23轮防泄漏不变式）。</summary>
-        private void RetireInputImage(object old)
+        // ★第51轮：保存失败后的**只读**诊断——把"哪一个工具的哪一条路径上的哪张图已经死了"
+        //   原样打进日志。第47/48轮的保存前清洗是"边猜边改"：反射够不到 Multi 的
+        //   Operator/Items[] 深层，清洗到的部分又会把模板训练图置空（现场表现"模板发白"），
+        //   够不到的部分则照旧失败。两次都是拿现场一张照片反推根因，代价是三版都没修对。
+        //   现在改成"先照实说，再决定改不改"：只读遍历，不改任何对象，序列化失败时才跑
+        //   （成功路径零开销）。诊断要能走到 CogPMAlignMultiTool.Operator.Items[i].Pattern.TrainImage
+        //   这一层——反射不按属性名过滤，而是对所有非原始类型的可读属性递归下钻（深度/环/数量三重限制）。
+        private void DiagnoseDeadImages(string scene)
         {
-            if (old == null) return;
-            int evicted = 0;
-            lock (_keptFrames)
+            try
             {
-                if (!_editHoldActive) { TryDisposeCogImage(old); return; }
-                _keptFrames.Add(old);
-                while (_keptFrames.Count > KeptFrameCap)
+                List<string> dead = new List<string>();
+                HashSet<int> seen = new HashSet<int>();
+                int jobIdx = 0;
+                foreach (var mj in _jobs.Myjobs)
                 {
-                    object drop = _keptFrames[0];
-                    _keptFrames.RemoveAt(0);
-                    TryDisposeCogImage(drop);
-                    evicted++;
+                    jobIdx++;
+                    if (mj == null) continue;
+                    try
+                    {
+                        ICogTool root = mj.job != null ? mj.job.VisionTool : null;
+                        if (root == null) root = mj.block;   // job 未挂上（加载异常态）：退回覆盖 mj.block
+                        if (root != null) WalkToolForDeadImages(root, "job" + jobIdx, dead, seen, 0);
+                    }
+                    catch { }
+                }
+                if (dead.Count == 0)
+                {
+                    _logger.WriteLog("【" + scene + "】已释放图像诊断：未在工具树里找到失效图像引用"
+                        + "（说明死引用不在本程序持有的工具树里，或发生在序列化过程中）");
+                    return;
+                }
+                _logger.WriteLog("【" + scene + "】已释放图像诊断：共 " + dead.Count + " 处，位置如下");
+                for (int i = 0; i < dead.Count && i < 20; i++) _logger.WriteLog("    " + dead[i]);
+            }
+            catch (Exception exDiag)
+            {
+                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果）: " + exDiag.Message); } catch { }
+            }
+        }
+
+        private const int DeadImageWalkMaxDepth = 6;
+        private const int DeadImageWalkMaxNodes = 20000;
+        private const int DeadImageWalkMaxReport = 60;
+        private static int _deadImageWalkNodes;
+
+        private static void WalkToolForDeadImages(ICogTool tool, string scope, List<string> dead,
+            HashSet<int> seen, int depth)
+        {
+            if (tool == null || depth > DeadImageWalkMaxDepth) return;
+            if (++_deadImageWalkNodes > DeadImageWalkMaxNodes || dead.Count >= DeadImageWalkMaxReport) return;
+            string name = "";
+            try { name = tool.Name; } catch { }
+            string here = scope + "/" + (name.Length > 0 ? name : tool.GetType().Name);
+
+            CogToolBlock blk = tool as CogToolBlock;
+            if (blk != null)
+            {
+                ScanTerminalsForDeadImages(blk.Inputs, here + ".In", dead);
+                ScanTerminalsForDeadImages(blk.Outputs, here + ".Out", dead);
+            }
+
+            // 反射下钻：对所有"可读、非原始/非字符串/非枚举"的属性取值再递归——
+            // 不按属性名过滤，才能走到 Operator/Items[]/Pattern/TrainImage 这种深层结构。
+            try
+            {
+                foreach (System.Reflection.PropertyInfo pi in tool.GetType().GetProperties(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                {
+                    if (pi.GetIndexParameters().Length != 0) continue;
+                    if (!pi.CanRead) continue;
+                    System.Type pt = pi.PropertyType;
+                    if (pt.IsPrimitive || pt.IsEnum || pt == typeof(string) || typeof(System.Delegate).IsAssignableFrom(pt)) continue;
+                    object v;
+                    try { v = pi.GetValue(tool, null); } catch { continue; }
+                    if (v == null) continue;
+                    if (v is ICogImage) { ReportIfDead(v, here + "." + pi.Name, dead); continue; }
+                    if (v is ICogTool) continue;   // 子工具由 Tools/DisabledTools 集合统一走，不重复
+                    WalkValueForDeadImages(v, here + "." + pi.Name, dead, seen, depth + 1);
                 }
             }
-            if (evicted > 0)
+            catch { }
+
+            if (blk != null)
             {
                 try
                 {
-                    _logger.WriteLog("保留池已满(" + KeptFrameCap + "张)，淘汰最早的 " + evicted
-                        + " 张训练帧：若某模板训练用的正是被淘汰的那张，它的缩略图会空白、保存该方案会报死引用");
+                    foreach (ICogTool child in blk.Tools) WalkToolForDeadImages(child, here, dead, seen, depth + 1);
+                    foreach (ICogTool child in blk.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", dead, seen, depth + 1);
+                }
+                catch { }
+            }
+            else
+            {
+                CogToolGroup grp = tool as CogToolGroup;
+                if (grp != null)
+                {
+                    try
+                    {
+                        foreach (ICogTool child in grp.Tools) WalkToolForDeadImages(child, here, dead, seen, depth + 1);
+                        foreach (ICogTool child in grp.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", dead, seen, depth + 1);
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        /// <summary>非工具对象（Operator / Pattern / 集合元素）里的图像引用：直接测 + 再递归一层属性。</summary>
+        private static void WalkValueForDeadImages(object v, string path, List<string> dead,
+            HashSet<int> seen, int depth)
+        {
+            if (v == null || depth > DeadImageWalkMaxDepth) return;
+            if (++_deadImageWalkNodes > DeadImageWalkMaxNodes || dead.Count >= DeadImageWalkMaxReport) return;
+            int id = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(v);
+            if (!seen.Add(id)) return;   // 同一实例多处引用只查一次（防环）
+            if (v is string || v.GetType().IsPrimitive) return;
+
+            System.Collections.IEnumerable en = v as System.Collections.IEnumerable;
+            if (en != null)
+            {
+                int i = 0;
+                try
+                {
+                    foreach (object item in en)
+                    {
+                        if (item == null) { i++; continue; }
+                        if (item is ICogImage) ReportIfDead(item, path + "[" + i + "]", dead);
+                        else WalkValueForDeadImages(item, path + "[" + i + "]", dead, seen, depth + 1);
+                        i++;
+                        if (i > 200 || dead.Count >= DeadImageWalkMaxReport) break;   // 防超大集合
+                    }
+                }
+                catch { }
+                return;
+            }
+
+            try
+            {
+                foreach (System.Reflection.PropertyInfo pi in v.GetType().GetProperties(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+                {
+                    if (pi.GetIndexParameters().Length != 0) continue;
+                    if (!pi.CanRead) continue;
+                    System.Type pt = pi.PropertyType;
+                    if (pt.IsPrimitive || pt.IsEnum || pt == typeof(string) || typeof(System.Delegate).IsAssignableFrom(pt)) continue;
+                    object pv;
+                    try { pv = pi.GetValue(v, null); } catch { continue; }
+                    if (pv == null) continue;
+                    if (pv is ICogImage) ReportIfDead(pv, path + "." + pi.Name, dead);
+                    else WalkValueForDeadImages(pv, path + "." + pi.Name, dead, seen, depth + 1);
+                }
+            }
+            catch { }
+        }
+
+        private static void ScanTerminalsForDeadImages(CogToolBlockTerminalCollection terminals, string scope, List<string> dead)
+        {
+            if (terminals == null) return;
+            for (int i = 0; i < terminals.Count; i++)
+            {
+                try
+                {
+                    object v;
+                    try { v = terminals[i].Value; } catch { continue; }
+                    ICogImage img = v as ICogImage;
+                    if (img != null) ReportIfDead(img, scope + "[" + terminals[i].Name + "]", dead);
                 }
                 catch { }
             }
         }
 
-        /// <summary>结束编辑会话（【启动检测】调用）。**只结束会话、不释放保留池**——
-        /// 生产期退役的帧从此恢复立即释放，但会话期内攒下的训练帧必须留着：pattern 的 TrainImage
-        /// 还指着它们，释放=下次打开多模版匹配该模板空白、再保存报死引用。</summary>
-        private void EndEditSession(string where)
+        /// <summary>图像是否已失效（底层句柄被释放）。读 Width/Height 即可探明，不碰像素。</summary>
+        private static bool IsCogImageUsable(ICogImage img)
         {
-            try
-            {
-                int kept;
-                lock (_keptFrames)
-                {
-                    if (!_editHoldActive) return;
-                    _editHoldActive = false;
-                    kept = _keptFrames.Count;
-                }
-                _logger.WriteLog("编辑会话结束(" + where + ")：生产期换帧恢复立即释放；保留池内 " + kept
-                    + " 张训练帧继续存活（切方案或退出软件时才释放）");
-            }
-            catch { }
+            try { int w = img.Width; int h = img.Height; return true; }
+            catch { return false; }
         }
 
-        /// <summary>释放保留池（切方案/程序退出调用）——旧工具树整体作废，训练帧没有存在意义了。</summary>
-        private void ReleaseKeptFrames(string where)
+        private static void ReportIfDead(object imgObj, string path, List<string> dead)
         {
-            List<object> drop;
-            lock (_keptFrames)
+            ICogImage img = imgObj as ICogImage;
+            if (img == null || IsCogImageUsable(img)) return;
+            if (dead.Count < DeadImageWalkMaxReport)
             {
-                _editHoldActive = false;
-                if (_keptFrames.Count == 0) return;
-                drop = new List<object>(_keptFrames);
-                _keptFrames.Clear();
+                string tn = "";
+                try { tn = img.GetType().Name; } catch { }
+                dead.Add(path + "  →  " + tn);
             }
-            int n = 0;
-            for (int i = 0; i < drop.Count; i++) { TryDisposeCogImage(drop[i]); n++; }
-            try
-            {
-                _logger.WriteLog("释放保留池(" + where + ")：" + n + " 张训练帧已释放；若本轮未保存就切方案/退出，这些模板的训练图需重训");
-            }
-            catch { }
         }
 
         #endregion
@@ -7500,10 +7628,6 @@ namespace WindowsFormsApplication1
         #region 资源清理与程序退出
         private void SafeCleanupBeforeDispose()
         {
-            // ★第49轮：退出时释放保留池里的训练帧（正常路径已由切方案释放，
-            //   此处兜住"编辑完直接关软件"的路径）。
-            try { ReleaseKeptFrames("程序退出"); } catch { }
-
             // ★第32轮 W1 配套：存图清理定时器改为字段持有后不会再被 GC"顺带"回收，
             //   退出时必须显式停掉，否则线程池回调会在 _jobs/日志资源收尾后继续访问它们。
             try
@@ -9701,6 +9825,9 @@ namespace WindowsFormsApplication1
                 //   IsDeadImageException（COM 包层裹一层/英文消息不再漏判）。
                 bool lost = ex is AtomicFileSave.IntegrityLostException;
                 bool deadImage = !lost && AtomicFileSave.IsDeadImageException(ex);
+                // ★第51轮：只把"死引用在哪"照实打进日志，本轮不改任何对象——
+                //   第47/48轮的清洗是边猜边改，够不到深层、够得到的又毁模板，两版都没修对现场。
+                if (deadImage) DiagnoseDeadImages("保存方案");
                 _logger.WriteLog("保存方案失败"
                     + (lost ? "（原方案文件需按提示用 .bak 核对恢复）"
                         : deadImage ? "（方案中仍有已释放的图像引用）" : "")
@@ -10983,6 +11110,7 @@ namespace WindowsFormsApplication1
                 //   "未改动任何文件"此时不成立）；死图像判断顺 InnerException 找三层。
                 bool lost = ex is AtomicFileSave.IntegrityLostException;
                 bool deadImage = !lost && AtomicFileSave.IsDeadImageException(ex);
+                if (deadImage) DiagnoseDeadImages("另存为");   // ★第51轮：同"保存"，只诊断不修改
                 _logger.WriteLog("另存为方案失败（path_1/界面已回滚为原方案，未影响在跑的旧方案）"
                     + (lost ? "，目标文件旧内容需按提示用 .bak 核对恢复"
                         : deadImage ? "，方案中仍有已释放的图像引用" : "") + ": " + ex.Message);
@@ -11231,9 +11359,6 @@ namespace WindowsFormsApplication1
                 _inspectionLifecycle.StopAccepting();
                 DisarmCommTrigger();
                 DrainPendingFrames();
-                // ★第49轮：旧工具树整体作废，编辑会话与保留池里的训练帧（它们属于旧块）必须在此释放，
-                //   否则既泄漏、又会在新方案下持有一堆与新块无关的图。
-                ReleaseKeptFrames("切换方案");
 
                 if (_comm.Omron.qiehuanzhong == 0)
                 {
