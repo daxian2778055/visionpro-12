@@ -4744,6 +4744,7 @@ namespace WindowsFormsApplication1
         private const int RetiredFrameGcCheckMask = 31;        // 每 32 张退役帧查一次内存
         private const long RetiredFrameGcBytesLimit = 1536L * 1024 * 1024;   // 工作集超 1.5GB 才触发
         private int _retiredFrameTicks;                        // 退役帧计数（Interlocked，不持锁）
+        private volatile bool _gcValveFired;                   // 安全阀是否处于"已突破"状态（迟滞用）
 
         /// <summary>退役的输入帧：**不再释放**——见上方注释。GC 负责回收"没人引用"的帧，
         /// 而仍被模板训练图/工具运行图引用的帧由引用关系保活，从而保证方案随时可存。</summary>
@@ -4755,12 +4756,24 @@ namespace WindowsFormsApplication1
             try
             {
                 long ws = Environment.WorkingSet;
-                if (ws > RetiredFrameGcBytesLimit)
+                bool over = ws > RetiredFrameGcBytesLimit;
+                // ★第51.1轮（自审第51轮抓到的 BUG）：原来写的是"超过阈值就触发 GC + 记日志"。
+                //   两处不妥：① GCCollectionMode.Optimized 允许 GC 自认"不划算"而什么都不做，工作集
+                //   不回落时每 32 帧（30fps≈1 秒）记一条，日志被刷屏；② 每秒一次无效 GC 白耗 CPU。
+                //   改为**迟滞**：只在"由低到高突破"这一刻触发并记一条，回落到阈值以下才复位再记一条。
+                //   多相机线程并发下最多把这两条各多记一次（bool 竞态），无害。
+                if (over && !_gcValveFired)
                 {
-                    // 优化式：交给 GC 自己判断值不值，划算才收；不划算时下一轮 32 帧后再看。
+                    _gcValveFired = true;
                     GC.Collect(2, GCCollectionMode.Optimized, false);
                     _logger.WriteLog("退役输入帧已改由 GC 回收：进程工作集 " + (ws / 1024 / 1024)
-                        + "MB 超过 " + (RetiredFrameGcBytesLimit / 1024 / 1024) + "MB，触发一次优化式 GC");
+                        + "MB 超过 " + (RetiredFrameGcBytesLimit / 1024 / 1024)
+                        + "MB，触发一次优化式 GC（持续高位只记本次，回落到阈值以下才复位）");
+                }
+                else if (!over && _gcValveFired)
+                {
+                    _gcValveFired = false;
+                    _logger.WriteLog("安全阀复位：进程工作集已回落到 " + (ws / 1024 / 1024) + "MB");
                 }
             }
             catch { }
@@ -4777,8 +4790,11 @@ namespace WindowsFormsApplication1
         {
             try
             {
-                List<string> dead = new List<string>();
-                HashSet<int> seen = new HashSet<int>();
+                // ★第51.1轮（自审第51轮抓到的 BUG）：扫描状态改为**每次新建的对象**。
+                //   原实现在本类里放 static int 计数、且 DiagnoseDeadImages 从不复位——
+                //   第二次诊断一进函数就被 2 万节点预算耗尽挡住，于是照样打出"未找到失效图像引用"。
+                //   诊断谎报"没问题"比没有诊断更糟：它会让人基于错误信息继续猜（第47/48轮的老路）。
+                DeadImageScan scan = new DeadImageScan();
                 int jobIdx = 0;
                 foreach (var mj in _jobs.Myjobs)
                 {
@@ -4788,18 +4804,14 @@ namespace WindowsFormsApplication1
                     {
                         ICogTool root = mj.job != null ? mj.job.VisionTool : null;
                         if (root == null) root = mj.block;   // job 未挂上（加载异常态）：退回覆盖 mj.block
-                        if (root != null) WalkToolForDeadImages(root, "job" + jobIdx, dead, seen, 0);
+                        if (root != null) WalkToolForDeadImages(root, "job" + jobIdx, scan, 0);
                     }
                     catch { }
                 }
-                if (dead.Count == 0)
-                {
-                    _logger.WriteLog("【" + scene + "】已释放图像诊断：未在工具树里找到失效图像引用"
-                        + "（说明死引用不在本程序持有的工具树里，或发生在序列化过程中）");
-                    return;
-                }
-                _logger.WriteLog("【" + scene + "】已释放图像诊断：共 " + dead.Count + " 处，位置如下");
-                for (int i = 0; i < dead.Count && i < 20; i++) _logger.WriteLog("    " + dead[i]);
+                // ★第51.1轮：结论必须区分"没查完"与"真没有"（DeadImageScan.Conclusion）——
+                //   截断时如实说可能漏报，否则"预算耗尽"会被读成"树里没有死引用"。
+                _logger.WriteLog("【" + scene + "】已释放图像诊断：" + scan.Conclusion());
+                for (int i = 0; i < scan.Dead.Count && i < 20; i++) _logger.WriteLog("    " + scan.Dead[i]);
             }
             catch (Exception exDiag)
             {
@@ -4807,16 +4819,10 @@ namespace WindowsFormsApplication1
             }
         }
 
-        private const int DeadImageWalkMaxDepth = 6;
-        private const int DeadImageWalkMaxNodes = 20000;
-        private const int DeadImageWalkMaxReport = 60;
-        private static int _deadImageWalkNodes;
-
-        private static void WalkToolForDeadImages(ICogTool tool, string scope, List<string> dead,
-            HashSet<int> seen, int depth)
+        private static void WalkToolForDeadImages(ICogTool tool, string scope, DeadImageScan scan, int depth)
         {
-            if (tool == null || depth > DeadImageWalkMaxDepth) return;
-            if (++_deadImageWalkNodes > DeadImageWalkMaxNodes || dead.Count >= DeadImageWalkMaxReport) return;
+            if (tool == null || depth > DeadImageScan.MaxDepth) return;
+            if (!scan.CountNode()) return;
             string name = "";
             try { name = tool.Name; } catch { }
             string here = scope + "/" + (name.Length > 0 ? name : tool.GetType().Name);
@@ -4824,8 +4830,8 @@ namespace WindowsFormsApplication1
             CogToolBlock blk = tool as CogToolBlock;
             if (blk != null)
             {
-                ScanTerminalsForDeadImages(blk.Inputs, here + ".In", dead);
-                ScanTerminalsForDeadImages(blk.Outputs, here + ".Out", dead);
+                ScanTerminalsForDeadImages(blk.Inputs, here + ".In", scan);
+                ScanTerminalsForDeadImages(blk.Outputs, here + ".Out", scan);
             }
 
             // 反射下钻：对所有"可读、非原始/非字符串/非枚举"的属性取值再递归——
@@ -4842,9 +4848,9 @@ namespace WindowsFormsApplication1
                     object v;
                     try { v = pi.GetValue(tool, null); } catch { continue; }
                     if (v == null) continue;
-                    if (v is ICogImage) { ReportIfDead(v, here + "." + pi.Name, dead); continue; }
+                    if (v is ICogImage) { ReportIfDead(v, here + "." + pi.Name, scan); continue; }
                     if (v is ICogTool) continue;   // 子工具由 Tools/DisabledTools 集合统一走，不重复
-                    WalkValueForDeadImages(v, here + "." + pi.Name, dead, seen, depth + 1);
+                    WalkValueForDeadImages(v, here + "." + pi.Name, scan, depth + 1);
                 }
             }
             catch { }
@@ -4853,8 +4859,8 @@ namespace WindowsFormsApplication1
             {
                 try
                 {
-                    foreach (ICogTool child in blk.Tools) WalkToolForDeadImages(child, here, dead, seen, depth + 1);
-                    foreach (ICogTool child in blk.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", dead, seen, depth + 1);
+                    foreach (ICogTool child in blk.Tools) WalkToolForDeadImages(child, here, scan, depth + 1);
+                    foreach (ICogTool child in blk.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", scan, depth + 1);
                 }
                 catch { }
             }
@@ -4865,8 +4871,8 @@ namespace WindowsFormsApplication1
                 {
                     try
                     {
-                        foreach (ICogTool child in grp.Tools) WalkToolForDeadImages(child, here, dead, seen, depth + 1);
-                        foreach (ICogTool child in grp.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", dead, seen, depth + 1);
+                        foreach (ICogTool child in grp.Tools) WalkToolForDeadImages(child, here, scan, depth + 1);
+                        foreach (ICogTool child in grp.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", scan, depth + 1);
                     }
                     catch { }
                 }
@@ -4874,13 +4880,11 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>非工具对象（Operator / Pattern / 集合元素）里的图像引用：直接测 + 再递归一层属性。</summary>
-        private static void WalkValueForDeadImages(object v, string path, List<string> dead,
-            HashSet<int> seen, int depth)
+        private static void WalkValueForDeadImages(object v, string path, DeadImageScan scan, int depth)
         {
-            if (v == null || depth > DeadImageWalkMaxDepth) return;
-            if (++_deadImageWalkNodes > DeadImageWalkMaxNodes || dead.Count >= DeadImageWalkMaxReport) return;
-            int id = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(v);
-            if (!seen.Add(id)) return;   // 同一实例多处引用只查一次（防环）
+            if (v == null || depth > DeadImageScan.MaxDepth) return;
+            if (!scan.CountNode()) return;
+            if (!scan.TryVisit(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(v))) return;   // 同一实例只下钻一次（防环/防重复）
             if (v is string || v.GetType().IsPrimitive) return;
 
             System.Collections.IEnumerable en = v as System.Collections.IEnumerable;
@@ -4892,10 +4896,10 @@ namespace WindowsFormsApplication1
                     foreach (object item in en)
                     {
                         if (item == null) { i++; continue; }
-                        if (item is ICogImage) ReportIfDead(item, path + "[" + i + "]", dead);
-                        else WalkValueForDeadImages(item, path + "[" + i + "]", dead, seen, depth + 1);
+                        if (item is ICogImage) ReportIfDead(item, path + "[" + i + "]", scan);
+                        else WalkValueForDeadImages(item, path + "[" + i + "]", scan, depth + 1);
                         i++;
-                        if (i > 200 || dead.Count >= DeadImageWalkMaxReport) break;   // 防超大集合
+                        if (i > 200 || scan.Dead.Count >= DeadImageScan.MaxReport) break;   // 防超大集合
                     }
                 }
                 catch { }
@@ -4914,14 +4918,14 @@ namespace WindowsFormsApplication1
                     object pv;
                     try { pv = pi.GetValue(v, null); } catch { continue; }
                     if (pv == null) continue;
-                    if (pv is ICogImage) ReportIfDead(pv, path + "." + pi.Name, dead);
-                    else WalkValueForDeadImages(pv, path + "." + pi.Name, dead, seen, depth + 1);
+                    if (pv is ICogImage) ReportIfDead(pv, path + "." + pi.Name, scan);
+                    else WalkValueForDeadImages(pv, path + "." + pi.Name, scan, depth + 1);
                 }
             }
             catch { }
         }
 
-        private static void ScanTerminalsForDeadImages(CogToolBlockTerminalCollection terminals, string scope, List<string> dead)
+        private static void ScanTerminalsForDeadImages(CogToolBlockTerminalCollection terminals, string scope, DeadImageScan scan)
         {
             if (terminals == null) return;
             for (int i = 0; i < terminals.Count; i++)
@@ -4931,7 +4935,7 @@ namespace WindowsFormsApplication1
                     object v;
                     try { v = terminals[i].Value; } catch { continue; }
                     ICogImage img = v as ICogImage;
-                    if (img != null) ReportIfDead(img, scope + "[" + terminals[i].Name + "]", dead);
+                    if (img != null) ReportIfDead(img, scope + "[" + terminals[i].Name + "]", scan);
                 }
                 catch { }
             }
@@ -4944,16 +4948,13 @@ namespace WindowsFormsApplication1
             catch { return false; }
         }
 
-        private static void ReportIfDead(object imgObj, string path, List<string> dead)
+        private static void ReportIfDead(object imgObj, string path, DeadImageScan scan)
         {
             ICogImage img = imgObj as ICogImage;
             if (img == null || IsCogImageUsable(img)) return;
-            if (dead.Count < DeadImageWalkMaxReport)
-            {
-                string tn = "";
-                try { tn = img.GetType().Name; } catch { }
-                dead.Add(path + "  →  " + tn);
-            }
+            string tn = "";
+            try { tn = img.GetType().Name; } catch { }
+            scan.Add(path + "  →  " + tn);
         }
 
         #endregion

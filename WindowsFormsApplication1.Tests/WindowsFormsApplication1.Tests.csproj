@@ -63,6 +63,9 @@
     <Compile Include="..\WindowsFormsApplication1\CommTriggerSource.cs" Link="Linked\CommTriggerSource.cs" />
     <!-- AtomicFileSave：★第47轮 方案原子写（先写 .saving、成功才替换、旧文件滚动 .bak，保存失败不损坏原 .vpp） -->
     <Compile Include="..\WindowsFormsApplication1\AtomicFileSave.cs" Link="Linked\AtomicFileSave.cs" />
+    <!-- DeadImageScan：★第51.1轮 死引用诊断的扫描状态（预算/截断/去重/结论口径）。
+         纯 BCL、零 Cognex 依赖，故可整文件链接；抽出同时修掉"static 计数不复位导致第二次诊断谎报未找到" -->
+    <Compile Include="..\WindowsFormsApplication1\DeadImageScan.cs" Link="Linked\DeadImageScan.cs" />
 
     <!-- ===== ★第43轮：Modbus TCP 回环（127.0.0.1 自建 FC3 从站，无硬件跑完整轮询链）=====
          闭包：Runtime + Link + 配置 + 接口 + 渲染/助手类（HslCommunication 走 NuGet，见上） -->
