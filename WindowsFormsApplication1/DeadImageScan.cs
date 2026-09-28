@@ -28,7 +28,9 @@ namespace WindowsFormsApplication1
         /// 就必须真能走到底，否则日志永远是"可能不完整"。撞到它的代价只是留痕，不再停整趟（见类注释 51.3）。</summary>
         public const int MaxDepth = 10;
 
-        /// <summary>单次扫描的节点预算：防反射遍历在超大工具树上把保存失败后的 UI 线程拖死。</summary>
+        /// <summary>单次扫描的节点预算：防反射遍历在超大工具树上把保存失败后的 UI 线程拖死。
+        /// 读日志口径提醒：<see cref="CountNode"/> 是先 ++Nodes 再与本值比较，所以"访问 N 节点"
+        /// 最坏会比预算多 1（走满即 20001）——这是 51.1 单测明确钉住的行为，不是漏统计。</summary>
         public const int MaxNodes = 20000;
 
         /// <summary>报告条数上限：日志只用来定位，几十条足够，封顶防止刷爆日志文件。</summary>
@@ -121,6 +123,26 @@ namespace WindowsFormsApplication1
         public bool TryVisit(int referenceHash)
         {
             return Seen.Add(referenceHash);
+        }
+
+        /// <summary>
+        /// 覆盖口径文案（★第51.5轮按外部实测修正两点，故放进本类以便单测钉住）：
+        /// ① 分母不能是 Myjobs 的定长 12 —— 它恒为 12 且字段初始化全非空，未挂树的 job 在 walker
+        ///    一进门 tool==null 就 return、零成本，既不该进分母也不该进分子；调用方按
+        ///    "mj.job != null || mj.block != null"计数后传入。
+        /// ② 分子是**走进去**的那一路，但"走到第 N 路" ≠ "第 N 路走完了"——预算若在这一路中途到点，
+        ///    原写法会打"走到第 12/12 路"却伴随 BudgetExhausted，读者以为全走完了（外部模拟实测：
+        ///    Nodes=20001、BudgetExhausted=True 时正是这个组合）。故预算耗尽时把最后一路标成"未完"。
+        /// myjob 序号恒带（含预算耗尽外的正常情形）：少一个分支就少一个会骗人的状态。
+        /// </summary>
+        public string CoverageText(int totalTrees, int reachedTrees, int lastMyjob)
+        {
+            string s = "挂树 " + totalTrees + " 路中走到第 " + reachedTrees + " 路";
+            if (reachedTrees <= 0)
+                return BudgetExhausted ? s + "（预算已尽，未进入任何一棵）" : s;
+            s += "（myjob" + lastMyjob;
+            if (BudgetExhausted) s += "，未完";
+            return s + "）";
         }
 
         /// <summary>

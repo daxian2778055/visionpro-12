@@ -4814,37 +4814,51 @@ namespace WindowsFormsApplication1
             DeadImageScan scan = new DeadImageScan();
             // ★第51.4轮 P2：配一套"走到第几路 job"的覆盖口径——只有耗时 + 节点 + 路数三者齐了，
             //   才判断得出诊断是走完了还是被掐在哪一路。声明在 try 外，异常分支也报得出。
-            int totalJobs = 0, reachedJobs = 0;
+            // ★第51.5轮按外部实测修正两点（文案与计数规则都进了 DeadImageScan.CoverageText，可单测）：
+            //   ① 分母不是"12"：Myjobs 是定长 12 数组、字段初始化全非空，totalJobs 恒为 12，
+            //      与"真挂了工具树的路线数"无关；未挂树的 job 在 walker 一进门 tool==null 就 return、
+            //      零成本，既不该进分母也不该进分子 ⇒ 改按 mj.job != null || mj.block != null 计数。
+            //   ② "走到第 N 路" ≠ "第 N 路走完了"：分子在**走进去之前**赋值，break 只能挡住后面的 job，
+            //      预算若在最后一路中途到点，原写法会打"走到第 12/12 路"却伴随 BudgetExhausted——
+            //      读者以为全走完了（外部模拟实测：Nodes=20001、BudgetExhausted=True 正是这个组合）。
+            //      ⇒ 预算耗尽时把最后一路标成"未完"。
+            int totalTrees = 0, reachedTrees = 0, lastMyjob = 0;
             try
             {
-                foreach (var mj in _jobs.Myjobs) { if (mj != null) totalJobs++; }
-                int jobIdx = 0;
+                foreach (var mj in _jobs.Myjobs)
+                    if (mj != null && (mj.job != null || mj.block != null)) totalTrees++;  // 分母=真挂树
+                int myjobIdx = 0, treeIdx = 0;
                 foreach (var mj in _jobs.Myjobs)
                 {
+                    myjobIdx++;                                       // 与 myjobN 序号一致（路径前缀用它）
                     if (mj == null) continue;
-                    if (scan.BudgetExhausted) break;   // ★预算已尽：后面几路一个节点都进不去，不空转
-                    jobIdx++;
-                    reachedJobs = jobIdx;              // 这一路是"实际走进去"的最后一路
+                    if (mj.job == null && mj.block == null) continue; // 未挂树：零成本，不计入覆盖
+                    if (scan.BudgetExhausted) break;                  // ★预算已尽：后面几路一个节点都进不去
+                    treeIdx++;
+                    reachedTrees = treeIdx;                           // 这一棵是"实际走进去"的最后一棵
+                    lastMyjob = myjobIdx;
                     try
                     {
                         ICogTool root = mj.job != null ? mj.job.VisionTool : null;
                         if (root == null) root = mj.block;   // job 未挂上（加载异常态）：退回覆盖 mj.block
-                        if (root != null) WalkToolForDeadImages(root, "job" + jobIdx, scan, 0);
+                        if (root != null) WalkToolForDeadImages(root, "job" + myjobIdx, scan, 0);
                     }
                     catch { }
                 }
                 // ★第51.1轮：结论必须区分"没查完"与"真没有"（DeadImageScan.Conclusion）——
                 //   截断时如实说可能漏报，否则"预算耗尽"会被读成"树里没有死引用"。
                 // ★第51.3轮：补上耗时/节点口径（第47轮"清洗耗时"那条日志在删清洗时没跟着搬过来）。
-                // ★第51.4轮：再补走到第 N/共 M 路 job——三者齐了才能归因到"掐在哪一路"。
+                // ★第51.4轮补路数、第51.5轮修正路数语义——三者齐了才能归因到"掐在哪一路"。
                 _logger.WriteLog("【" + scene + "】已释放图像诊断：耗时 " + scan.ElapsedMs
-                    + "ms、访问 " + scan.Nodes + " 节点、走到第 " + reachedJobs + "/" + totalJobs
-                    + " 路 job —— " + scan.Conclusion());
+                    + "ms、访问 " + scan.Nodes + " 节点、"
+                    + scan.CoverageText(totalTrees, reachedTrees, lastMyjob)
+                    + " —— " + scan.Conclusion());
                 for (int i = 0; i < scan.Dead.Count && i < 20; i++) _logger.WriteLog("    " + scan.Dead[i]);
             }
             catch (Exception exDiag)
             {
-                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms、走到第 " + reachedJobs + "/" + totalJobs + " 路 job）: " + exDiag.Message); } catch { }
+                // 异常分支同样报覆盖口径：跑到一半崩了时，"走到第几棵"是判断进度的唯一线索。
+                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms、" + scan.CoverageText(totalTrees, reachedTrees, lastMyjob) + "）: " + exDiag.Message); } catch { }
             }
         }
 

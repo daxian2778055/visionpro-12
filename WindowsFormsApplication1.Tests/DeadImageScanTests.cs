@@ -238,5 +238,65 @@ namespace WindowsFormsApplication1.Tests
                 "只是留痕、整趟没停，就不该出现停止原因");
             StringAssert.Contains(text, "集合元素超过 200 个");
         }
+
+        // ===== ★第51.5轮：覆盖口径"走到第 N/M 路"本身也会骗人 =====
+        // 分子在走进去之前赋值、break 只挡后面的 job ⇒ 预算在最后一路中途到点时，
+        // 会打出"走到第 12/12 路"却伴随 BudgetExhausted，读者以为全走完了
+        //（外部模拟实测：Nodes=20001、BudgetExhausted=True 正是这个组合）。
+        // 故文案移进 DeadImageScan.CoverageText，让这三件事各有一条单测钉住。
+
+        private static DeadImageScan ExhaustedScan()
+        {
+            var s = new DeadImageScan(0);             // 时间预算 0ms，必停
+            System.Threading.Thread.Sleep(10);
+            s.CountNode();
+            return s;
+        }
+
+        [TestMethod]
+        public void 预算在最后一路中途耗尽_覆盖文案必须把该路标成未完()
+        {
+            var scan = ExhaustedScan();
+            Assert.IsTrue(scan.BudgetExhausted);
+
+            string text = scan.CoverageText(12, 12, 12);
+            StringAssert.Contains(text, "挂树 12 路中走到第 12 路");
+            StringAssert.Contains(text, "未完",
+                "走到第 12/12 ≠ 第 12 路走完了；不标未完就是让日志冒充'查全了'");
+        }
+
+        [TestMethod]
+        public void 预算未耗尽时_覆盖文案不得出现未完()
+        {
+            var scan = new DeadImageScan();
+            string text = scan.CoverageText(12, 12, 12);
+
+            Assert.IsFalse(text.Contains("未完"),
+                "走完了却说没走完，同样是谎报（会白白引发一轮排查）");
+            StringAssert.Contains(text, "挂树 12 路中走到第 12 路");
+        }
+
+        [TestMethod]
+        public void 分母只算真挂了工具树的路_与定长12无关()
+        {
+            // Myjobs 恒为 12 个非空元素，未挂树的 job 一进门就 return、零成本，不该进分母。
+            var scan = new DeadImageScan();
+            string text = scan.CoverageText(3, 1, 5);
+
+            StringAssert.Contains(text, "挂树 3 路中走到第 1 路", "分母必须是挂树路数，不是 12");
+            StringAssert.Contains(text, "myjob5", "停在第几路要用 myjob 序号好定位");
+            Assert.IsFalse(text.Contains("12"), "不得退回定长 12 这个假分母");
+        }
+
+        [TestMethod]
+        public void 预算在进第一棵树之前耗尽_覆盖文案要说明未进入()
+        {
+            var scan = ExhaustedScan();
+            string text = scan.CoverageText(12, 0, 0);
+
+            StringAssert.Contains(text, "未进入任何一棵",
+                "第 0 路若不解释，会被读成'走了 0 路还查完了'");
+            Assert.IsFalse(text.Contains("myjob0"), "没走到任何一路就不该编造 myjob 序号");
+        }
     }
 }
