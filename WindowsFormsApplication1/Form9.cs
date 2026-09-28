@@ -220,9 +220,25 @@ namespace WindowsFormsApplication1
         {
             try
             {
-                AtomicFileSave.Write(Application.StartupPath + "//模板//" + textBox2.Text + ".vpp",
+                // ★第48轮复审P3①：模板名消毒——原名含 \ / : .. 等时旧实现只是拼路径失败；
+                //   AtomicFileSave 现在会 CreateDirectory，不消毒会把 ".." 顺手当目录建出来（路径穿越）。
+                //   口径复用 Form1 存图消毒（SafeNamePart：非法字符→_、尾部点/空格剥离、超长截断、空→"NG"），
+                //   消毒结果写回文本框，写方与后续加载方因此同规则。
+                string safeName = Form1.SafeNamePart(textBox2.Text);
+                if (!string.Equals(safeName, textBox2.Text, StringComparison.Ordinal))
+                    textBox2.Text = safeName;
+
+                // ★第48轮复审P3①：模板保存同样先清死引用——训练图可能是已被释放的采集帧，
+                //   死图留在序列化图里必然抛"无法访问已释放的对象"（与方案保存同款清洗，模板是单工具树）。
+                int cleaned = 0, nulled = 0;
+                List<string> sites = new List<string>();
+                Form1.SanitizeToolTree(Inspect1, "模板", sites, ref cleaned, ref nulled);
+
+                AtomicFileSave.Write(Application.StartupPath + "//模板//" + safeName + ".vpp",
                     tmp => CogSerializer.SaveObjectToFile(Inspect1, tmp));
-                tishi = "保存模板成功";
+                tishi = (cleaned + nulled > 0)
+                    ? "保存模板成功（已修复失效图像引用 " + (cleaned + nulled) + " 处）"
+                    : "保存模板成功";
             }
             catch (Exception ex)
             {

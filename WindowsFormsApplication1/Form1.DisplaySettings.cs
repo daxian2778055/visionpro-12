@@ -1244,7 +1244,7 @@ namespace WindowsFormsApplication1
         }
 
         // 写方与回构方（chatu_fangfa、相机2 列表打开）必须用同一规则，否则按名找不到图。
-        private static string SafeNamePart(string raw)
+        internal static string SafeNamePart(string raw)
         {
             string s = (raw ?? "").Trim();
             if (s.Length == 0) return "NG";
