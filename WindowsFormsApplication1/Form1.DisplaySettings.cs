@@ -280,6 +280,89 @@ namespace WindowsFormsApplication1
             display();
         }
 
+        /// <summary>
+        /// ★第56轮 P2：显示降频参数的**唯一生效入口**（启动读 code.ini 与配置窗点"应用"都走这里）。
+        /// 三条纪律：
+        ///  ① 生效值与界面值分开——控件里填的是"想要的"，回显的是 Normalize 之后**真正生效**的；
+        ///     越界项当场体现在回显里（本项目反复出现的"参数改了没反应"就靠这句收口）。
+        ///  ② 只有 persist=true 才写 code.ini：启动读回时反写盘会把脏值/默认值固化进文件。
+        ///  ③ 参数整份换引用交给调度器（RenderBudget.ApplyConfig 只换一个 volatile 引用），
+        ///     检测线程要么看到整套旧参数、要么整套新参数，不会看到"阈值已改、权重还没改"。
+        /// 全局最小间隔与交互间隔是限速**总量**的旋钮，不属于 DisplayThrottleSettings，
+        /// 由调用方先写进字段、本方法负责落盘与回显——所以"应用"不需要重启即生效。
+        /// </summary>
+        private void ApplyDisplayThrottle(DisplayThrottleSettings settings, bool persist)
+        {
+            if (settings == null) return;
+            _displayThrottle = settings;
+            _renderBudget.ApplyConfig(settings);
+            if (persist)
+            {
+                _config.WriteString("Display", "RenderProtectHz", settings.ProtectHz.ToString());
+                _config.WriteString("Display", "RenderWeight", settings.Weight.ToString());
+                _config.WriteString("Display", "RenderHighBandHz", settings.HighBandHz.ToString());
+                _config.WriteString("Display", "RenderHighMaxCutPercent", settings.HighMaxCutPercent.ToString());
+                _config.WriteString("Display", "RenderMidMaxCutPercent", settings.MidMaxCutPercent.ToString());
+                _config.WriteString("Display", "RenderMinIntervalMs", _renderMinIntervalMs.ToString());
+                _config.WriteString("Display", "RenderInteractiveIntervalMs", _renderInteractiveIntervalMs.ToString());
+            }
+            SyncRenderThrottleControls(settings);
+            _logger.WriteLog("显示降频生效：全局间隔=" + _renderMinIntervalMs + "ms 交互间隔="
+                + _renderInteractiveIntervalMs + "ms｜阈值=" + settings.ProtectHz + "Hz 权重=" + settings.Weight
+                + "｜降幅上限 中带≤" + settings.MidMaxCutPercent + "% 高频带(≥" + settings.HighBandHz
+                + "Hz)≤" + settings.HighMaxCutPercent + "%｜降幅只减不加（预算有余也主动压快路）"
+                + (settings.IsLegacy ? "｜口径=第54轮回退基线" : "")
+                + (persist ? "（已写入 code.ini）" : "（启动读回，未写盘）"));
+        }
+
+        /// <summary>生效值回填配置窗控件与回显 label（Normalize 后的真值，不是控件原样）。</summary>
+        private void SyncRenderThrottleControls(DisplayThrottleSettings s)
+        {
+            nudRenderMinIntervalMs.Value = RenderNudValue(nudRenderMinIntervalMs, _renderMinIntervalMs);
+            nudRenderInteractiveIntervalMs.Value = RenderNudValue(nudRenderInteractiveIntervalMs, _renderInteractiveIntervalMs);
+            nudRenderProtectHz.Value = RenderNudValue(nudRenderProtectHz, s.ProtectHz);
+            nudRenderWeight.Value = RenderNudValue(nudRenderWeight, s.Weight);
+            nudRenderHighBandHz.Value = RenderNudValue(nudRenderHighBandHz, s.HighBandHz);
+            nudRenderHighMaxCutPercent.Value = RenderNudValue(nudRenderHighMaxCutPercent, s.HighMaxCutPercent);
+            nudRenderMidMaxCutPercent.Value = RenderNudValue(nudRenderMidMaxCutPercent, s.MidMaxCutPercent);
+            labelRenderEffective.Text = "生效值：间隔 " + _renderMinIntervalMs + "ms（交互 "
+                + _renderInteractiveIntervalMs + "ms，0=不限速）｜阈值 " + s.ProtectHz + "Hz｜权重 " + s.Weight
+                + "｜降幅上限 中带≤" + s.MidMaxCutPercent + "%／≥" + s.HighBandHz + "Hz≤" + s.HighMaxCutPercent + "%"
+                + "｜只减不加：预算有余也主动压快路（各路应得速率合计不超封顶，启动估计期一次性临时超出）"
+                + "｜阈值与权重都从快路那份封顶里出，不是免费的"
+                + (s.IsLegacy ? "｜口径=第54轮回退基线" : "");
+        }
+
+        /// <summary>
+        /// 显式钳位后返回：NumericUpDown 的 setter 自身只会钳到 Min/Max（已在本项目实测确认），
+        /// 这里再钳一次是为了让"回显值=生效值"在界面上成立，而不是被控件悄悄改数。
+        /// </summary>
+        private static decimal RenderNudValue(NumericUpDown nud, int value)
+        {
+            decimal v = value;
+            if (v < nud.Minimum) return nud.Minimum;
+            if (v > nud.Maximum) return nud.Maximum;
+            return v;
+        }
+
+        /// <summary>
+        /// 配置窗「应用显示降频」：读控件 → Normalize 兜脏值 → 生效 + 落盘 → 日志与回显。
+        /// 只挂在按钮上（不挂 ValueChanged）：检测线程正在按当前参数裁决，逐字段即时下发会让它
+        /// 看到半套组合；同时给"改了一半不想应用"留出反悔余地。
+        /// </summary>
+        private void buttonRenderApply_Click(object sender, EventArgs e)
+        {
+            _renderMinIntervalMs = (int)nudRenderMinIntervalMs.Value;
+            _renderInteractiveIntervalMs = (int)nudRenderInteractiveIntervalMs.Value;
+            DisplayThrottleSettings s;
+            int fixedCount = DisplayThrottleSettings.Normalize((int)nudRenderProtectHz.Value,
+                (int)nudRenderWeight.Value, (int)nudRenderHighBandHz.Value,
+                (int)nudRenderHighMaxCutPercent.Value, (int)nudRenderMidMaxCutPercent.Value, out s);
+            ApplyDisplayThrottle(s, true);
+            if (fixedCount > 0)
+                _logger.WriteLog("显示降频参数有 " + fixedCount + " 项越界，已回默认后生效（以回显行为准）");
+        }
+
         private void baoguang_set()
         {
             if (!WaitForManagerLoaded())

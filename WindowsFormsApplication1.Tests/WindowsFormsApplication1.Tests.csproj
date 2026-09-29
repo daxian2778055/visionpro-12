@@ -69,9 +69,14 @@
     <!-- FrameAccounting：★第53轮 帧账本（丢弃原因三组分类 + 与「漏帧」对账的诚实口径）。
          同样纯 BCL、零 Cognex 依赖，可整文件链接 -->
     <Compile Include="..\WindowsFormsApplication1\FrameAccounting.cs" Link="Linked\FrameAccounting.cs" />
-    <!-- RenderBudget：★第54轮 显示渲染预算的按需求解分摊（低频路一帧不丢、闲置份额让给高频路、
-         总放行量仍封顶在 1000/RenderMinIntervalMs）。裁决只决定"显不显示"，与检测链路无关 -->
+    <!-- RenderBudget：★第56轮 显示渲染预算 = 低频保护阈值 + 权重主动降幅 + 水位二分（低频路一帧不丢、
+         闲置份额让给高频路）。封顶 1000/RenderMinIntervalMs 是解出来的份额上界，不是每次申请硬卡的闸：
+         实测启动/换模式的帧率估计期会一次性临时超出，稳态窗口才守住上界——单测断言因此都写在稳态窗口上。
+         裁决只决定"显不显示"，与检测链路无关 -->
     <Compile Include="..\WindowsFormsApplication1\RenderBudget.cs" Link="Linked\RenderBudget.cs" />
+    <!-- RenderCostMeter：★第56轮 单次耗时实测累加器（裁决自身 / record 显示 / 原图显示三张表），
+         窗口滚动 + 无锁，用来回答"限频会不会反过来加重负荷"以及"每路应得间隔是否真有余量" -->
+    <Compile Include="..\WindowsFormsApplication1\RenderCostMeter.cs" Link="Linked\RenderCostMeter.cs" />
 
     <!-- ===== ★第43轮：Modbus TCP 回环（127.0.0.1 自建 FC3 从站，无硬件跑完整轮询链）=====
          闭包：Runtime + Link + 配置 + 接口 + 渲染/助手类（HslCommunication 走 NuGet，见上） -->

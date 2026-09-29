@@ -687,6 +687,7 @@
     <Compile Include="DeadImageScan.cs" />
     <Compile Include="FrameAccounting.cs" />
     <Compile Include="RenderBudget.cs" />
+    <Compile Include="RenderCostMeter.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Properties\Resources.Designer.cs">

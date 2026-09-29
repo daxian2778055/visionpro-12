@@ -399,6 +399,10 @@ namespace WindowsFormsApplication1
             job.triggerMode = newMode;
             if (ApplyTriggerModeToCameraHardware(slot))
             {
+                // ★第56轮 P1：换触发模式=换帧率量级（连续运行 30fps ↔ 通讯/软触发 1~3fps）。
+                //   显示分摊按**实测帧率**记账，留着旧模式的周期估计会让这路按 30fps 白占封顶，
+                //   把邻居挤掉一半显示量——所以真生效的那一刻清账重采（只在成功分支，失败已回滚旧模式）。
+                _renderBudget.ResetPathAccounting(slot);
                 // ★第26轮：任何一次成功的模式变化都清该路通讯触发待处理记录（原来只在切进"通讯触发"时清，
                 //   切出/平级切换时残留记录会串接旧的 CommTriggerSource，导致回执发错连接）。
                 // ★第28轮①：挪进成功分支——本次下发失败时模式已回滚，旧模式下待收的触发记录不该一起清掉。
@@ -426,7 +430,12 @@ namespace WindowsFormsApplication1
             for (int i = 0; i < max; i++)
             {
                 if (_cameraCtrl.Cameras[i] != null)
+                {
+                    // ★第56轮 P1：这里覆盖启动/切方案/重连三种"整批重设模式"的场合——
+                    //   帧率账必须跟着清，否则上一套方案（或上一台相机）的周期估计会带进新的一轮分摊。
+                    _renderBudget.ResetPathAccounting(i);
                     ApplyTriggerModeToCameraHardware(i);
+                }
             }
         }
 

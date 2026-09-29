@@ -205,6 +205,16 @@ namespace WindowsFormsApplication1
         //   按需求解后同场景快路 51%、慢路 100%、总量 62.4/s 仍在上限内。详见 RenderBudget.cs 头部。
         private int _renderMinIntervalMs = 16;
         private readonly RenderBudget _renderBudget = new RenderBudget();
+        // ★第56轮：显示降频的阈值/权重参数（窗体侧留一份生效副本，配置窗回填与日志都用它；
+        //   调度器内部也有一份不可变引用，两者由 ApplyDisplayThrottle 同一次赋值保持一致）。
+        private DisplayThrottleSettings _displayThrottle = DisplayThrottleSettings.Legacy;
+        // ★第56轮 P0：先量再改。本轮的"阈值以下不降频"要靠**实测帧率**判，
+        //   "允许超封顶保感官"要不要开要靠**单次渲染真实成本**判——这两个数字此前只有离线模拟值。
+        //   三个表分别量：VisionPro record 渲染、原图快路径渲染、以及分摊裁决自身
+        //   （最后一个直接回答"限频会不会反过来加重负荷"）。
+        private readonly RenderCostMeter _recordRenderCost = new RenderCostMeter(1000);
+        private readonly RenderCostMeter _rawRenderCost = new RenderCostMeter(1000);
+        private readonly RenderCostMeter _claimCost = new RenderCostMeter(1000);
         // ★ 原图快速路径（弱机现场开关，code.ini [Display]RawImageMode 持久化）：
         //   只贴原图，跳过 VisionPro record 深拷贝与 overlay 光栅化，CPU 降一个量级。
         private volatile bool _displayRawImage;
@@ -272,9 +282,40 @@ namespace WindowsFormsApplication1
             // ★F6 修复（2026-09-20）：原默认 20 与 RenderMinIntervalMs 默认 16 组合下，
             //   使用条件（_renderInteractiveIntervalMs < interval）恒假 → 交互节流永不生效（摆设）。
             //   默认改为 0（交互时不限速）：弱机把常规间隔调大（如 33）后，用户活动即放宽到不限速保流畅。
-            if (!int.TryParse(_config.ReadString("Display", "RenderInteractiveIntervalMs", "0"), out _renderInteractiveIntervalMs)
+            // ★第56轮 P4：默认 0 又被证明是**真正的性能反转点**——第54轮把常规侧收得很紧，
+            //   交互侧却整段绕开封顶：12 路 30fps 时瞬时 360 次/秒 = 封顶(62.5)的 5.8 倍，
+            //   而 UserActivityFilter 里 WM_MOUSEMOVE 每帧都续期 120ms 窗口，鼠标拖着就一直不退出。
+            //   默认改为 8ms（≈125 次/秒，仍比常规快一倍，观感跟手但不打满 UI 线程）；
+            //   显式配 0 保留"交互时完全不限速"的老语义，弱机现场可自行权衡。
+            if (!int.TryParse(_config.ReadString("Display", "RenderInteractiveIntervalMs", "8"), out _renderInteractiveIntervalMs)
                 || _renderInteractiveIntervalMs < 0 || _renderInteractiveIntervalMs > 1000)
-                _renderInteractiveIntervalMs = 0;
+                _renderInteractiveIntervalMs = 8;
+            // ★第56轮：阈值 + 权重（现场提的两条建议，按"能和封顶共存"的方式落地，详见 RenderBudget.cs 头部）。
+            //   一律 TryParse：解析不出来的按越界交 Normalize 回默认；Normalize 会回报被修的项数并写日志，
+            //   让"我改了没生效"当场可见。默认 RenderWeight=0（=不启用新口径的主动降幅部分），
+            //   RenderProtectHz=10（阈值以下一帧不丢）。★默认不是免费的：封顶是零和的，保护带先从
+            //   封顶扣一份额度，剩下的才分摊——离线模拟实测（5 路 8fps + 7 路 30fps 饱和场景）：
+            //   8fps 的路 48 帧显示 48 帧，30fps 的路每人 31 帧→21 帧；第54轮同一场景把 8fps 压到 32 帧
+            //   （水位 5.2fps）。只有当各路都在阈值以上（保护带为空）时分摊结果才与第54轮一致。
+            //   ★本轮早期草案的 RenderFloorMode / RenderHardCeilingMs 两个键已随"下限/越顶"口径一起删除：
+            //   主动降幅只减不加，"想要的下限放不下封顶"那个保封顶/保感官的取舍分支根本走不到。
+            //   （注：封顶是解析式的，估计期实测放行量会一次性临时超出，见 RenderBudget 头部。
+            //   旧 ini 里若残留这两行不会被读取，无需手工清理。）
+            int protectHz, weight, highBand, highCut, midCut;
+            if (!int.TryParse(_config.ReadString("Display", "RenderProtectHz", "10"), out protectHz)) protectHz = -1;
+            if (!int.TryParse(_config.ReadString("Display", "RenderWeight", "0"), out weight)) weight = -1;
+            if (!int.TryParse(_config.ReadString("Display", "RenderHighBandHz", "50"), out highBand)) highBand = -1;
+            if (!int.TryParse(_config.ReadString("Display", "RenderHighMaxCutPercent", "50"), out highCut)) highCut = -1;
+            if (!int.TryParse(_config.ReadString("Display", "RenderMidMaxCutPercent", "25"), out midCut)) midCut = -1;
+            DisplayThrottleSettings throttleSettings;
+            int throttleFixed = DisplayThrottleSettings.Normalize(protectHz, weight, highBand, highCut,
+                midCut, out throttleSettings);
+            ApplyDisplayThrottle(throttleSettings, false);
+            if (throttleFixed > 0)
+                _logger.WriteLog("显示降频参数有 " + throttleFixed + " 项越界/不可解析，已回默认："
+                    + "阈值=" + throttleSettings.ProtectHz + "Hz 权重=" + throttleSettings.Weight
+                    + " 高频带=" + throttleSettings.HighBandHz + "Hz 高带降幅=" + throttleSettings.HighMaxCutPercent
+                    + "% 中带降幅=" + throttleSettings.MidMaxCutPercent + "%");
             comboBoxLayoutMode.SelectedIndexChanged -= comboBoxLayoutMode_SelectedIndexChanged;
             comboBoxLayoutMode.Items.Clear();
             comboBoxLayoutMode.Items.AddRange(new object[] { "方格布局", "行布局" });
@@ -4898,9 +4939,27 @@ namespace WindowsFormsApplication1
                 // ★第54轮：显示分摊只读快照。判读"某路画面不刷新"时先分清是显示预算还是检测侧丢帧——
                 //   本节的应得间隔只决定"这一帧显不显示"，检测、计数、存图、PLC 反馈都不受它影响。
                 int renderNowTick = System.Environment.TickCount;
+                var th = _displayThrottle;
                 lines.Add("显示分摊｜全局最小间隔=" + _renderMinIntervalMs + "ms｜交互间隔="
                     + _renderInteractiveIntervalMs + "ms（0=交互时不限速）｜活跃 "
                     + _renderBudget.ActivePaths(renderNowTick) + " 路（活跃=2 秒内请求过渲染）");
+                lines.Add("  参数｜阈值=" + th.ProtectHz + "Hz（封顶放得下时阈值以下一帧不丢，放不下见下方⚠）｜权重=" + th.Weight
+                    + "｜≥" + th.HighBandHz + "Hz 降幅上限 " + th.HighMaxCutPercent + "%｜中带降幅上限 "
+                    + th.MidMaxCutPercent + "%（权重>0 即主动压快路显示，预算有余也照样压——用显示换 CPU）"
+                    + (th.IsLegacy ? "｜口径=第54轮回退基线（阈值与权重同时为0）" : ""));
+                int pressure = _renderBudget.PressureCode(renderNowTick, _renderMinIntervalMs);
+                lines.Add("  实况｜水位=" + _renderBudget.WaterLevelFps(renderNowTick, _renderMinIntervalMs)
+                    + "fps｜压力=" + RenderPressureText(pressure)
+                    + "｜封顶占用=" + _renderBudget.CapUsedPercent(renderNowTick, _renderMinIntervalMs)
+                    + "%（主动降幅省下来的余量=100−本值）"
+                    + (_renderBudget.ProtectionDemoted(renderNowTick, _renderMinIntervalMs) == 1
+                        ? "｜⚠ 封顶不够，有路被剥夺保护带" : ""));
+                lines.Add("  实测｜" + RenderCostText("裁决", _claimCost) + "｜"
+                    + RenderCostText("record显示", _recordRenderCost) + "｜"
+                    + RenderCostText("原图显示", _rawRenderCost) + "（单次1秒窗均值/峰值，μs）");
+                lines.Add("  末帧补显｜某路停止后，第一个被限速挡掉的帧仍显示一次（每路每次停止最多 1 帧，"
+                    + "下面逐路列的\"其中停止补显\"就是这些帧）。救不回来的另一半：接收前就被丢弃的帧没有像素可画。"
+                    + "所以\"停止后画面不动\"先看上面的接收前/接收后丢弃计数——多数情况是\"没有新帧\"，不是\"新帧被限频\"。");
                 var jobs = _jobs;
                 for (int i = 0; i < 12; i++)
                 {
@@ -4926,10 +4985,17 @@ namespace WindowsFormsApplication1
                         + "（其中停止态 " + _frameAcct.Get(i, FrameAccounting.Reason.ManualTriggerStopped)
                         + "，按设计只采图不计数）");
                     int entitledMs = _renderBudget.EntitledMs(i, renderNowTick, _renderMinIntervalMs);
-                    lines.Add("  显示分摊｜相机" + (i + 1) + " 应得间隔 "
-                        + (entitledMs <= 0 ? "0ms（不限速）" : entitledMs + "ms")
+                    int measFps = _renderBudget.MeasuredFps(i, renderNowTick);
+                    lines.Add("  显示分摊｜相机" + (i + 1)
+                        + " 实测" + (measFps <= 0 ? "无帧率样本（该路不受限速，等采样）"
+                                                  : measFps + "fps／周期" + _renderBudget.MeasuredPeriodMs(i) + "ms")
+                        + (_renderBudget.IsPathProtected(i, renderNowTick, _renderMinIntervalMs) == 1 ? "｜保护带内" : "")
+                        + "｜应得间隔 " + (entitledMs <= 0 ? "0ms（不限速）" : entitledMs + "ms")
                         + (entitledMs <= 0 ? "" : "≈" + (1000 / entitledMs) + " 次/秒")
-                        + "（低频路应得=自身周期⇒一帧不丢，高频路按剩余预算分摊）");
+                        + "｜上一秒显示 " + _renderBudget.GrantedPerSec(i)
+                        + " 次（累计 " + _renderBudget.GrantTotal(i) + "）"
+                        + (_renderBudget.TailFlushTotal(i) == 0 ? ""
+                            : "｜其中停止补显 " + _renderBudget.TailFlushTotal(i) + " 次（旁路额度，不占份额）"));
                 }
             }
             catch (Exception ex)
@@ -4944,6 +5010,34 @@ namespace WindowsFormsApplication1
             // 弹窗只给现场一眼判读，超长时截断并指向日志（日志才是完整留痕）。
             string popup = text.Length <= 1500 ? text : text.Substring(0, 1500) + "\r\n…（其余见运行日志）";
             MessageBox.Show(this, popup, "帧计数归因（只读）", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        /// <summary>
+        /// 分摊压力档编码→现场判读。主动降幅口径只有两档（旧草案的"下限不可行·等比降档"与
+        /// "下限优先·越封顶"随那两个旋钮一起删除）。1 不是显示 bug：它说明各路想显的总量超过封顶，
+        /// 水位在降幅上限之上又压了一刀——此时加权重仍然有效（只会更低），但封顶不是权重造成的。
+        /// </summary>
+        private static string RenderPressureText(int pressure)
+        {
+            switch (pressure)
+            {
+                case 0: return "0（按各自降幅上限分发后封顶还有余）";
+                case 1: return "1（水位限速：想显的比封顶多，各路在上限之上再被压一刀）";
+                default: return pressure + "（未知编码）";
+            }
+        }
+
+        /// <summary>
+        /// 单次耗时实测一行（微秒）。上一秒没有样本时区分"这条路径本进程从未走过"
+        /// 与"刚刚安静下来"——两者对参数判断的含义完全不同。
+        /// </summary>
+        private static string RenderCostText(string name, RenderCostMeter meter)
+        {
+            int n = meter.SamplesPerWindow();
+            if (n > 0)
+                return name + " " + n + "次/秒·均值" + meter.AvgMicroseconds() + "μs·峰值" + meter.PeakMicroseconds() + "μs";
+            if (meter.TotalSamples() == 0) return name + " 尚无样本";
+            return name + " 上一秒无样本（全程均值" + meter.OverallAvgMicroseconds() + "μs）";
         }
 
         private void 手动诊断ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -6034,13 +6128,22 @@ namespace WindowsFormsApplication1
                                 //   UI 尚未消化完上一帧渲染时本帧直接丢弃（允许漏显示中间帧），
                                 //   避免高频下渲染委托在 UI 消息队列无限积压、拖垮界面线程与 CPU。
                                 // ★ 显示降载（2026-09-19）：单飞之上再叠全局速率门控（两次渲染启动最小间隔，
-                                //   code.ini [Display]RenderMinIntervalMs 可调），给光栅化总量封顶；
-                                //   每相机饥饿计数防某路被高频路永久挤占。
+                                //   code.ini [Display]RenderMinIntervalMs 可调），给光栅化总量封顶。
+                                //   封顶之内**怎么分**由 RenderBudget 裁决（第54轮按需求解分摊、
+                                //   第56轮阈值保护带 + 权重主动降幅）：每路有自己的到期时隙，
+                                //   不再需要早期那版"被拒 40 次放行一次"的饥饿逃生阀（已随第54轮删除）。
                                 int slotRender = int.Parse(myjob.path_number) - 1;
                                 if (slotRender >= 0 && slotRender < 12
                                     && Interlocked.CompareExchange(ref _renderBusy[slotRender], 1, 0) == 0)
                                 {
-                                    if (!TryClaimRenderBudget(slotRender))
+                                    bool renderClaimed = TryClaimRenderBudget(slotRender);
+                                    // ★第56轮 P5：本路已停（yun==0）时，被限速挡掉的那一帧补显示一次
+                                    //   （每路每次停止只一次，运行态顺手复位额度）。可救的只有"已经跑完
+                                    //   检测、像素还在手上"的这一帧；接收前就被丢的帧（队列溢出、停止排空）
+                                    //   没有像素可画，救不回来——所以这不是"保证显示最后一帧"。
+                                    bool tailShown = _renderBudget.TryClaimTailFrame(slotRender,
+                                        Environment.TickCount, myjob.yun != 0, !renderClaimed);
+                                    if (!renderClaimed && !tailShown)
                                     {
                                         Volatile.Write(ref _renderBusy[slotRender], 0);
                                     }
@@ -6640,6 +6743,9 @@ namespace WindowsFormsApplication1
         /// </summary>
         private void RenderCameraFrame(int slot, ICogRecord temprecord, Myjob myjob, int camIdx)
         {
+            // ★第56轮 P0：量**一次真渲染**的耗时（record 光栅化路径）。与 ShowRawFrame 的原图路径
+            //   分开计量——两者差一个量级，混在一起就回答不了"降一次显示到底省下多少 CPU"。
+            long renderT0 = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 Cognex.VisionPro.CogRecordDisplay _cd = _cogDisplay[slot];
@@ -6687,6 +6793,8 @@ namespace WindowsFormsApplication1
             finally
             {
                 Volatile.Write(ref _renderBusy[slot], 0);
+                _recordRenderCost.Record(System.Diagnostics.Stopwatch.GetTimestamp() - renderT0,
+                    System.Environment.TickCount);
             }
         }
 
@@ -6704,7 +6812,13 @@ namespace WindowsFormsApplication1
                 && _renderInteractiveIntervalMs < interval
                 && unchecked(now - _lastUserTick) < 120)
                 interval = _renderInteractiveIntervalMs;
-            return _renderBudget.TryClaim(slot, now, interval);
+            // ★第56轮 P0：裁决自身也量。本轮新口径每路要多解 2~3 轮二分（每轮遍历 12 路），
+            //   "限频不能反过来加重负荷"这条不能靠推测——弹窗里读 _claimCost 的实测微秒值。
+            //   开销只有两次 GetTimestamp（数十纳秒级）加一次无锁累加，相对被测的 2~3 微秒可忽略。
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            bool claimed = _renderBudget.TryClaim(slot, now, interval);
+            _claimCost.Record(System.Diagnostics.Stopwatch.GetTimestamp() - t0, now);
+            return claimed;
         }
 
         /// <summary>
@@ -6742,6 +6856,9 @@ namespace WindowsFormsApplication1
         private void ShowRawFrame(int slot, Bitmap frame)
         {
             bool assigned = false;
+            // ★第56轮 P0：与 record 路径分开的实测——原图只是换 PictureBox.Image，
+            //   成本低一个量级；两条路径的成本都必须有数，否则"要不要放开封顶"无从判断。
+            long renderT0 = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 PictureBox pb = _rawBox[slot];
@@ -6785,6 +6902,8 @@ namespace WindowsFormsApplication1
             finally
             {
                 Volatile.Write(ref _renderBusy[slot], 0);
+                _rawRenderCost.Record(System.Diagnostics.Stopwatch.GetTimestamp() - renderT0,
+                    System.Environment.TickCount);
             }
         }
 
