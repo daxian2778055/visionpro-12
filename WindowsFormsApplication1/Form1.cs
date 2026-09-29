@@ -4981,9 +4981,15 @@ namespace WindowsFormsApplication1
         {
             if (tool == null) return;
             // ★第51.2轮 P2：到深度上限也要留痕——直接 return 会把"没走到底"说成"没有"
+            // ★第51.8轮：留痕改为**带路径**。原来只说"超过 10 层"，根本分不清是 PMAlign 那条
+            //   真太深、还是某个无关的 COM 深分支先撞到——两者要往相反方向调，没有路径就是盲调。
             if (depth > DeadImageScan.MaxDepth)
             {
-                scan.MarkTruncated("下钻深度超过 " + DeadImageScan.MaxDepth + " 层");
+                string who = "";
+                try { who = tool.Name; } catch { }
+                if (string.IsNullOrEmpty(who)) { try { who = tool.GetType().Name; } catch { } }
+                scan.MarkTruncated("下钻深度超过 " + DeadImageScan.MaxDepth + " 层（层号 " + depth
+                    + "）：" + scope + "/" + who);
                 return;
             }
             if (!scan.CountNode()) return;
@@ -5061,9 +5067,12 @@ namespace WindowsFormsApplication1
         {
             if (v == null) return;
             // ★第51.2轮 P2：同上，深度截断必须留痕
+            // ★第51.8轮：同样带路径——这一处是"值对象链"（Operator/Items/Pattern/TrainImage），
+            //   正是要走到 TrainImage 的那条路，路径信息在这里最值钱。
             if (depth > DeadImageScan.MaxDepth)
             {
-                scan.MarkTruncated("下钻深度超过 " + DeadImageScan.MaxDepth + " 层");
+                scan.MarkTruncated("下钻深度超过 " + DeadImageScan.MaxDepth + " 层（层号 " + depth
+                    + "）：" + path);
                 return;
             }
             if (!scan.CountNode()) return;

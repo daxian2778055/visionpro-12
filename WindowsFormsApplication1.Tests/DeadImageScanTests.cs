@@ -198,10 +198,44 @@ namespace WindowsFormsApplication1.Tests
         [TestMethod]
         public void 时间预算有值时_正常小扫描不会被误判超时()
         {
-            var scan = new DeadImageScan();           // 默认 1500ms
+            var scan = new DeadImageScan();           // 默认 3000ms（★第51.8轮由 1500 实测校准）
             Assert.IsTrue(scan.CountNode());
             Assert.IsFalse(scan.Truncated, "刚建好就报截断说明计时口径写错了");
-            Assert.AreEqual(1500, DeadImageScan.MaxElapsedMs, "时间预算口径若改动，日志注释需同步");
+            Assert.AreEqual(3000, DeadImageScan.MaxElapsedMs, "时间预算口径若改动，日志注释需同步");
+        }
+
+        // ===== ★第51.8轮：三个预算常量按**实测**校准，不再是推理 =====
+        // 依据：2026-09-29 现场真跑手动诊断（bin\Release\Log\2026-09-29.txt），连点 4 次：
+        //   · 4/4 次结论都是"扫描被截断（下钻深度超过 10 层）"⇒ 深度 10 不够，一次都没走到底；
+        //   · 热趟 424ms/12570、471ms/12570、523ms/12576 节点 ⇒ 约 0.035ms/节点
+        //     （推翻 51.2 注释里"0.23ms/节点、1.5 秒≈6500 节点"，那个数错了 6.6 倍）；
+        //   · 冷启动首趟 1400ms/7608 节点 ⇒ 0.184ms/节点，慢 5 倍，是真正的最坏情况。
+        // 这三个数以前全靠推理，51.2 那次 6→10 就是推理拍的，结果没解决问题。
+        [TestMethod]
+        public void 三个预算常量_必须与2026年9月29日现场实测对齐()
+        {
+            Assert.AreEqual(15, DeadImageScan.MaxDepth,
+                "实测 4/4 次撞 10 层上限。要改回或改更大之前，先看新日志里的层号与路径");
+            Assert.AreEqual(50000, DeadImageScan.MaxNodes,
+                "深度 10 时已经走了 12570 节点且没走完；20000 会在走到底之前先撞上，等于白改深度");
+            Assert.AreEqual(3000, DeadImageScan.MaxElapsedMs,
+                "热趟 0.035ms/节点下 50000 节点约 1.75 秒，1500 会在热趟就截断");
+            // 50000 × 0.035ms 必须落在时间预算内，否则节点预算形同虚设（只多算一次乘法）
+            Assert.IsTrue(DeadImageScan.MaxNodes * 0.035 < DeadImageScan.MaxElapsedMs,
+                "节点预算与时间预算要互相兜底：节点上限走完的时间必须小于时间上限");
+        }
+
+        [TestMethod]
+        public void 深度截断的留痕必须带路径_否则无法判断该往哪调()
+        {
+            var scan = new DeadImageScan();
+            // 复刻 Form1 侧第51.8轮的新留痕格式：层号 + 路径
+            scan.MarkTruncated("下钻深度超过 15 层（层号 16）：job1/CogPMAlignMultiTool.Operator.Items[3]");
+
+            string text = scan.Conclusion();
+            StringAssert.Contains(text, "job1/CogPMAlignMultiTool.Operator.Items[3]",
+                "只说超过几层，分不清是 PMAlign 那条太深还是无关分支太深——盲调深度的根源就在这里");
+            StringAssert.Contains(text, "层号 16", "层号要一并给出，读者才知道深了多少");
         }
 
         // ===== ★第51.4轮 P2：留痕原因与"整趟停止原因"是两件事 =====
