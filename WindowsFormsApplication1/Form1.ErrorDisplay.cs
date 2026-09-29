@@ -128,12 +128,11 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
-        /// 运行前启动相机取流：检查连接、避免重复取流、分配缓存后开始采集
+        /// 触发模式串归一化：去掉残留 '\0' 与首尾空白后再比较。
+        /// ★第55轮：实现收口到 FrameAccounting.NormalizeMode，全项目只留一处归一化逻辑，
+        ///   口径由 FrameAccountingTests 钉住，不再靠注释维持"两边同口径"。
         /// </summary>
-        private static string NormalizeTriggerMode(string mode)
-        {
-            return (mode ?? "").Replace("\0", "").Trim();
-        }
+        private static string NormalizeTriggerMode(string mode) => FrameAccounting.NormalizeMode(mode);
 
         private bool IsCommTriggerMode(string mode)
         {

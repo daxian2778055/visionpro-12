@@ -4891,6 +4891,7 @@ namespace WindowsFormsApplication1
             var lines = new System.Collections.Generic.List<string>();
             lines.Add("【帧计数归因（只读）】口径：接收=回调收到的帧数，检测完成=界面「检测数」，差额即界面「漏帧」。");
             lines.Add("「接收前」丢弃不产生接收数、不进漏帧——机台触发数比我们的接收数多，缺口就在这组。");
+            lines.Add("「连续运行」的路按设计不参与计件：界面那四行显示原因而不是数字，下面列出的检测数是内部 sum（漏帧对账仍要用它）。");
             int activeSlots = 0;
             try
             {
@@ -4913,6 +4914,9 @@ namespace WindowsFormsApplication1
                     lines.Add("相机" + (i + 1) + "｜模式=" + (mode == "" ? "未设置" : mode)
                         + "｜该路启动=" + (job != null ? job.yun : -1)
                         + " 使能=" + (job != null ? job.en : -1));
+                    if (FrameAccounting.IsContinuousMode(mode))
+                        lines.Add("  计件口径：连续运行⇒界面四行不给数字、流水号也不递增，本行检测数 "
+                            + detected + " 是内部 sum（只用于漏帧对账）。");
                     lines.Add("  " + _frameAcct.Reconcile(i, received, detected));
                     lines.Add("  接收前丢弃" + _frameAcct.TotalBeforeReceive(i)
                         + "（不计入漏帧）：" + _frameAcct.Breakdown(i, FrameAccounting.ReasonGroup.PreReceive));
@@ -6410,17 +6414,8 @@ namespace WindowsFormsApplication1
                                     SetStatRowIfChanged(_base + 3, "合格率:(统计关闭)");
                                     continue;
                                 }
-                                // ★第53轮：删掉原先的 `!= "连续运行"` 排除——连续运行路的这四行
-                                //   从此根本不刷，界面停在种子文本"检测数:"（无数字）。
                                 bool inScheme = _i == 0 || jobCount > _i;
-                                if (inScheme)
-                                {
-                                    listBox2.Items[_base] = "检测数:" + _jobs.Myjobs[_i].sum.ToString();
-                                    listBox2.Items[_base + 1] = "OK数:" + _jobs.Myjobs[_i].oksum.ToString();
-                                    listBox2.Items[_base + 2] = "NG数:" + (_jobs.Myjobs[_i].sum - _jobs.Myjobs[_i].oksum).ToString();
-                                    listBox2.Items[_base + 3] = "合格率:" + _jobs.Myjobs[_i].rate.ToString("F3");
-                                }
-                                else
+                                if (!inScheme)
                                 {
                                     // 不刷新 ≠ 零：按启动规则只有前 JobCount 路参与检测，
                                     // 其余路的行必须自己说明原因，否则又是一处"看不见的改动"。
@@ -6428,6 +6423,26 @@ namespace WindowsFormsApplication1
                                     SetStatRowIfChanged(_base + 1, "OK数:(不参与检测)");
                                     SetStatRowIfChanged(_base + 2, "NG数:(不参与检测)");
                                     SetStatRowIfChanged(_base + 3, "合格率:(不参与检测)");
+                                }
+                                else if (FrameAccounting.IsContinuousMode(_jobs.Myjobs[_i].triggerMode))
+                                {
+                                    // ★第55轮：恢复第53轮误删的 `!= "连续运行"` 边界——连续运行的相机自由跑帧，
+                                    //   按设计**不参与计件**（同族口径还有"连续运行不递增流水号 numberng"）。
+                                    //   内部 sum 照旧累加（漏帧对账要用），只是这四行不给数字：否则现场看到
+                                    //   "检测数:2605 NG数:2605 合格率:0.000"会以为这台相机在狂出 NG。
+                                    //   第53轮那条诚实口径保留——不退回"根本不刷新、停在种子文本无数字"的沉默显示，
+                                    //   而是写明为什么没有数字。
+                                    SetStatRowIfChanged(_base, "检测数:(连续运行不参与计件)");
+                                    SetStatRowIfChanged(_base + 1, "OK数:(连续运行不参与计件)");
+                                    SetStatRowIfChanged(_base + 2, "NG数:(连续运行不参与计件)");
+                                    SetStatRowIfChanged(_base + 3, "合格率:(连续运行不参与计件)");
+                                }
+                                else
+                                {
+                                    listBox2.Items[_base] = "检测数:" + _jobs.Myjobs[_i].sum.ToString();
+                                    listBox2.Items[_base + 1] = "OK数:" + _jobs.Myjobs[_i].oksum.ToString();
+                                    listBox2.Items[_base + 2] = "NG数:" + (_jobs.Myjobs[_i].sum - _jobs.Myjobs[_i].oksum).ToString();
+                                    listBox2.Items[_base + 3] = "合格率:" + _jobs.Myjobs[_i].rate.ToString("F3");
                                 }
                             }
                             if (!statOn) _statOffNoted = true;

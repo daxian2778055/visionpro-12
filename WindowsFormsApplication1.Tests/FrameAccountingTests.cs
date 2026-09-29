@@ -187,5 +187,44 @@ namespace WindowsFormsApplication1.Tests
             Assert.AreEqual(0, acct.Get(0, FrameAccounting.Reason.MasterGate));
             Assert.AreEqual(0, acct.TotalAfterReceive(11));
         }
+
+        // ── ★第55轮：连续运行不计件边界 ─────────────────────────────────────
+        // 现场反馈"连续运行的相机为什么还在计数"。查下来不是检测链路多计，而是**界面计件那四行**
+        // 原本对连续运行路做了排除（`!= "连续运行"` 才刷新），第53轮把它当成"停在种子文本无数字"的
+        // 显示缺陷删掉了 ⇒ 连续运行路开始显示"检测数:2605 NG数:2605 合格率:0.000"，操作员以为在产 NG。
+        // 边界本身历来只做在显示层（内部 sum 自初始提交起就无条件累加，漏帧对账要用），本轮恢复边界、
+        // 并把判定挪进 FrameAccounting 由下面三条钉住——它再被当成"多余的条件"删掉，测试就红。
+        [TestMethod]
+        public void 连续运行的路不参与计件_含零字节与空白变体()
+        {
+            Assert.IsTrue(FrameAccounting.IsContinuousMode("连续运行"));
+            Assert.IsTrue(FrameAccounting.IsContinuousMode("连续运行\0"), "带残留 \\0 必须仍判连续（复盘P2-7 同源坑）");
+            Assert.IsTrue(FrameAccounting.IsContinuousMode("  连续运行  "), "前后空白必须归一化掉");
+            Assert.IsTrue(FrameAccounting.IsContinuousMode("\0连续运行\0"));
+
+            Assert.IsFalse(FrameAccounting.IsContinuousMode("触发拍照"));
+            Assert.IsFalse(FrameAccounting.IsContinuousMode("通讯触发"));
+            Assert.IsFalse(FrameAccounting.IsContinuousMode("连续运行中"), "近义字串不得误判为连续");
+        }
+
+        [TestMethod]
+        public void 计件边界只排除连续运行_不得顺手改成白名单判法()
+        {
+            // 原口径是 `!= "连续运行"` 才显示数字：空模式（启动期连接早于载入）与不认识的字串
+            // 都照旧计件。若哪天想改成"只有触发拍照/通讯触发才计件"，那是行为变更，必须另起一轮
+            // 并先确认现场语义——不能借"顺手收紧"的名义改这三条断言。
+            Assert.IsFalse(FrameAccounting.IsContinuousMode(""), "空模式不得被排除在计件之外（保持原 != 口径）");
+            Assert.IsFalse(FrameAccounting.IsContinuousMode(null));
+            Assert.IsFalse(FrameAccounting.IsContinuousMode("   "));
+            Assert.IsFalse(FrameAccounting.IsContinuousMode("随便什么脏值"));
+        }
+
+        [TestMethod]
+        public void 模式归一化先去零字节再Trim()
+        {
+            Assert.AreEqual("连续运行", FrameAccounting.NormalizeMode("\0 连续运行 \0"));
+            Assert.AreEqual("", FrameAccounting.NormalizeMode(null), "null 归一化成空串，判定侧不得再抛");
+            Assert.AreEqual("", FrameAccounting.NormalizeMode("  \0  "));
+        }
     }
 }

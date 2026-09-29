@@ -104,6 +104,19 @@ namespace WindowsFormsApplication1
         /// <summary>该原因是否属于「接收后」组（对账组）。</summary>
         public static bool IsAfterReceive(Reason reason) => GroupOf(reason) == ReasonGroup.AfterReceive;
 
+        /// <summary>
+        /// 触发模式串归一化：模式串来自 vpp 输入或历史 ini，可能带残留 '\0' 与空白，
+        /// 不先去干净会判不出"连续运行"。Form1.NormalizeTriggerMode 即本方法的转发，全项目一处实现。
+        /// </summary>
+        public static string NormalizeMode(string mode) => (mode ?? "").Replace("\0", "").Trim();
+
+        /// <summary>
+        /// 该路是否「连续运行」（相机自由跑帧）。判定收口到这里，是为了让这条边界**可被单测钉住**：
+        /// ★第55轮恢复的正是第53轮误删的"连续运行的相机不参与计件"——当时它只是界面刷新处
+        /// 一个内联条件，被当成"界面停在空种子文本"的显示缺陷顺手删掉了，边界就此消失。
+        /// </summary>
+        public static bool IsContinuousMode(string mode) => NormalizeMode(mode) == "连续运行";
+
         /// <summary>接收后已归因丢弃总数（对账用的分子）。</summary>
         public int TotalAfterReceive(int slot) => TotalWhere(slot, ReasonGroup.AfterReceive);
 
