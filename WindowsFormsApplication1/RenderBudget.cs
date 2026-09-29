@@ -3,22 +3,29 @@ using System.Threading;
 namespace WindowsFormsApplication1
 {
     /// <summary>
-    /// 显示降频的现场可调参数（★第56轮，code.ini [Display] 段，全部只读值由窗体侧解析后注入）。
+    /// 显示降频的现场可调参数（★第57轮收窄，code.ini [Display] 段，全部只读值由窗体侧解析后注入）。
     ///
-    /// 口径来源（现场提的两条建议，逐条对应到参数）：
+    /// 现场只留**三个可调项**（用户要求"参数越少、配置越方便"）：
     ///   · 频率阈值 RenderProtectHz：实测帧率低于它的路**一帧不丢**，也不参与降频分摊。
     ///     第54轮的 max-min 只在"该路需求 ≤ 水位"时全显，水位=1000/RenderMinIntervalMs/路数，
     ///     12 路 16ms 时只有 5.2fps——10Hz 的触发路本来该全显却被挤，这条把保护写成硬承诺。
-    ///   · 权重 RenderWeight 0~100：对**高于阈值**的路，频率越高降得越狠——而且是**主动降**，
-    ///     不是"等预算不够才降"。每路有一个显示上限 = 需求 ×(1−降幅)：降幅从阈值处的 0 线性升到
-    ///     高频带分界（RenderHighBandHz）处的 MidMaxCut，高频带上取 HighMaxCut
-    ///     ⇒ W=100 时 80Hz 的显示上限恰为 40Hz（现场原话就是这么定的）。这是**上限不是保证**：
-    ///     剩余额度不足时水位 λ 会把它压得更低，但 λ 只会往下压，绝不把谁抬过自己的上限。
+    ///   · 权重 RenderWeight 0~100：对**高于阈值**的路降得多狠，而且是**主动降**（不是"等预算不够才降"）。
+    ///   · 最大降幅 RenderMaxCutPercent：W=100 时高频路的降幅上限（现场原话"极致权重时 80Hz 显示 40Hz"
+    ///     ⇒ 默认 50%）。
+    ///
+    /// 另外三个量第57轮起**由代码派生、不再开放给现场**，各自都有理由：
+    ///   · 高频带分界 = 固定 HighBandHzFixed(50Hz)：它只决定"降幅斜坡在哪里封顶"，现场相机基本都在
+    ///     60Hz 以下，这个值常年用不上，却会让人误以为要调。
+    ///   · 中频带最大降幅 = 最大降幅的一半：默认本来就是 50/25 的一半关系；若两者同值，
+    ///     "频率越高降得越多"这条自相矛盾，所以它是被前一个量决定死的派生值，不是独立自由度。
+    ///   · 交互期间隔 = 全局最小间隔的一半、地板 InteractiveFloorMs(8ms)：它的生效条件本来就是
+    ///     "严格小于全局间隔"（见 Form1.TryClaimRenderBudget），填得比全局大就是个死框——
+    ///     一个只在特定大小关系下才起作用的框不该占现场一格。全局=16 时推出 8，与第56轮默认完全一致；
+    ///     全局 ≤ 16 时推出值不小于全局 ⇒ 交互期不再放宽（已经压得够狠，没必要再放宽）。
     ///
     /// 两条与用户原话的出入，写在这里以免日后当成实现走样：
-    ///   · "50Hz 以下即使极致权重也只能降频百分之50以下"按**上限**理解，中带取 25%：若也取 50%，
-    ///     中带与高频带降幅相同，"频率越高降得越多"这条自相矛盾。要按字面放宽只改
-    ///     RenderMidMaxCutPercent 一个常量，结构不动。
+    ///   · "50Hz 以下即使极致权重也只能降频百分之50以下"按**上限**理解，中带取一半：要按字面放宽
+    ///     只需改 CutPermyriad 里那一处派生，结构不动。
     ///   · W=0 **不等于**"完全不降频"：封顶（RenderMinIntervalMs）仍在，W=0 只是不主动降高频路，
     ///     退回第54轮的按需求解分摊。要真·不限速请把 RenderMinIntervalMs 设 0（该语义本来就存在）。
     ///     ProtectHz=0 且 W=0 时 RenderBudget 走第54轮原分支，逐帧一致（回退基线/现场总开关）。
@@ -38,54 +45,60 @@ namespace WindowsFormsApplication1
         // 保护带为空，分摊结果才与第54轮同形（差别仅剩启动瞬态，见 RenderBudget 头部口径）。
         public const int ProtectHzDefault = 10;
         public const int WeightDefault = 0;
-        public const int HighBandHzDefault = 50;
-        public const int HighMaxCutPercentDefault = 50;
-        public const int MidMaxCutPercentDefault = 25;
+        public const int MaxCutPercentDefault = 50;
+
+        /// <summary>高频带分界（Hz）：第57轮起固定，不再开放给现场（理由见类注释）。</summary>
+        public const int HighBandHzFixed = 50;
+
+        /// <summary>交互期间隔的地板（毫秒）：第56轮 P4 实测出来的取值，再小就等于不限速。</summary>
+        public const int InteractiveFloorMs = 8;
 
         public readonly int ProtectHz;          // 阈值（Hz）；0=不设保护带
         public readonly int Weight;             // 0~100
-        public readonly int HighBandHz;         // 高频带分界（Hz）
-        public readonly int HighMaxCutPercent;  // W=100 时高频带最大降幅（%）
-        public readonly int MidMaxCutPercent;   // W=100 时中频带最大降幅（%）
+        public readonly int HighBandHz;         // 高频带分界（Hz），恒 = HighBandHzFixed
+        public readonly int HighMaxCutPercent;  // W=100 时高频带最大降幅（%）——现场那一格
+        public readonly int MidMaxCutPercent;   // W=100 时中频带最大降幅（%）——恒 = 高频带的一半
 
-        public DisplayThrottleSettings(int protectHz, int weight, int highBandHz, int highMaxCutPercent,
-            int midMaxCutPercent)
+        public DisplayThrottleSettings(int protectHz, int weight, int highMaxCutPercent)
         {
             ProtectHz = protectHz;
             Weight = weight;
-            HighBandHz = highBandHz;
+            HighBandHz = HighBandHzFixed;
             HighMaxCutPercent = highMaxCutPercent;
-            MidMaxCutPercent = midMaxCutPercent;
+            MidMaxCutPercent = highMaxCutPercent / 2;
         }
 
         /// <summary>第54轮口径（无保护带、无权重）——新参数的总开关位，也是回归基线。</summary>
         public static readonly DisplayThrottleSettings Legacy =
-            new DisplayThrottleSettings(0, 0, HighBandHzDefault, HighMaxCutPercentDefault,
-                MidMaxCutPercentDefault);
+            new DisplayThrottleSettings(0, 0, MaxCutPercentDefault);
 
         /// <summary>是否退回第54轮分支：阈值与权重同时为 0 才算，缺一律走新口径。</summary>
         public bool IsLegacy { get { return ProtectHz <= 0 && Weight <= 0; } }
 
         /// <summary>
+        /// 交互期间的自动推导：全局间隔的一半，但不低于 InteractiveFloorMs；全局为 0（不限速）时返回 0。
+        /// 推出来不小于全局时，调用点那条"交互期必须严格小于全局"的判据自然不成立=交互期不放宽，
+        /// 这正是"已经压得够狠就别再放宽"的期望行为，所以这里不需要额外分支。
+        /// </summary>
+        public static int AutoInteractiveIntervalMs(int minIntervalMs)
+        {
+            if (minIntervalMs <= 0) return 0;
+            int half = minIntervalMs / 2;
+            return half < InteractiveFloorMs ? InteractiveFloorMs : half;
+        }
+
+        /// <summary>
         /// 脏值兜底：越界与不可解析一律回默认，并回报被修正的项数（窗体侧据此写日志，
         /// 让"我改了没生效"当场可见，与本项目其它 ini 读回同一纪律）。
         /// </summary>
-        public static int Normalize(int protectHz, int weight, int highBandHz, int highMaxCutPercent,
-            int midMaxCutPercent, out DisplayThrottleSettings result)
+        public static int Normalize(int protectHz, int weight, int maxCutPercent,
+            out DisplayThrottleSettings result)
         {
             int fixedCount = 0;
-            int v;
-            v = Clamp(protectHz, 0, 1000, ProtectHzDefault, ref fixedCount);
-            int p = v;
-            v = Clamp(weight, 0, 100, WeightDefault, ref fixedCount);
-            int w = v;
-            v = Clamp(highBandHz, 2, 1000, HighBandHzDefault, ref fixedCount);
-            int hb = v;
-            v = Clamp(highMaxCutPercent, 0, 90, HighMaxCutPercentDefault, ref fixedCount);
-            int hc = v;
-            v = Clamp(midMaxCutPercent, 0, 90, MidMaxCutPercentDefault, ref fixedCount);
-            int mc = v;
-            result = new DisplayThrottleSettings(p, w, hb, hc, mc);
+            int p = Clamp(protectHz, 0, 1000, ProtectHzDefault, ref fixedCount);
+            int w = Clamp(weight, 0, 100, WeightDefault, ref fixedCount);
+            int hc = Clamp(maxCutPercent, 0, 90, MaxCutPercentDefault, ref fixedCount);
+            result = new DisplayThrottleSettings(p, w, hc);
             return fixedCount;
         }
 
@@ -116,6 +129,8 @@ namespace WindowsFormsApplication1
     ///     会让同一路反复进出保护，画面一阵流畅一阵卡顿，比不保护更难看。
     ///  ③本轮权重主动降幅：非保护路各自有一条显示**上限**速率 = 需求 ×(1−降幅)，降幅随频率递增
     ///     （中频带线性斜坡到 MidMaxCut、高频带取 HighMaxCut），W=100 时 80Hz 的上限恰为 40Hz。
+    ///     第57轮起 HighBandHz 固定 50Hz、MidMaxCut 恒为 HighMaxCut 的一半，现场只留"最大降幅"那一格；
+    ///     裁决逻辑本身没变，变的只是这两个量的来源（派生而非填表）。
     ///     与旧草案的"下限"相反，它是**主动降**：预算闲置也一样把快路压到上限，用显示换 CPU 稳定；
     ///     水位 λ 在"各路上限"集合上解（Σ min(上限, λ) = 剩余额度），应得速率 = min(上限, λ)。
     ///     因为只减不加，各路**应得速率之和**天然 ≤ 封顶（实测放行帧数只在估计期临时越顶，
@@ -365,7 +380,8 @@ namespace WindowsFormsApplication1
 
         /// <summary>
         /// 降幅（万分比）：保护带 0；中频带从阈值处的 0 线性升到高频带分界处的 MidMaxCut×W/100；
-        /// 高频带（≥RenderHighBandHz）取 HighMaxCut×W/100——80Hz 在 W=100 时恰为 50%（显示上限 40Hz）。
+        /// 高频带（≥HighBandHzFixed，第57轮起固定 50Hz）取 HighMaxCut×W/100——80Hz 在 W=100 时恰为
+        /// 50%（显示上限 40Hz）。
         /// 百分数 × 权重(0~100) 直接就是万分比，不需要再折算。
         /// 阈值 ≥ 高频带分界属配置写反，此时一律按高频带处理（不给"配了阈值却没保护"的静默）。
         /// </summary>

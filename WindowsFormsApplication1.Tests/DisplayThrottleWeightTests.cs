@@ -9,9 +9,11 @@ namespace WindowsFormsApplication1.Tests
     /// 现场提的两条口径，逐条钉成断言：
     ///   ① 阈值以下的路一帧不丢（RenderProtectHz）——并证明**第54轮在同样场景下确实会挤它**，
     ///      否则这条保护是空承诺（max-min 只在需求 ≤ 水位时全显，水位=封顶/路数时 10Hz 的路照样被压）。
-    ///   ② 权重越大、频率越高的路降得越狠（RenderWeight + 高/中频带最大降幅）——而且是**主动降**：
-    ///      预算有余也照样压（Pressure=0 时应得间隔仍是周期的两倍）。这条正是本轮推翻上一版
-    ///      "显示下限"草案的原因：下限口径在预算闲置时会把人抬回满显，80Hz→40Hz 根本不可能发生。
+    ///   ② 权重越大、频率越高的路降得越狠（RenderWeight + RenderMaxCutPercent；★第57轮起现场只留
+    ///      阈值/权重/最大降幅三格，中带降幅恒等于最大降幅的一半、高频带分界固定 50Hz，
+    ///      派生关系由本文件末尾那条用例钉住）——
+    ///      而且是**主动降**：预算有余也照样压（Pressure=0 时应得间隔仍是周期的两倍）。这条正是本轮推翻
+    ///      上一版"显示下限"草案的原因：下限口径在预算闲置时会把人抬回满显，80Hz→40Hz 根本不可能发生。
     ///   ③ 只减不加：权重拉满也**不越过封顶**——按稳态窗口核（总量 ≤ 窗口长度/RenderMinIntervalMs
     ///      + 每路一次的对齐余量）。启动瞬态除外：只到过一帧的路按"未知需求"处理、不预约额度，
     ///      所以在它交出第一个周期样本之前已测得的路能用满那份闲额度（实测最长的一条 6 秒 393
@@ -48,11 +50,9 @@ namespace WindowsFormsApplication1.Tests
 
         private static DisplayThrottleSettings Cfg(int protectHz, int weight)
         {
-            // 高频带分界 50Hz、高带降幅上限 50%、中带降幅上限 25%（= code.ini [Display] 默认值）
-            return new DisplayThrottleSettings(protectHz, weight,
-                DisplayThrottleSettings.HighBandHzDefault,
-                DisplayThrottleSettings.HighMaxCutPercentDefault,
-                DisplayThrottleSettings.MidMaxCutPercentDefault);
+            // 最大降幅取默认 50%；高频带分界（50Hz）与中带降幅（=最大降幅的一半 ⇒ 25%）第57轮起是派生值。
+            // 派生出来的两个数与第56轮 code.ini 的默认值逐字相同，所以本文件的裁决数值断言无需重算。
+            return new DisplayThrottleSettings(protectHz, weight, DisplayThrottleSettings.MaxCutPercentDefault);
         }
 
         private static int[] BuildPeriods(int n1, int p1, int n2, int p2)
@@ -336,7 +336,7 @@ namespace WindowsFormsApplication1.Tests
                 BuildPeriods(5, 125, 7, 33),
             };
             DisplayThrottleSettings off;
-            int fixedCount = DisplayThrottleSettings.Normalize(0, 0, 50, 50, 25, out off);
+            int fixedCount = DisplayThrottleSettings.Normalize(0, 0, DisplayThrottleSettings.MaxCutPercentDefault, out off);
             Assert.AreEqual(0, fixedCount, "这组参数本就该在合法区间内");
             Assert.IsTrue(off.IsLegacy, "阈值与权重同时为 0 必须判为第54轮口径");
 
@@ -412,19 +412,29 @@ namespace WindowsFormsApplication1.Tests
         public void 脏参数一律回默认并回报被修正的项数()
         {
             DisplayThrottleSettings s;
-            // 五项全部越界：阈值>1000、权重>100、分界<2、两个降幅>90/为负
-            int fixedCount = DisplayThrottleSettings.Normalize(1001, 101, 1, 91, -1, out s);
-            Assert.AreEqual(5, fixedCount, "五项越界应全部回报，实测 " + fixedCount);
+            // 第57轮现场只有三项：阈值>1000、权重>100、最大降幅>90 必须全部回报
+            int fixedCount = DisplayThrottleSettings.Normalize(1001, 101, 91, out s);
+            Assert.AreEqual(3, fixedCount, "三项越界应全部回报，实测 " + fixedCount);
             Assert.AreEqual(DisplayThrottleSettings.ProtectHzDefault, s.ProtectHz);
             Assert.AreEqual(DisplayThrottleSettings.WeightDefault, s.Weight);
-            Assert.AreEqual(DisplayThrottleSettings.HighBandHzDefault, s.HighBandHz);
-            Assert.AreEqual(DisplayThrottleSettings.HighMaxCutPercentDefault, s.HighMaxCutPercent);
-            Assert.AreEqual(DisplayThrottleSettings.MidMaxCutPercentDefault, s.MidMaxCutPercent);
+            Assert.AreEqual(DisplayThrottleSettings.MaxCutPercentDefault, s.HighMaxCutPercent);
+            Assert.AreEqual(DisplayThrottleSettings.HighBandHzFixed, s.HighBandHz);
+            Assert.AreEqual(s.HighMaxCutPercent / 2, s.MidMaxCutPercent);
             Assert.IsFalse(s.IsLegacy, "回默认后阈值=10Hz 仍是保护带口径（默认值不启用主动降幅，保护带照旧从快路那份封顶里出）");
 
             DisplayThrottleSettings ok;
-            Assert.AreEqual(0, DisplayThrottleSettings.Normalize(0, 0, 2, 0, 0, out ok),
-                "边界内的极值不该被回报为脏值");
+            Assert.AreEqual(0, DisplayThrottleSettings.Normalize(1000, 100, 90, out ok),
+                "上边界内的极值不该被回报为脏值");
+            DisplayThrottleSettings zero;
+            Assert.AreEqual(0, DisplayThrottleSettings.Normalize(0, 0, 0, out zero),
+                "下边界（现场总开关位）不该被回报为脏值");
+            Assert.IsTrue(zero.IsLegacy, "阈值与权重都是 0 ⇒ 回退基线（降幅 0 不影响这个判定）");
+
+            DisplayThrottleSettings neg;
+            Assert.AreEqual(1, DisplayThrottleSettings.Normalize(10, 50, -1, out neg),
+                "最大降幅填负数必须回报，且只有这一项被修正");
+            Assert.AreEqual(10, neg.ProtectHz, "脏值修正不得连带改动其它项");
+            Assert.AreEqual(50, neg.Weight);
         }
 
         [TestMethod]
@@ -449,10 +459,11 @@ namespace WindowsFormsApplication1.Tests
         [TestMethod]
         public void 阈值高于高频带分界属配置写反_一律按高频带降幅()
         {
-            // ProtectHz=60 而 HighBand=50：斜坡没有起点（span ≤ 0）。此时对未保护的路一律按高频带
+            // ProtectHz=60 而分界固定 50Hz：斜坡没有起点（span ≤ 0）。此时对未保护的路一律按高频带
             // 降幅处理，绝不出现"配了阈值却既没保护也不降频"或"除以负数"的静默走样。
+            // 第57轮起分界不再可调，所以这种写反只剩"阈值那一格填超过 50"一种入口，这条仍要钉住。
             // 取 12ms（≈83fps）：既不在保护带（> 60×1.25=75fps）又落在高带 ⇒ 显示上限 41.6fps。
-            var cfg = new DisplayThrottleSettings(60, 100, 50, 50, 25);
+            var cfg = new DisplayThrottleSettings(60, 100, 50);
             int entitled = EntitledAfterWarmup(12, cfg);
             Assert.AreEqual(25, entitled,
                 "阈值≥分界时应按高频带 50% 降幅（应得≈2 个周期），实测 " + entitled + "ms");
@@ -599,13 +610,72 @@ namespace WindowsFormsApplication1.Tests
             // 不会看到"阈值已改、权重还没改"的半套组合。
             var rb = new RenderBudget();
             DisplayThrottleSettings a;
-            DisplayThrottleSettings.Normalize(10, 40, 50, 50, 25, out a);
+            DisplayThrottleSettings.Normalize(10, 40, 50, out a);
             Assert.AreEqual(1, rb.ApplyConfig(a), "首次注入应回报生效");
             Assert.AreEqual(0, rb.ApplyConfig(a), "同一份参数重复注入不应回报变化");
             Assert.AreEqual(0, rb.ApplyConfig(null), "null 一律忽略");
             DisplayThrottleSettings b;
-            DisplayThrottleSettings.Normalize(10, 41, 50, 50, 25, out b);
+            DisplayThrottleSettings.Normalize(10, 41, 50, out b);
             Assert.AreEqual(1, rb.ApplyConfig(b), "内容不同应回报生效");
+        }
+
+        [TestMethod]
+        public void 中带降幅恒为最大降幅的一半_高频带分界固定50Hz()
+        {
+            // ★第57轮：现场只留「最大降幅」一格，另外两个量由代码派生。派生关系必须钉住，
+            // 否则日后有人把 MidMaxCut 改成与 HighMaxCut 同值，"频率越高降得越多"就自相矛盾了。
+            int[][] cases =
+            {
+                new[] { 50, 25 },     // 默认档（= 第56轮 ini 的两个默认值）
+                new[] { 80, 40 },     // 拉大：中带跟着涨到 40
+                new[] { 41, 20 },     // 奇数档：整数除法向下取整（宁可少降一档，不出现 20.5 这种说不清的值）
+                new[] { 1, 0 },       // 最小可用档：中带降到 0（等于不主动降中带路）
+                new[] { 0, 0 },       // 最大降幅 0 ⇒ 两带都不降
+            };
+            for (int i = 0; i < cases.Length; i++)
+            {
+                DisplayThrottleSettings s;
+                Assert.AreEqual(0, DisplayThrottleSettings.Normalize(10, 100, cases[i][0], out s),
+                    "用例" + i + " 的最大降幅本就在合法区间内");
+                Assert.AreEqual(cases[i][1], s.MidMaxCutPercent,
+                    "用例" + i + "：中带封顶应恒为最大降幅(" + cases[i][0] + "%)的一半");
+                Assert.AreEqual(cases[i][0], s.HighMaxCutPercent, "高频带封顶应等于现场那一格的值");
+                Assert.AreEqual(DisplayThrottleSettings.HighBandHzFixed, s.HighBandHz,
+                    "高频带分界第57轮起固定 50Hz，不再随入参变化");
+                Assert.AreEqual(50, DisplayThrottleSettings.HighBandHzFixed,
+                    "分界常量若被改动，弹窗/回显里写死的 50Hz 文案就得同步");
+            }
+
+            // 签名收窄**不得**让裁决数值漂移：33.3fps 落在中带（10~50Hz），斜坡走到 23333/40000 处，
+            // 封顶 25% ⇒ 实测降幅 ≈14.6%，应得间隔仍是第56轮的 36ms（与 Cfg(10,100) 那条用例同值）。
+            Assert.AreEqual(36, EntitledAfterWarmup(30, Cfg(10, 100)),
+                "中带应得间隔漂移，说明派生值与第56轮 ini 默认不再等值");
+        }
+
+        [TestMethod]
+        public void 交互期间隔自动取全局一半_地板8ms_推出不小于全局时不放宽()
+        {
+            // ★第57轮：交互期不再给现场填，由全局间隔派生（一半 + 地板）。地板 8ms 是第56轮 P4
+            // 实测出来的取值——再小就等于不限速，交互反而比正常运行更吃 CPU。
+            Assert.AreEqual(8, DisplayThrottleSettings.AutoInteractiveIntervalMs(16),
+                "默认档（全局16ms）应推出 8ms，与第56轮的默认值逐字相同");
+            Assert.AreEqual(10, DisplayThrottleSettings.AutoInteractiveIntervalMs(20));
+            Assert.AreEqual(8, DisplayThrottleSettings.AutoInteractiveIntervalMs(12),
+                "一半(6)低于地板时取地板 8ms，而不是继续往下压");
+            Assert.AreEqual(0, DisplayThrottleSettings.AutoInteractiveIntervalMs(0),
+                "全局=0 是「真·不限速」语义，交互期必须跟着回 0，否则派生值会把限速又加回来");
+            Assert.AreEqual(0, DisplayThrottleSettings.AutoInteractiveIntervalMs(-1),
+                "非法值同 0 处理（调用侧 Normalize 之前也可能拿到负数）");
+
+            // 生效条件（Form1.TryClaimRenderBudget）要求交互间隔**严格小于**全局间隔才放宽。
+            // 全局 ≤ 地板时推出来不小于全局 ⇒ 交互期等于没放宽：这是期望行为，不是漏配。
+            for (int min = 1; min <= DisplayThrottleSettings.InteractiveFloorMs; min++)
+                Assert.IsTrue(DisplayThrottleSettings.AutoInteractiveIntervalMs(min) >= min,
+                    "全局 " + min + "ms 时推出的交互期反而更短，等于给已经压到底的档位再放宽一次");
+            Assert.IsTrue(DisplayThrottleSettings.AutoInteractiveIntervalMs(
+                DisplayThrottleSettings.InteractiveFloorMs + 1)
+                <= DisplayThrottleSettings.InteractiveFloorMs,
+                "全局刚过地板时交互期就该重新比全局短（否则放宽永远不生效）");
         }
     }
 }

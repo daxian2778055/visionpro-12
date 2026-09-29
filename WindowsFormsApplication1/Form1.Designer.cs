@@ -180,18 +180,12 @@ namespace WindowsFormsApplication1
             this.groupBoxRenderThrottle = new System.Windows.Forms.GroupBox();
             this.labelRenderMinInterval = new System.Windows.Forms.Label();
             this.nudRenderMinIntervalMs = new System.Windows.Forms.NumericUpDown();
-            this.labelRenderInteractive = new System.Windows.Forms.Label();
-            this.nudRenderInteractiveIntervalMs = new System.Windows.Forms.NumericUpDown();
             this.labelRenderProtectHz = new System.Windows.Forms.Label();
             this.nudRenderProtectHz = new System.Windows.Forms.NumericUpDown();
             this.labelRenderWeight = new System.Windows.Forms.Label();
             this.nudRenderWeight = new System.Windows.Forms.NumericUpDown();
-            this.labelRenderHighBand = new System.Windows.Forms.Label();
-            this.nudRenderHighBandHz = new System.Windows.Forms.NumericUpDown();
-            this.labelRenderHighCut = new System.Windows.Forms.Label();
-            this.nudRenderHighMaxCutPercent = new System.Windows.Forms.NumericUpDown();
-            this.labelRenderMidCut = new System.Windows.Forms.Label();
-            this.nudRenderMidMaxCutPercent = new System.Windows.Forms.NumericUpDown();
+            this.labelRenderMaxCut = new System.Windows.Forms.Label();
+            this.nudRenderMaxCutPercent = new System.Windows.Forms.NumericUpDown();
             this.buttonRenderApply = new System.Windows.Forms.Button();
             this.labelRenderEffective = new System.Windows.Forms.Label();
             this.tabPage6 = new System.Windows.Forms.TabPage();
@@ -1014,12 +1008,9 @@ namespace WindowsFormsApplication1
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown1)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderMinIntervalMs)).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderInteractiveIntervalMs)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderProtectHz)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderWeight)).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderHighBandHz)).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderHighMaxCutPercent)).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderMidMaxCutPercent)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudRenderMaxCutPercent)).BeginInit();
             this.tabPage6.SuspendLayout();
             this.panel1.SuspendLayout();
             this.groupBox20.SuspendLayout();
@@ -2272,26 +2263,20 @@ namespace WindowsFormsApplication1
             //
             this.groupBoxRenderThrottle.Controls.Add(this.labelRenderMinInterval);
             this.groupBoxRenderThrottle.Controls.Add(this.nudRenderMinIntervalMs);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderInteractive);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderInteractiveIntervalMs);
             this.groupBoxRenderThrottle.Controls.Add(this.labelRenderProtectHz);
             this.groupBoxRenderThrottle.Controls.Add(this.nudRenderProtectHz);
             this.groupBoxRenderThrottle.Controls.Add(this.labelRenderWeight);
             this.groupBoxRenderThrottle.Controls.Add(this.nudRenderWeight);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderHighBand);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderHighBandHz);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderHighCut);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderHighMaxCutPercent);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderMidCut);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderMidMaxCutPercent);
+            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderMaxCut);
+            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderMaxCutPercent);
             this.groupBoxRenderThrottle.Controls.Add(this.buttonRenderApply);
             this.groupBoxRenderThrottle.Controls.Add(this.labelRenderEffective);
             this.groupBoxRenderThrottle.Location = new System.Drawing.Point(6, 360);
             this.groupBoxRenderThrottle.Name = "groupBoxRenderThrottle";
-            this.groupBoxRenderThrottle.Size = new System.Drawing.Size(572, 186);
+            this.groupBoxRenderThrottle.Size = new System.Drawing.Size(572, 168);
             this.groupBoxRenderThrottle.TabIndex = 200;
             this.groupBoxRenderThrottle.TabStop = false;
-            this.groupBoxRenderThrottle.Text = "显示降频（阈值以下一帧不丢；权重越大、频率越高的路降得越狠）";
+            this.groupBoxRenderThrottle.Text = "显示降频（阈值以下一帧不丢；权重越大、频率越高的路降得越狠，最大降幅是它的上限）";
             //
             // labelRenderMinInterval
             //
@@ -2311,121 +2296,66 @@ namespace WindowsFormsApplication1
             this.nudRenderMinIntervalMs.TabIndex = 202;
             this.nudRenderMinIntervalMs.Value = new decimal(new int[] { 16, 0, 0, 0 });
             //
-            // labelRenderInteractive
-            //
-            this.labelRenderInteractive.AutoSize = true;
-            this.labelRenderInteractive.Location = new System.Drawing.Point(268, 27);
-            this.labelRenderInteractive.Name = "labelRenderInteractive";
-            this.labelRenderInteractive.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderInteractive.TabIndex = 203;
-            this.labelRenderInteractive.Text = "交互期间隔(ms)";
-            //
-            // nudRenderInteractiveIntervalMs
-            //
-            this.nudRenderInteractiveIntervalMs.Location = new System.Drawing.Point(448, 25);
-            this.nudRenderInteractiveIntervalMs.Maximum = new decimal(new int[] { 1000, 0, 0, 0 });
-            this.nudRenderInteractiveIntervalMs.Name = "nudRenderInteractiveIntervalMs";
-            this.nudRenderInteractiveIntervalMs.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderInteractiveIntervalMs.TabIndex = 204;
-            this.nudRenderInteractiveIntervalMs.Value = new decimal(new int[] { 8, 0, 0, 0 });
-            //
             // labelRenderProtectHz
             //
             this.labelRenderProtectHz.AutoSize = true;
-            this.labelRenderProtectHz.Location = new System.Drawing.Point(12, 55);
+            this.labelRenderProtectHz.Location = new System.Drawing.Point(268, 27);
             this.labelRenderProtectHz.Name = "labelRenderProtectHz";
             this.labelRenderProtectHz.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderProtectHz.TabIndex = 205;
+            this.labelRenderProtectHz.TabIndex = 203;
             this.labelRenderProtectHz.Text = "保护阈值(Hz)";
             //
             // nudRenderProtectHz
             //
-            this.nudRenderProtectHz.Location = new System.Drawing.Point(178, 53);
+            this.nudRenderProtectHz.Location = new System.Drawing.Point(448, 25);
             this.nudRenderProtectHz.Maximum = new decimal(new int[] { 1000, 0, 0, 0 });
             this.nudRenderProtectHz.Name = "nudRenderProtectHz";
             this.nudRenderProtectHz.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderProtectHz.TabIndex = 206;
+            this.nudRenderProtectHz.TabIndex = 204;
             this.nudRenderProtectHz.Value = new decimal(new int[] { 10, 0, 0, 0 });
             //
             // labelRenderWeight
             //
             this.labelRenderWeight.AutoSize = true;
-            this.labelRenderWeight.Location = new System.Drawing.Point(268, 55);
+            this.labelRenderWeight.Location = new System.Drawing.Point(12, 55);
             this.labelRenderWeight.Name = "labelRenderWeight";
             this.labelRenderWeight.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderWeight.TabIndex = 207;
+            this.labelRenderWeight.TabIndex = 205;
             this.labelRenderWeight.Text = "降频权重(0~100)";
             //
             // nudRenderWeight
             //
-            this.nudRenderWeight.Location = new System.Drawing.Point(448, 53);
+            this.nudRenderWeight.Location = new System.Drawing.Point(178, 53);
             this.nudRenderWeight.Maximum = new decimal(new int[] { 100, 0, 0, 0 });
             this.nudRenderWeight.Name = "nudRenderWeight";
             this.nudRenderWeight.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderWeight.TabIndex = 208;
+            this.nudRenderWeight.TabIndex = 206;
             this.nudRenderWeight.Value = new decimal(new int[] { 0, 0, 0, 0 });
             //
-            // labelRenderHighBand
+            // labelRenderMaxCut
             //
-            this.labelRenderHighBand.AutoSize = true;
-            this.labelRenderHighBand.Location = new System.Drawing.Point(12, 83);
-            this.labelRenderHighBand.Name = "labelRenderHighBand";
-            this.labelRenderHighBand.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderHighBand.TabIndex = 209;
-            this.labelRenderHighBand.Text = "高频带分界(Hz)";
+            this.labelRenderMaxCut.AutoSize = true;
+            this.labelRenderMaxCut.Location = new System.Drawing.Point(268, 55);
+            this.labelRenderMaxCut.Name = "labelRenderMaxCut";
+            this.labelRenderMaxCut.Size = new System.Drawing.Size(105, 12);
+            this.labelRenderMaxCut.TabIndex = 207;
+            this.labelRenderMaxCut.Text = "最大降幅(%)";
             //
-            // nudRenderHighBandHz
+            // nudRenderMaxCutPercent
             //
-            this.nudRenderHighBandHz.Minimum = new decimal(new int[] { 2, 0, 0, 0 });
-            this.nudRenderHighBandHz.Location = new System.Drawing.Point(178, 81);
-            this.nudRenderHighBandHz.Maximum = new decimal(new int[] { 1000, 0, 0, 0 });
-            this.nudRenderHighBandHz.Name = "nudRenderHighBandHz";
-            this.nudRenderHighBandHz.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderHighBandHz.TabIndex = 210;
-            this.nudRenderHighBandHz.Value = new decimal(new int[] { 50, 0, 0, 0 });
-            //
-            // labelRenderHighCut
-            //
-            this.labelRenderHighCut.AutoSize = true;
-            this.labelRenderHighCut.Location = new System.Drawing.Point(268, 83);
-            this.labelRenderHighCut.Name = "labelRenderHighCut";
-            this.labelRenderHighCut.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderHighCut.TabIndex = 211;
-            this.labelRenderHighCut.Text = "高频带最大降幅(%)";
-            //
-            // nudRenderHighMaxCutPercent
-            //
-            this.nudRenderHighMaxCutPercent.Location = new System.Drawing.Point(448, 81);
-            this.nudRenderHighMaxCutPercent.Maximum = new decimal(new int[] { 90, 0, 0, 0 });
-            this.nudRenderHighMaxCutPercent.Name = "nudRenderHighMaxCutPercent";
-            this.nudRenderHighMaxCutPercent.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderHighMaxCutPercent.TabIndex = 212;
-            this.nudRenderHighMaxCutPercent.Value = new decimal(new int[] { 50, 0, 0, 0 });
-            //
-            // labelRenderMidCut
-            //
-            this.labelRenderMidCut.AutoSize = true;
-            this.labelRenderMidCut.Location = new System.Drawing.Point(12, 111);
-            this.labelRenderMidCut.Name = "labelRenderMidCut";
-            this.labelRenderMidCut.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderMidCut.TabIndex = 213;
-            this.labelRenderMidCut.Text = "中频带最大降幅(%)";
-            //
-            // nudRenderMidMaxCutPercent
-            //
-            this.nudRenderMidMaxCutPercent.Location = new System.Drawing.Point(178, 109);
-            this.nudRenderMidMaxCutPercent.Maximum = new decimal(new int[] { 90, 0, 0, 0 });
-            this.nudRenderMidMaxCutPercent.Name = "nudRenderMidMaxCutPercent";
-            this.nudRenderMidMaxCutPercent.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderMidMaxCutPercent.TabIndex = 214;
-            this.nudRenderMidMaxCutPercent.Value = new decimal(new int[] { 25, 0, 0, 0 });
+            this.nudRenderMaxCutPercent.Location = new System.Drawing.Point(448, 53);
+            this.nudRenderMaxCutPercent.Maximum = new decimal(new int[] { 90, 0, 0, 0 });
+            this.nudRenderMaxCutPercent.Name = "nudRenderMaxCutPercent";
+            this.nudRenderMaxCutPercent.Size = new System.Drawing.Size(62, 21);
+            this.nudRenderMaxCutPercent.TabIndex = 208;
+            this.nudRenderMaxCutPercent.Value = new decimal(new int[] { 50, 0, 0, 0 });
             //
             // buttonRenderApply
             //
-            this.buttonRenderApply.Location = new System.Drawing.Point(448, 105);
+            this.buttonRenderApply.Location = new System.Drawing.Point(448, 83);
             this.buttonRenderApply.Name = "buttonRenderApply";
             this.buttonRenderApply.Size = new System.Drawing.Size(100, 28);
-            this.buttonRenderApply.TabIndex = 219;
+            this.buttonRenderApply.TabIndex = 209;
             this.buttonRenderApply.Text = "应用显示降频";
             this.buttonRenderApply.UseVisualStyleBackColor = true;
             this.buttonRenderApply.Click += new System.EventHandler(this.buttonRenderApply_Click);
@@ -2433,10 +2363,10 @@ namespace WindowsFormsApplication1
             // labelRenderEffective
             //
             this.labelRenderEffective.ForeColor = System.Drawing.SystemColors.MenuHighlight;
-            this.labelRenderEffective.Location = new System.Drawing.Point(12, 140);
+            this.labelRenderEffective.Location = new System.Drawing.Point(12, 120);
             this.labelRenderEffective.Name = "labelRenderEffective";
             this.labelRenderEffective.Size = new System.Drawing.Size(546, 40);
-            this.labelRenderEffective.TabIndex = 220;
+            this.labelRenderEffective.TabIndex = 210;
             this.labelRenderEffective.Text = "生效值：（启动时按 code.ini 读回）";
             // 
             // label79
@@ -13899,12 +13829,9 @@ namespace WindowsFormsApplication1
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown1)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderMinIntervalMs)).EndInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderInteractiveIntervalMs)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderProtectHz)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderWeight)).EndInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderHighBandHz)).EndInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderHighMaxCutPercent)).EndInit();
-            ((System.ComponentModel.ISupportInitialize)(this.nudRenderMidMaxCutPercent)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudRenderMaxCutPercent)).EndInit();
             this.groupBoxRenderThrottle.ResumeLayout(false);
             this.groupBoxRenderThrottle.PerformLayout();
             this.tabPage6.ResumeLayout(false);
@@ -14258,18 +14185,12 @@ namespace WindowsFormsApplication1
         private System.Windows.Forms.GroupBox groupBoxRenderThrottle;
         private System.Windows.Forms.Label labelRenderMinInterval;
         private System.Windows.Forms.NumericUpDown nudRenderMinIntervalMs;
-        private System.Windows.Forms.Label labelRenderInteractive;
-        private System.Windows.Forms.NumericUpDown nudRenderInteractiveIntervalMs;
         private System.Windows.Forms.Label labelRenderProtectHz;
         private System.Windows.Forms.NumericUpDown nudRenderProtectHz;
         private System.Windows.Forms.Label labelRenderWeight;
         private System.Windows.Forms.NumericUpDown nudRenderWeight;
-        private System.Windows.Forms.Label labelRenderHighBand;
-        private System.Windows.Forms.NumericUpDown nudRenderHighBandHz;
-        private System.Windows.Forms.Label labelRenderHighCut;
-        private System.Windows.Forms.NumericUpDown nudRenderHighMaxCutPercent;
-        private System.Windows.Forms.Label labelRenderMidCut;
-        private System.Windows.Forms.NumericUpDown nudRenderMidMaxCutPercent;
+        private System.Windows.Forms.Label labelRenderMaxCut;
+        private System.Windows.Forms.NumericUpDown nudRenderMaxCutPercent;
         private System.Windows.Forms.Button buttonRenderApply;
         private System.Windows.Forms.Label labelRenderEffective;
         private System.Windows.Forms.Button button12;

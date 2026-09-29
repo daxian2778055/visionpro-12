@@ -24,10 +24,8 @@ namespace WindowsFormsApplication1.Tests
 
         private static DisplayThrottleSettings Cfg(int protectHz, int weight)
         {
-            return new DisplayThrottleSettings(protectHz, weight,
-                DisplayThrottleSettings.HighBandHzDefault,
-                DisplayThrottleSettings.HighMaxCutPercentDefault,
-                DisplayThrottleSettings.MidMaxCutPercentDefault);
+            // 最大降幅取默认 50%；高频带分界(50Hz)与中带降幅(一半)第57轮起是派生值，与旧 ini 默认同值
+            return new DisplayThrottleSettings(protectHz, weight, DisplayThrottleSettings.MaxCutPercentDefault);
         }
 
         [TestMethod]

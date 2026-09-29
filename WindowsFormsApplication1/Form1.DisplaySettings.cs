@@ -288,8 +288,11 @@ namespace WindowsFormsApplication1
         ///  ② 只有 persist=true 才写 code.ini：启动读回时反写盘会把脏值/默认值固化进文件。
         ///  ③ 参数整份换引用交给调度器（RenderBudget.ApplyConfig 只换一个 volatile 引用），
         ///     检测线程要么看到整套旧参数、要么整套新参数，不会看到"阈值已改、权重还没改"。
-        /// 全局最小间隔与交互间隔是限速**总量**的旋钮，不属于 DisplayThrottleSettings，
-        /// 由调用方先写进字段、本方法负责落盘与回显——所以"应用"不需要重启即生效。
+        /// 全局最小间隔是限速**总量**的旋钮，不属于 DisplayThrottleSettings，由调用方先写进字段、
+        /// 本方法负责落盘与回显——所以"应用"不需要重启即生效。
+        /// ★第57轮：现场只剩四个框（全局间隔/阈值/权重/最大降幅）；交互期间隔、中带降幅、高频带分界
+        /// 三项改为派生，**派生出来的值一律写进回显与日志**——少掉的框不是消失了，而是被算出来了，
+        /// 现场必须能看见是多少、按什么规则算的。
         /// </summary>
         private void ApplyDisplayThrottle(DisplayThrottleSettings settings, bool persist)
         {
@@ -300,17 +303,16 @@ namespace WindowsFormsApplication1
             {
                 _config.WriteString("Display", "RenderProtectHz", settings.ProtectHz.ToString());
                 _config.WriteString("Display", "RenderWeight", settings.Weight.ToString());
-                _config.WriteString("Display", "RenderHighBandHz", settings.HighBandHz.ToString());
-                _config.WriteString("Display", "RenderHighMaxCutPercent", settings.HighMaxCutPercent.ToString());
-                _config.WriteString("Display", "RenderMidMaxCutPercent", settings.MidMaxCutPercent.ToString());
+                _config.WriteString("Display", "RenderMaxCutPercent", settings.HighMaxCutPercent.ToString());
                 _config.WriteString("Display", "RenderMinIntervalMs", _renderMinIntervalMs.ToString());
-                _config.WriteString("Display", "RenderInteractiveIntervalMs", _renderInteractiveIntervalMs.ToString());
             }
             SyncRenderThrottleControls(settings);
-            _logger.WriteLog("显示降频生效：全局间隔=" + _renderMinIntervalMs + "ms 交互间隔="
-                + _renderInteractiveIntervalMs + "ms｜阈值=" + settings.ProtectHz + "Hz 权重=" + settings.Weight
-                + "｜降幅上限 中带≤" + settings.MidMaxCutPercent + "% 高频带(≥" + settings.HighBandHz
-                + "Hz)≤" + settings.HighMaxCutPercent + "%｜降幅只减不加（预算有余也主动压快路）"
+            _logger.WriteLog("显示降频生效：全局间隔=" + _renderMinIntervalMs + "ms（交互期自动 "
+                + _renderInteractiveIntervalMs + "ms＝一半、地板 " + DisplayThrottleSettings.InteractiveFloorMs
+                + "ms；不小于全局时不放宽）｜阈值=" + settings.ProtectHz + "Hz 权重=" + settings.Weight
+                + " 最大降幅=" + settings.HighMaxCutPercent + "%（中带降幅自动取一半 ≤"
+                + settings.MidMaxCutPercent + "%，高频带分界固定 " + settings.HighBandHz + "Hz）"
+                + "｜降幅只减不加（预算有余也主动压快路）"
                 + (settings.IsLegacy ? "｜口径=第54轮回退基线" : "")
                 + (persist ? "（已写入 code.ini）" : "（启动读回，未写盘）"));
         }
@@ -319,17 +321,16 @@ namespace WindowsFormsApplication1
         private void SyncRenderThrottleControls(DisplayThrottleSettings s)
         {
             nudRenderMinIntervalMs.Value = RenderNudValue(nudRenderMinIntervalMs, _renderMinIntervalMs);
-            nudRenderInteractiveIntervalMs.Value = RenderNudValue(nudRenderInteractiveIntervalMs, _renderInteractiveIntervalMs);
             nudRenderProtectHz.Value = RenderNudValue(nudRenderProtectHz, s.ProtectHz);
             nudRenderWeight.Value = RenderNudValue(nudRenderWeight, s.Weight);
-            nudRenderHighBandHz.Value = RenderNudValue(nudRenderHighBandHz, s.HighBandHz);
-            nudRenderHighMaxCutPercent.Value = RenderNudValue(nudRenderHighMaxCutPercent, s.HighMaxCutPercent);
-            nudRenderMidMaxCutPercent.Value = RenderNudValue(nudRenderMidMaxCutPercent, s.MidMaxCutPercent);
-            labelRenderEffective.Text = "生效值：间隔 " + _renderMinIntervalMs + "ms（交互 "
-                + _renderInteractiveIntervalMs + "ms，0=不限速）｜阈值 " + s.ProtectHz + "Hz｜权重 " + s.Weight
-                + "｜降幅上限 中带≤" + s.MidMaxCutPercent + "%／≥" + s.HighBandHz + "Hz≤" + s.HighMaxCutPercent + "%"
+            nudRenderMaxCutPercent.Value = RenderNudValue(nudRenderMaxCutPercent, s.HighMaxCutPercent);
+            labelRenderEffective.Text = "生效值：全局间隔 " + _renderMinIntervalMs + "ms｜阈值 " + s.ProtectHz
+                + "Hz｜权重 " + s.Weight + "｜最大降幅 " + s.HighMaxCutPercent + "%"
+                + "｜自动推导：中带降幅 ≤" + s.MidMaxCutPercent + "%（一半）、高频带分界 " + s.HighBandHz
+                + "Hz（固定）、交互期 " + _renderInteractiveIntervalMs + "ms（全局的一半、地板 "
+                + DisplayThrottleSettings.InteractiveFloorMs + "ms，不小于全局时不放宽）"
                 + "｜只减不加：预算有余也主动压快路（各路应得速率合计不超封顶，启动估计期一次性临时超出）"
-                + "｜阈值与权重都从快路那份封顶里出，不是免费的"
+                + "｜阈值与降幅都从快路那份封顶里出，不是免费的"
                 + (s.IsLegacy ? "｜口径=第54轮回退基线" : "");
         }
 
@@ -353,11 +354,12 @@ namespace WindowsFormsApplication1
         private void buttonRenderApply_Click(object sender, EventArgs e)
         {
             _renderMinIntervalMs = (int)nudRenderMinIntervalMs.Value;
-            _renderInteractiveIntervalMs = (int)nudRenderInteractiveIntervalMs.Value;
+            // 交互期间隔不读控件：全局间隔一改就得跟着重算（第57轮，规则见 AutoInteractiveIntervalMs）
+            _renderInteractiveIntervalMs =
+                DisplayThrottleSettings.AutoInteractiveIntervalMs(_renderMinIntervalMs);
             DisplayThrottleSettings s;
             int fixedCount = DisplayThrottleSettings.Normalize((int)nudRenderProtectHz.Value,
-                (int)nudRenderWeight.Value, (int)nudRenderHighBandHz.Value,
-                (int)nudRenderHighMaxCutPercent.Value, (int)nudRenderMidMaxCutPercent.Value, out s);
+                (int)nudRenderWeight.Value, (int)nudRenderMaxCutPercent.Value, out s);
             ApplyDisplayThrottle(s, true);
             if (fixedCount > 0)
                 _logger.WriteLog("显示降频参数有 " + fixedCount + " 项越界，已回默认后生效（以回显行为准）");

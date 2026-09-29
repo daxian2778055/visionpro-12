@@ -223,7 +223,10 @@ namespace WindowsFormsApplication1
         //   操作员看屏时画面跟手；无人交互时按 RenderMinIntervalMs 正常节流省 CPU。
         //   初值回拨 1 秒，避免启动瞬间被误判为"正在交互"。
         private volatile int _lastUserTick = Environment.TickCount - 1000;
-        private int _renderInteractiveIntervalMs = 0;   // ★F6：默认 0=交互时不限速（原 20 与 RenderMinIntervalMs 默认 16 组合下"放宽"条件恒假，交互节流成摆设）
+        // ★第57轮：这一格不再开放给现场，恒由全局最小间隔派生（一半、地板 8ms），见 AutoInteractiveIntervalMs。
+        //   初值必须与 _renderMinIntervalMs=16 配套：留 0 就是"交互时不限速"，第56轮 P4 实测那是性能反转点
+        //   （12 路 30fps 一动鼠标瞬时 360 次/秒 = 封顶的 5.8 倍）；留 20 则"放宽"条件恒假＝纯摆设（F6）。
+        private int _renderInteractiveIntervalMs = DisplayThrottleSettings.AutoInteractiveIntervalMs(16);
         private UserActivityFilter _userActivityFilter;
         private volatile bool _inspectStop;
         private Cognex.VisionPro.CogRecordDisplay[] _cogDisplay;
@@ -277,19 +280,13 @@ namespace WindowsFormsApplication1
                 || _renderMinIntervalMs < 0 || _renderMinIntervalMs > 1000)
                 _renderMinIntervalMs = 16;
             _displayRawImage = _config.ReadString("Display", "RawImageMode", "0") == "1";
-            // 交互期间渲染间隔（ms）：只在用户活动时生效，比 RenderMinIntervalMs 小才有意义
-            //（弱机把常规间隔调大省 CPU 时，操作员一动鼠标就临时放宽到本值保流畅）；坏值回退默认
-            // ★F6 修复（2026-09-20）：原默认 20 与 RenderMinIntervalMs 默认 16 组合下，
-            //   使用条件（_renderInteractiveIntervalMs < interval）恒假 → 交互节流永不生效（摆设）。
-            //   默认改为 0（交互时不限速）：弱机把常规间隔调大（如 33）后，用户活动即放宽到不限速保流畅。
-            // ★第56轮 P4：默认 0 又被证明是**真正的性能反转点**——第54轮把常规侧收得很紧，
-            //   交互侧却整段绕开封顶：12 路 30fps 时瞬时 360 次/秒 = 封顶(62.5)的 5.8 倍，
-            //   而 UserActivityFilter 里 WM_MOUSEMOVE 每帧都续期 120ms 窗口，鼠标拖着就一直不退出。
-            //   默认改为 8ms（≈125 次/秒，仍比常规快一倍，观感跟手但不打满 UI 线程）；
-            //   显式配 0 保留"交互时完全不限速"的老语义，弱机现场可自行权衡。
-            if (!int.TryParse(_config.ReadString("Display", "RenderInteractiveIntervalMs", "8"), out _renderInteractiveIntervalMs)
-                || _renderInteractiveIntervalMs < 0 || _renderInteractiveIntervalMs > 1000)
-                _renderInteractiveIntervalMs = 8;
+            // 交互期间隔：★第57轮起不再开放给现场，由全局最小间隔派生（一半、地板 8ms）。
+            //   它的生效条件本来就是"严格小于全局间隔"（见 TryClaimRenderBudget）——填得比全局大就是个死框，
+            //   一个只在特定大小关系下才起作用的量不该占现场一格。历史两次踩坑都在这条上：
+            //   默认 20 时条件恒假＝纯摆设（F6）；改成 0＝一动鼠标整段绕开封顶，12 路 30fps 瞬时 360 次/秒
+            //   ＝封顶的 5.8 倍（第56轮 P4 实测的性能反转点）。带地板的派生同时避开这两个坑。
+            _renderInteractiveIntervalMs =
+                DisplayThrottleSettings.AutoInteractiveIntervalMs(_renderMinIntervalMs);
             // ★第56轮：阈值 + 权重（现场提的两条建议，按"能和封顶共存"的方式落地，详见 RenderBudget.cs 头部）。
             //   一律 TryParse：解析不出来的按越界交 Normalize 回默认；Normalize 会回报被修的项数并写日志，
             //   让"我改了没生效"当场可见。默认 RenderWeight=0（=不启用新口径的主动降幅部分），
@@ -297,25 +294,23 @@ namespace WindowsFormsApplication1
             //   封顶扣一份额度，剩下的才分摊——离线模拟实测（5 路 8fps + 7 路 30fps 饱和场景）：
             //   8fps 的路 48 帧显示 48 帧，30fps 的路每人 31 帧→21 帧；第54轮同一场景把 8fps 压到 32 帧
             //   （水位 5.2fps）。只有当各路都在阈值以上（保护带为空）时分摊结果才与第54轮一致。
-            //   ★本轮早期草案的 RenderFloorMode / RenderHardCeilingMs 两个键已随"下限/越顶"口径一起删除：
-            //   主动降幅只减不加，"想要的下限放不下封顶"那个保封顶/保感官的取舍分支根本走不到。
-            //   （注：封顶是解析式的，估计期实测放行量会一次性临时超出，见 RenderBudget 头部。
-            //   旧 ini 里若残留这两行不会被读取，无需手工清理。）
-            int protectHz, weight, highBand, highCut, midCut;
+            //   ★第57轮按用户"参数越少越好"的要求再收一刀：RenderHighBandHz / RenderMidMaxCutPercent 两键
+            //   不再读取——高频带分界固定 50Hz、中带降幅恒等于最大降幅的一半，都是被决定死的派生值，
+            //   不是独立自由度（现场 ini 里若手工加这两行也不会生效）。同批删掉的还有早期草案的
+            //   RenderFloorMode / RenderHardCeilingMs：主动降幅只减不加，"下限放不下封顶"那个取舍分支走不到。
+            int protectHz, weight, maxCut;
             if (!int.TryParse(_config.ReadString("Display", "RenderProtectHz", "10"), out protectHz)) protectHz = -1;
             if (!int.TryParse(_config.ReadString("Display", "RenderWeight", "0"), out weight)) weight = -1;
-            if (!int.TryParse(_config.ReadString("Display", "RenderHighBandHz", "50"), out highBand)) highBand = -1;
-            if (!int.TryParse(_config.ReadString("Display", "RenderHighMaxCutPercent", "50"), out highCut)) highCut = -1;
-            if (!int.TryParse(_config.ReadString("Display", "RenderMidMaxCutPercent", "25"), out midCut)) midCut = -1;
+            if (!int.TryParse(_config.ReadString("Display", "RenderMaxCutPercent", "50"), out maxCut)) maxCut = -1;
             DisplayThrottleSettings throttleSettings;
-            int throttleFixed = DisplayThrottleSettings.Normalize(protectHz, weight, highBand, highCut,
-                midCut, out throttleSettings);
+            int throttleFixed = DisplayThrottleSettings.Normalize(protectHz, weight, maxCut, out throttleSettings);
             ApplyDisplayThrottle(throttleSettings, false);
             if (throttleFixed > 0)
                 _logger.WriteLog("显示降频参数有 " + throttleFixed + " 项越界/不可解析，已回默认："
                     + "阈值=" + throttleSettings.ProtectHz + "Hz 权重=" + throttleSettings.Weight
-                    + " 高频带=" + throttleSettings.HighBandHz + "Hz 高带降幅=" + throttleSettings.HighMaxCutPercent
-                    + "% 中带降幅=" + throttleSettings.MidMaxCutPercent + "%");
+                    + " 最大降幅=" + throttleSettings.HighMaxCutPercent + "%（中带降幅自动取一半 "
+                    + throttleSettings.MidMaxCutPercent + "%，高频带分界固定 " + throttleSettings.HighBandHz
+                    + "Hz，交互期间隔自动 " + _renderInteractiveIntervalMs + "ms）");
             comboBoxLayoutMode.SelectedIndexChanged -= comboBoxLayoutMode_SelectedIndexChanged;
             comboBoxLayoutMode.Items.Clear();
             comboBoxLayoutMode.Items.AddRange(new object[] { "方格布局", "行布局" });
@@ -4940,12 +4935,16 @@ namespace WindowsFormsApplication1
                 //   本节的应得间隔只决定"这一帧显不显示"，检测、计数、存图、PLC 反馈都不受它影响。
                 int renderNowTick = System.Environment.TickCount;
                 var th = _displayThrottle;
-                lines.Add("显示分摊｜全局最小间隔=" + _renderMinIntervalMs + "ms｜交互间隔="
-                    + _renderInteractiveIntervalMs + "ms（0=交互时不限速）｜活跃 "
+                lines.Add("显示分摊｜全局最小间隔=" + _renderMinIntervalMs + "ms（唯一的总量/CPU 旋钮，0=不限速）"
+                    + "｜交互期=" + _renderInteractiveIntervalMs + "ms（自动=全局的一半、地板 "
+                    + DisplayThrottleSettings.InteractiveFloorMs
+                    + "ms；推出来不小于全局时交互期不放宽，所以不再单独开放这一格）｜活跃 "
                     + _renderBudget.ActivePaths(renderNowTick) + " 路（活跃=2 秒内请求过渲染）");
-                lines.Add("  参数｜阈值=" + th.ProtectHz + "Hz（封顶放得下时阈值以下一帧不丢，放不下见下方⚠）｜权重=" + th.Weight
-                    + "｜≥" + th.HighBandHz + "Hz 降幅上限 " + th.HighMaxCutPercent + "%｜中带降幅上限 "
-                    + th.MidMaxCutPercent + "%（权重>0 即主动压快路显示，预算有余也照样压——用显示换 CPU）"
+                lines.Add("  参数｜阈值=" + th.ProtectHz + "Hz（封顶放得下时阈值以下一帧不丢，放不下见下方⚠）｜权重="
+                    + th.Weight + "｜最大降幅=" + th.HighMaxCutPercent + "%（权重>0 即主动压快路显示，"
+                    + "预算有余也照样压——用显示换 CPU）｜派生值：≥" + th.HighBandHz + "Hz 按最大降幅降，"
+                    + th.ProtectHz + "~" + th.HighBandHz + "Hz 之间线性升到它的一半 ≤" + th.MidMaxCutPercent
+                    + "%（高频带分界 " + th.HighBandHz + "Hz 固定，第57轮起不开放）"
                     + (th.IsLegacy ? "｜口径=第54轮回退基线（阈值与权重同时为0）" : ""));
                 int pressure = _renderBudget.PressureCode(renderNowTick, _renderMinIntervalMs);
                 lines.Add("  实况｜水位=" + _renderBudget.WaterLevelFps(renderNowTick, _renderMinIntervalMs)
