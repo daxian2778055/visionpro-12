@@ -4752,8 +4752,20 @@ namespace WindowsFormsApplication1
         //   生命期只跑一次 no-op GC，此后连试都不试。故本阀现在是：突破时立刻 Forced + 等终结器，
         //   之后只要仍超阈值就按 256 帧节流**反复**强制；日志仍只在状态翻转时记，不刷屏。
         private const int RetiredFrameGcCheckMask = 31;        // 每 32 张退役帧查一次内存
-        private const int RetiredFrameGcRetryMask = 255;       // 高位期间每 256 张退役帧（≈8.5 秒@30fps）最多再强制一次
-        private const long RetiredFrameGcBytesLimit = 1536L * 1024 * 1024;   // 工作集超 1.5GB 才触发
+        // ★第52轮（按与基线 8/22 的逐项对比结论调整）：原 255 / 1.5GB。
+        //   基线那 4 处 GC.Collect+WaitForPendingFinalizers **全在安全时机**——切方案前
+        //   （ReleaseAllMyjobVisionObjects 里 j.block 已置 null）与退出前，**运行中一次都不做**。
+        //   也就是说"运行中强制终结 CogImage8Grey"是本工程独有的机制，也是与基线唯一的实质差异。
+        //   风险有实测量级：1920×1080 灰度图 ≈ 2MB，12 路连续跑 ≈ 25MB/帧 ⇒ 1.5GB 只够约 60 帧
+        //   ⇒ 阀在工作集越过 1.5GB 之后，每 256 帧（30fps 约 8.5 秒）就终结一次全部 CogImage8Grey。
+        //   而终结器释放的就是非托管像素缓冲，**效果等同于对每张图做一次 Dispose**——第49轮
+        //   "我们 Dispose 掉一张帧，VisionPro 立刻报无法访问"正是反证：它靠非托管句柄，不是托管强引用。
+        //   改法：阈值 1.5GB → 4GB、节流 256 帧 → 1024 帧。4GB 可缓存约 160 帧（12 路 1080P）够跑，
+        //   强制终结频率降到 1/16；真超 4GB 仍然兜住，不会 OOM。
+        //   ⚠ 换相机分辨率必须重算：4K 灰度 ≈ 8.3MB/张，12 路 ≈ 100MB/帧 ⇒ 4GB 只够 40 帧，
+        //     此时应按 (单帧总字节 × 期望缓存帧数) 反推阈值，不要直接沿用 4GB。
+        private const int RetiredFrameGcRetryMask = 1023;      // 高位期间每 1024 张退役帧（≈34 秒@30fps）最多再强制一次
+        private const long RetiredFrameGcBytesLimit = 4096L * 1024 * 1024;   // 工作集超 4GB 才触发
         private int _retiredFrameTicks;                        // 退役帧计数（Interlocked，不持锁）
         private volatile bool _gcValveFired;                   // 安全阀是否处于"已突破"状态（迟滞用）
 
