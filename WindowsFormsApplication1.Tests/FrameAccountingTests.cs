@@ -1,0 +1,191 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace WindowsFormsApplication1.Tests
+{
+    /// <summary>
+    /// ★第53轮：帧账本单测——钉的是"归因会不会说谎"，不是数字对不对。
+    ///
+    /// 现场两个投诉（问题1 软触发没计数 / 问题2 我们计数比机台少）此前无法回答，
+    /// 因为界面只有一个"漏帧 = 接收 - 检测"的差额，差额从哪来一个字不提。
+    /// 账本把差额按原因拆开，但拆开本身可能骗人：
+    ///   ① 漏记一条丢弃路径 → 差额对不上，若这时还说"已查全"就是谎报；
+    ///   ② 同帧记两次 / 把接收前的丢弃算进对账 → 归因反而大于差额；
+    ///   ③ 把"取图失败仍判 NG"这类备注念成丢帧 → 现场以为丢了 N 张，实际一张没少。
+    /// 这四条都必须由单测钉住，因为线上没有任何别的手段能区分"真没丢"和"没查全"。
+    /// </summary>
+    [TestClass]
+    public class FrameAccountingTests
+    {
+        [TestMethod]
+        public void 记账按路隔离_槽位与原因非法一律静默忽略()
+        {
+            var acct = new FrameAccounting();
+            acct.Note(3, FrameAccounting.Reason.MasterGate);
+            acct.Note(3, FrameAccounting.Reason.MasterGate);
+            acct.Note(4, FrameAccounting.Reason.QueueEvicted);
+
+            Assert.AreEqual(2, acct.Get(3, FrameAccounting.Reason.MasterGate));
+            Assert.AreEqual(1, acct.Get(4, FrameAccounting.Reason.QueueEvicted), "不得串路");
+            Assert.AreEqual(0, acct.Get(5, FrameAccounting.Reason.MasterGate));
+
+            // 跑在相机 SDK 回调线程上：非法入参只允许被忽略，绝不允许抛
+            acct.Note(-1, FrameAccounting.Reason.ModeGate);
+            acct.Note(FrameAccounting.Slots, FrameAccounting.Reason.ModeGate);
+            acct.Note(0, (FrameAccounting.Reason)999);
+            Assert.AreEqual(0, acct.Get(0, (FrameAccounting.Reason)999));
+        }
+
+        [TestMethod]
+        public void 三组分类互斥完备_各路总账等于三组之和()
+        {
+            // 分组表(Groups)若漏项/重项，TotalAfterReceive 的分子就会静默错值，
+            // 对账结论随之失真——这条不变量只能这样整体钉住。
+            var acct = new FrameAccounting();
+            int expectTotal = 0;
+            for (int r = 0; r < (int)FrameAccounting.Reason.Count; r++)
+            {
+                var reason = (FrameAccounting.Reason)r;
+                for (int k = 0; k < r + 1; k++) acct.Note(0, reason);
+                expectTotal += r + 1;
+            }
+
+            int sumAll = 0;
+            for (int r = 0; r < (int)FrameAccounting.Reason.Count; r++)
+                sumAll += acct.Get(0, (FrameAccounting.Reason)r);
+            Assert.AreEqual(expectTotal, sumAll);
+
+            Assert.AreEqual(expectTotal,
+                acct.TotalBeforeReceive(0) + acct.TotalAfterReceive(0)
+                + acct.Get(0, FrameAccounting.Reason.AcquireFailed)
+                + acct.Get(0, FrameAccounting.Reason.ManualTrigger)
+                + acct.Get(0, FrameAccounting.Reason.ManualTriggerStopped),
+                "接收前+接收后+备注必须等于全部计数——分组表漏了原因就会在这里暴露");
+        }
+
+        [TestMethod]
+        public void 备注类不参与对账_取图失败与手动触发不计入任何丢弃总数()
+        {
+            var acct = new FrameAccounting();
+            acct.Note(1, FrameAccounting.Reason.AcquireFailed);
+            acct.Note(1, FrameAccounting.Reason.ManualTrigger);
+            acct.Note(1, FrameAccounting.Reason.ManualTriggerStopped);
+
+            Assert.AreEqual(0, acct.TotalAfterReceive(1));
+            Assert.AreEqual(0, acct.TotalBeforeReceive(1));
+            Assert.IsFalse(FrameAccounting.IsAfterReceive(FrameAccounting.Reason.AcquireFailed));
+            Assert.IsTrue(FrameAccounting.GroupOf(FrameAccounting.Reason.ManualTrigger)
+                == FrameAccounting.ReasonGroup.Note);
+        }
+
+        [TestMethod]
+        public void 分组明细不含备注类_取图失败不会被念成丢帧()
+        {
+            var acct = new FrameAccounting();
+            acct.Note(2, FrameAccounting.Reason.CallbackPaused);
+            acct.Note(2, FrameAccounting.Reason.AcquireFailed);
+            acct.Note(2, FrameAccounting.Reason.ManualTrigger);
+
+            string pre = acct.Breakdown(2, FrameAccounting.ReasonGroup.PreReceive);
+            Assert.IsTrue(pre.Contains("暂停丢(回调)1"), "接收前明细要列出该项，实际:" + pre);
+            Assert.IsFalse(pre.Contains("取图失败"), "备注类不得混进接收前明细，否则现场听成丢了 1 帧");
+            Assert.IsFalse(pre.Contains("手动触发"));
+
+            string all = acct.Breakdown(2);
+            Assert.IsTrue(all.Contains("取图失败(仍判NG)1") && all.Contains("手动触发1"), "全量明细应含备注类，实际:" + all);
+
+            // 0 的类别省略
+            Assert.IsFalse(acct.Breakdown(3, FrameAccounting.ReasonGroup.AfterReceive).Contains("队列满丢"));
+            Assert.AreEqual("无", acct.Breakdown(3));
+        }
+
+        [TestMethod]
+        public void 对账_差额为零且无归因_判已查全()
+        {
+            var acct = new FrameAccounting();
+            string line = acct.Reconcile(0, 100, 100);
+            Assert.IsTrue(line.Contains("差额0"), line);
+            Assert.IsTrue(line.Contains("已查全"), line);
+            Assert.IsFalse(line.Contains("未查全"), "已查全的措辞不能同时出现'未查全'子串");
+        }
+
+        [TestMethod]
+        public void 对账_差额与归因逐项相符_判已查全并列出明细()
+        {
+            var acct = new FrameAccounting();
+            acct.Note(0, FrameAccounting.Reason.MasterGate);
+            acct.Note(0, FrameAccounting.Reason.MasterGate);
+            acct.Note(0, FrameAccounting.Reason.QueueEvicted);
+
+            string line = acct.Reconcile(0, 10, 7);   // 差额 3，归因 3
+            Assert.IsTrue(line.Contains("已查全：差额与归因分类逐项相符"), line);
+            Assert.IsTrue(line.Contains("总门不通过2"), line);
+            Assert.IsTrue(line.Contains("队列满丢1"), line);
+        }
+
+        [TestMethod]
+        public void 对账_有未归因差额_必须明说未查全与剩余帧数()
+        {
+            // ★核心反谎报用例：存在没接进账本的丢弃路径时，结论绝不能是"没丢帧"。
+            var acct = new FrameAccounting();
+            acct.Note(0, FrameAccounting.Reason.MasterGate);
+
+            string line = acct.Reconcile(0, 10, 7);   // 差额 3，只归因了 1
+            Assert.IsTrue(line.Contains("未查全"), line);
+            Assert.IsTrue(line.Contains("还有 2 帧"), "要给出未归因的具体帧数，实际:" + line);
+            Assert.IsTrue(line.Contains("不能断定『没丢帧』"), line);
+        }
+
+        [TestMethod]
+        public void 对账_归因超出差额_必须报超出而不是已查全()
+        {
+            // 同帧重复记账、或把接收前的丢弃误记成接收后，都会让分子大于差额。
+            var acct = new FrameAccounting();
+            for (int i = 0; i < 4; i++) acct.Note(0, FrameAccounting.Reason.WorkerBusy);
+
+            string line = acct.Reconcile(0, 10, 9);   // 差额 1，归因 4
+            Assert.IsTrue(line.Contains("归因超出差额 3"), line);
+            Assert.IsFalse(line.Contains("已查全"), line);
+        }
+
+        [TestMethod]
+        public void 对账_检测完成数大于接收数_判正常不参与对账()
+        {
+            // 回图/手动检测不来自相机帧：sum 可以大于 m_nFrames，这是合法状态，不能报丢帧。
+            var acct = new FrameAccounting();
+            string line = acct.Reconcile(5, 3, 9);
+            Assert.IsTrue(line.Contains("差额-6"), line);
+            Assert.IsTrue(line.Contains("不参与对账"), line);
+            Assert.IsFalse(line.Contains("未查全"), line);
+        }
+
+        [TestMethod]
+        public void 接收前丢弃不进漏帧_漏帧差额为零时接收前仍可有账()
+        {
+            // 问题2 的关键口径：暂停/停采/模式门丢的帧连 m_nFrames 都没加，
+            // 所以"漏帧=0"并不等于"机台拍的每张都收到了"。
+            var acct = new FrameAccounting();
+            for (int i = 0; i < 5; i++) acct.Note(0, FrameAccounting.Reason.CallbackPaused);
+
+            Assert.AreEqual(5, acct.TotalBeforeReceive(0));
+            Assert.AreEqual(0, acct.TotalAfterReceive(0), "接收前不得计入漏帧对账分子");
+            Assert.IsTrue(acct.Reconcile(0, 20, 20).Contains("已查全"), "漏帧为 0 时仍应判已查全（接收前另列）");
+        }
+
+        [TestMethod]
+        public void 清零复位所有路与所有原因()
+        {
+            var acct = new FrameAccounting();
+            acct.Note(0, FrameAccounting.Reason.MasterGate);
+            acct.Note(11, FrameAccounting.Reason.QueueEvicted);
+            Assert.IsTrue(acct.HasActivity(0));
+            Assert.IsTrue(acct.HasActivity(11));
+            Assert.IsFalse(acct.HasActivity(5));
+
+            acct.ResetAll();
+            Assert.IsFalse(acct.HasActivity(0), "清零后不得留任何账（界面清零与此同窗口）");
+            Assert.IsFalse(acct.HasActivity(11));
+            Assert.AreEqual(0, acct.Get(0, FrameAccounting.Reason.MasterGate));
+            Assert.AreEqual(0, acct.TotalAfterReceive(11));
+        }
+    }
+}

@@ -77,9 +77,9 @@ namespace WindowsFormsApplication1
                 else
                     _config.WriteString("camera", "cuntu", "存图释放");
                 if (comboBox22.SelectedIndex == 0)
-                    _config.WriteString("camera", "tongji", "存图限制");
+                    _config.WriteString("camera", "tongji", "统计限制");
                 else
-                    _config.WriteString("camera", "tongji", "存图释放");
+                    _config.WriteString("camera", "tongji", "统计释放");
                 _config.WriteString("camera", "qufan", button31.Text);
                 _config.WriteString("camera", "yanshi", numericUpDown1.Value.ToString());
                 _config.WriteString("cuntu", "zhangshu", numericUpDown4.Value.ToString());
@@ -1049,6 +1049,9 @@ namespace WindowsFormsApplication1
             {
                 m_nFrames[i] = 0;
             }
+            // ★第53轮：账本与 m_nFrames/sum 同窗口复位。漏帧对账用的是"接收-检测=差额"，
+            //   只清计数不清账，清零后的第一轮归因就会拿旧账去套新差额，报出假的"未查全"。
+            _frameAcct.ResetAll();
 
         }
 

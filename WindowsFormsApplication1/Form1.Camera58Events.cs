@@ -138,6 +138,8 @@ namespace WindowsFormsApplication1
 
         private void comboBox22_SelectedIndexChanged(object sender, EventArgs e)
         {
+            // ★第53轮：开关一切，"统计关闭/开启"的行文案就要重画一次，复位一次性标志
+            _statOffNoted = false;
             if (comboBox22.SelectedIndex == 0)
             {
                 tongji = 0;

@@ -2314,16 +2314,15 @@ namespace WindowsFormsApplication1
                     comboBox21.SelectedIndex = 1;
                     cuntu = 1;
                 }
-                if (_config.ReadString("camera", "tongji", "统计限制").Replace("\0", "") == "统计限制")
-                {
-                    comboBox22.SelectedIndex = 0;
-                    tongji = 0;
-                }
-                else
-                {
-                    comboBox22.SelectedIndex = 1;
-                    tongji = 1;
-                }
+                // ★第53轮 P0-1：默认值原先写的是"统计限制"——ini 里没有 camera/tongji 键的机器
+                //   （从没在设置页保存过）统计显示默认就是**关**，界面「检测数/OK数/NG数/合格率」
+                //   四行永远停在没有数字的种子文本，现场只能读成"相机拍照次数漏了"。默认改开启。
+                //   同时兼容历史错写：老版本保存段把统计项按"存图限制/存图释放"落盘（字串口径 bug）。
+                string tongjiRaw = _config.ReadString("camera", "tongji", "统计释放").Replace("\0", "");
+                bool tongjiOff = tongjiRaw == "统计限制" || tongjiRaw == "存图限制";
+                comboBox22.SelectedIndex = tongjiOff ? 0 : 1;
+                tongji = tongjiOff ? 0 : 1;
+                _statOffNoted = false;   // 关闭态也要补一次"(统计关闭)"说明
                 // Replace("\0", "")
                 if (_config.ReadString("camera", "qufan", "IO未反转").Replace("\0", "") == "IO未反转")
                 {
@@ -3313,6 +3312,10 @@ namespace WindowsFormsApplication1
             // ★第51.6轮：挂"手动诊断"菜单入口。只加菜单项、失败也不影响启动（下面单独兜底）。
             try { InstallManualDiagnosisEntry(); }
             catch (Exception exMenu) { _logger.WriteLog("手动诊断菜单挂载失败: " + exMenu.Message); }
+
+            // ★第53轮：挂"帧计数归因（只读）"入口（问题2 现场判读用）。同样失败不影响启动。
+            try { InstallFrameAccountingEntry(); }
+            catch (Exception exAcct) { _logger.WriteLog("帧计数归因菜单挂载失败: " + exAcct.Message); }
 
             int dayt = 0;
             int dayz = 0;
@@ -4562,6 +4565,14 @@ namespace WindowsFormsApplication1
             return idle;
         }
 
+        // ★第53轮：帧账本。每个「帧被丢掉但没进检测数」的出口记一笔，供
+        //   「设置 → 帧计数归因（只读）」与现场对账（机台触发数 vs 我们的检测数）。
+        //   纯计数，不参与任何判定，也不影响原有丢帧行为。
+        private readonly FrameAccounting _frameAcct = new FrameAccounting();
+        // 限流时戳：每路一格 + 末格给槽位非法（与 _lastWorkerBusyLogTick 同口径，避免互相吃掉窗口）。
+        private readonly int[] _lastAcctLogTick = new int[13];
+        private readonly int[] _lastGateLogTick = new int[13];
+
         private sealed class InspectionFrame
         {
             public readonly Bitmap Image;
@@ -4598,7 +4609,11 @@ namespace WindowsFormsApplication1
                 }
                 try
                 {
-                    if (_switchingScheme || _disposingFlag) continue;
+                    if (_switchingScheme || _disposingFlag)
+                    {
+                        _frameAcct.Note(slot, FrameAccounting.Reason.WorkerStopping);   // ★第53轮
+                        continue;
+                    }
                     var job = _jobs.Myjobs[slot];
                     // ★第26轮#6：必须先占住该路 recordBusy 再换帧位图。原实现把
                     //   ReleaseFrameBitmap(slot) / bmp[slot] = frame.Image 写在 getrecord 之前、
@@ -4608,6 +4623,7 @@ namespace WindowsFormsApplication1
                         tokenHeld = System.Threading.Interlocked.CompareExchange(ref job.recordBusy, 1, 0) == 0;
                     if (!tokenHeld)
                     {
+                        _frameAcct.Note(slot, FrameAccounting.Reason.WorkerBusy);   // ★第53轮
                         if (job != null) job.trriger = 0;   // ★R9 同口径：未消费即回滚回图标志，防粘滞
                         int now = Environment.TickCount;
                         int tslot = (slot >= 0 && slot < 12) ? slot : 12;
@@ -4625,6 +4641,7 @@ namespace WindowsFormsApplication1
                 }
                 catch (Exception ex)
                 {
+                    _frameAcct.Note(slot, FrameAccounting.Reason.WorkerException);   // ★第53轮
                     _logger.WriteLog("检测线程异常 相机" + (slot + 1) + ": " + ex.Message);
                 }
                 finally
@@ -4649,7 +4666,10 @@ namespace WindowsFormsApplication1
                 {
                     if (_frameQueue[i] == null) continue;
                     while (_frameQueue[i].Count > 0)
+                    {
                         _frameQueue[i].Dequeue().Image?.Dispose();
+                        _frameAcct.Note(i, FrameAccounting.Reason.Drained);   // ★第53轮
+                    }
                 }
             }
         }
@@ -4659,6 +4679,7 @@ namespace WindowsFormsApplication1
             // A null image represents a failed acquisition, processed in order as an NG transaction.
             if (_inspectStop || _disposingFlag || _switchingScheme || slot < 0 || slot >= 12)
             {
+                _frameAcct.Note(slot, FrameAccounting.Reason.EnqueueStopped);   // ★第53轮
                 owned?.Dispose();
                 return;
             }
@@ -4668,6 +4689,7 @@ namespace WindowsFormsApplication1
                 while (_frameQueue[slot].Count >= InspectQueueDepth)
                 {
                     _frameQueue[slot].Dequeue().Image?.Dispose();
+                    _frameAcct.Note(slot, FrameAccounting.Reason.QueueEvicted);   // ★第53轮
                     int count = ++_droppedFrameCount[slot];
                     DateTime now = DateTime.Now;
                     if ((now - _lastDropLogAt[slot]).TotalSeconds >= 1)
@@ -4840,6 +4862,68 @@ namespace WindowsFormsApplication1
             // 挂载成功必须留痕：这行是"入口到底装上没有"的唯一可观测证据，
             // 同时直接告诉操作者去哪儿点——否则又变成"看不见的改动"。
             _logger.WriteLog("手动诊断入口已挂载：菜单 设置 → 已释放图像诊断（只读）");
+        }
+
+        private ToolStripMenuItem _frameAcctItem;   // ★第53轮：帧计数归因入口（同样运行时挂载，不动 Designer/.resx）
+
+        private void InstallFrameAccountingEntry()
+        {
+            if (_frameAcctItem != null) return;   // 幂等
+            ToolStripMenuItem item = new ToolStripMenuItem("帧计数归因（只读）");
+            item.Name = "帧计数归因ToolStripMenuItem";
+            item.ToolTipText = "只读打印每路「接收/检测完成/差额归因」，不修改任何对象、不停止检测，运行中也可点";
+            item.Click += 帧计数归因ToolStripMenuItem_Click;
+            // 紧跟上一项之后：设置 → [分隔] → 已释放图像诊断（只读）→ 帧计数归因（只读）
+            this.设置ToolStripMenuItem.DropDownItems.Add(item);
+            _frameAcctItem = item;   // 同样在挂载成功后才赋值
+            _logger.WriteLog("帧计数归因入口已挂载：菜单 设置 → 帧计数归因（只读）");
+        }
+
+        private void 帧计数归因ToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            // 按行组织：日志侧逐行 WriteLog（与手动诊断明细同口径——一行一条，带各自时间前缀，可检索），
+            // 弹窗侧把同一批行拼起来，两边说法必然一致。
+            var lines = new System.Collections.Generic.List<string>();
+            lines.Add("【帧计数归因（只读）】口径：接收=回调收到的帧数，检测完成=界面「检测数」，差额即界面「漏帧」。");
+            lines.Add("「接收前」丢弃不产生接收数、不进漏帧——机台触发数比我们的接收数多，缺口就在这组。");
+            int activeSlots = 0;
+            try
+            {
+                var jobs = _jobs;
+                for (int i = 0; i < 12; i++)
+                {
+                    if (!_frameAcct.HasActivity(i)) continue;   // 只列有账的路，避免 12 行空账
+                    activeSlots++;
+                    Myjob job = jobs != null && jobs.Myjobs != null && i < jobs.Myjobs.Length
+                        ? jobs.Myjobs[i] : null;
+                    int received = System.Threading.Volatile.Read(ref m_nFrames[i]);
+                    int detected = job != null ? System.Threading.Volatile.Read(ref job.sum) : 0;
+                    string mode = job != null ? NormalizeTriggerMode(job.triggerMode) : "";
+                    lines.Add("相机" + (i + 1) + "｜模式=" + (mode == "" ? "未设置" : mode)
+                        + "｜该路启动=" + (job != null ? job.yun : -1)
+                        + " 使能=" + (job != null ? job.en : -1));
+                    lines.Add("  " + _frameAcct.Reconcile(i, received, detected));
+                    lines.Add("  接收前丢弃" + _frameAcct.TotalBeforeReceive(i)
+                        + "（不计入漏帧）：" + _frameAcct.Breakdown(i, FrameAccounting.ReasonGroup.PreReceive));
+                    lines.Add("  备注（不判丢帧）：取图失败仍判NG "
+                        + _frameAcct.Get(i, FrameAccounting.Reason.AcquireFailed)
+                        + "，手动触发 " + _frameAcct.Get(i, FrameAccounting.Reason.ManualTrigger)
+                        + "（其中停止态 " + _frameAcct.Get(i, FrameAccounting.Reason.ManualTriggerStopped)
+                        + "，按设计只采图不计数）");
+                }
+            }
+            catch (Exception ex)
+            {
+                lines.Add("⚠ 归因读取异常：" + ex.GetType().Name + ": " + ex.Message);
+            }
+            if (activeSlots == 0)
+                lines.Add("取证范围内没有任何路的账：软件启动后该路既没收到过帧，也没丢弃过帧。");
+
+            foreach (string line in lines) _logger.WriteLog(line);
+            string text = string.Join("\r\n", lines.ToArray());
+            // 弹窗只给现场一眼判读，超长时截断并指向日志（日志才是完整留痕）。
+            string popup = text.Length <= 1500 ? text : text.Substring(0, 1500) + "\r\n…（其余见运行日志）";
+            MessageBox.Show(this, popup, "帧计数归因（只读）", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void 手动诊断ToolStripMenuItem_Click(object sender, EventArgs e)
@@ -5217,6 +5301,11 @@ namespace WindowsFormsApplication1
                 if (!_inspectionLifecycle.TryEnter())
                 {
                     if (myjob != null) myjob.trriger = 0; // ★R9：同上，暂停丢弃也回滚（img 保留，下次点击覆盖时释放）
+                    // ★第53轮：只有来自检测线程（本帧确实计入 m_nFrames）才记账，
+                    //   UI 手动回图被暂停挡下不参与漏帧对账。
+                    if (tokenHeldByCaller)
+                        NoteRecordDrop(myjob, FrameAccounting.Reason.RecordPaused,
+                            "检测暂停中（保存/切方案/停采），本帧已接收但未检测，计入漏帧", true);
                     return;
                 }
                 try
@@ -5224,9 +5313,12 @@ namespace WindowsFormsApplication1
                     if (_switchingScheme || _disposingFlag)
                     {
                         if (myjob != null) myjob.trriger = 0; // ★R9：同上
+                        if (tokenHeldByCaller)
+                            NoteRecordDrop(myjob, FrameAccounting.Reason.RecordStopping,
+                                "切方案/关窗中，本帧已接收但未检测，计入漏帧", true);
                         return;
                     }
-                    GetRecordCore(myjob, payload, frameSrc, acquisitionFailed);
+                    GetRecordCore(myjob, payload, frameSrc, acquisitionFailed, tokenHeldByCaller);
                 }
                 finally { _inspectionLifecycle.Exit(); }
             }
@@ -5249,6 +5341,35 @@ namespace WindowsFormsApplication1
         {
             int slot = ParsePathNumberIndex(job);
             return slot >= 0 ? slot : 12;
+        }
+
+        /// <summary>
+        /// ★第53轮：接收后（已计入 m_nFrames）的丢弃记一笔 + 限流留痕。
+        /// 这类丢弃必须与界面「漏帧」逐项对上，所以只在帧确实被丢弃、且未产生检测数时调用；
+        /// 取图失败判 NG 那一类走 FrameAccounting.Reason.AcquireFailed（备注组，不在此处）。
+        /// </summary>
+        private void NoteRecordDrop(Myjob myjob, FrameAccounting.Reason reason, string what, bool log)
+        {
+            try
+            {
+                if (myjob == null) return;
+                int slot = ParsePathNumberIndex(myjob);
+                if (slot >= 0 && slot < 12)
+                {
+                    _frameAcct.Note(slot, reason);
+                    if (!log) return;
+                    int now = Environment.TickCount;
+                    if (now - _lastGateLogTick[slot] <= 5000) return;
+                    _lastGateLogTick[slot] = now;
+                    _logger.WriteLog("相机" + (slot + 1) + " " + what + "（该类累计"
+                        + _frameAcct.Get(slot, reason) + "）");
+                }
+                else if (log)
+                {
+                    _logger.WriteLog("相机流程(" + (myjob.path_number ?? "") + ") " + what);
+                }
+            }
+            catch { }
         }
 
         // ★手动回图位图泄漏修复：myjob.img 只在使用后(getrecord 消费)或本次覆盖时释放。
@@ -5283,12 +5404,20 @@ namespace WindowsFormsApplication1
             finally { job.recordBusy = 0; }
         }
 
-        private void GetRecordCore(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc, bool acquisitionFailed)
+        private void GetRecordCore(Myjob myjob, System.Collections.Generic.KeyValuePair<string, string> payload, CommTriggerSource frameSrc, bool acquisitionFailed, bool fromInspectQueue = false)
         {
             EnsureCameraOutWork(); // ★P2-1：本帧用输出队列，惰性初始化一次
+            // ★第53轮：本帧是否已在「总数计算」处计入检测数——异常逃逸时据此决定要不要记丢帧。
+            bool countedThisFrame = false;
             try
             {
-                if (myjob?.block == null) return;
+                if (myjob?.block == null)
+                {
+                    if (fromInspectQueue)
+                        NoteRecordDrop(myjob, FrameAccounting.Reason.MasterGate,
+                            "该路检测流程未加载（block 为空），本帧已接收但未检测，计入漏帧", true);
+                    return;
+                }
                 int jobnumber = 0;
                 int camIdx = ParsePathNumberIndex(myjob);
                 string cuowu1;
@@ -5306,7 +5435,12 @@ namespace WindowsFormsApplication1
                 {
                     if (_jobs.yunxing && myjob.yun == 1 && myjob.trriger == 0
                         && IsCommTriggerMode(myjob.triggerMode) && !_jobs.CommTriggerArmed)
+                    {
+                        if (fromInspectQueue)
+                            NoteRecordDrop(myjob, FrameAccounting.Reason.MasterGate,
+                                "运行中但通讯触发未布防（PLC 链路断开/未使能），本帧已接收但未检测，计入漏帧", true);
                         return;
+                    }
 
                     if (myjob.job.State == CogJobStateConstants.Stopped)
                     {
@@ -5406,6 +5540,9 @@ namespace WindowsFormsApplication1
                             }
                             if (_switchingScheme)
                             {
+                                if (fromInspectQueue)
+                                    NoteRecordDrop(myjob, FrameAccounting.Reason.RecordStopping,
+                                        "方案切换中丢弃旧帧，本帧已接收但未检测，计入漏帧", true);
                                 ReleaseFrameBitmap(camIdx);
                                 return;   // 方案切换中：丢弃旧帧，停止检测
                             }
@@ -5719,6 +5856,7 @@ namespace WindowsFormsApplication1
                             // ★第26轮建议9：本处的 myjob.trriger = 0 已上收到 getrecord 的最外层 finally
                             //   （核心流程任何异常逃逸都不再把回图标志粘在 1）。
                             Interlocked.Increment(ref myjob.sum);
+                            countedThisFrame = true; // ★第53轮：自此本帧已有检测数，后续异常不再记丢帧
                             #endregion
                             // P2-1 fix: oksum/NG count are critical stats, not queueable (queue drop = miscount).
                             // Back to detection-thread sync; live COM myjob.block.Outputs snapshotted to string first.
@@ -6072,12 +6210,34 @@ namespace WindowsFormsApplication1
                         }
                         // Thread.Sleep(1);
                     }
+                    else
+                    {
+                        // ★第53轮：这道门原先无 else、无日志——作业状态不是 Stopped 时整段检测被跳过，
+                        //   帧已接收（漏帧+1）却一声不响。
+                        if (fromInspectQueue)
+                            NoteRecordDrop(myjob, FrameAccounting.Reason.JobNotStopped,
+                                "VisionPro 作业状态不是 Stopped（当前=" + myjob.job.State + "），整段检测被跳过，计入漏帧", true);
+                    }
+                }
+                else
+                {
+                    // ★第53轮：总门不通过（问题1 的落点——停止态手动软触发的帧正是从这里静默溜走）。
+                    if (fromInspectQueue)
+                        NoteRecordDrop(myjob, FrameAccounting.Reason.MasterGate,
+                            "总门不通过（运行中=" + (_jobs.yunxing ? "是" : "否")
+                            + " 该路已启动=" + myjob.yun + " 该路使能=" + myjob.en
+                            + " 回图/重放标志=" + myjob.trriger
+                            + "；停止态下单机软触发只采图、按设计不计入检测数），本帧已接收但未检测，计入漏帧", true);
                 }
             }
             catch (Exception ex)
             {
 
                 _logger.WriteLog(ex.ToString() + "相机" + myjob.path_number);
+                // ★第53轮：异常逃逸的帧没有产生检测数（若已自增则不算丢，避免归因超出差额）。
+                if (fromInspectQueue && !countedThisFrame)
+                    NoteRecordDrop(myjob, FrameAccounting.Reason.CoreException,
+                        "检测流程异常，本帧未产生检测数，计入漏帧", true);
             };
         }
 
@@ -6090,6 +6250,22 @@ namespace WindowsFormsApplication1
         //   （跳帧而非排队；显示的本来就是瞬时统计值，跳帧无副作用）。
         private int _uiStatInFlight;
         private int _uiLabelInFlight;
+
+        // ★第53轮：统计关闭时"检测数:"这类种子标签会一直停在没有数字的状态，和漏计数看不出区别。
+        //   下面这个一次性标志保证"(统计关闭)"只补画一次；统计重新开启时由刷新体复位。
+        private volatile bool _statOffNoted;
+
+        /// <summary>ListBox 统计行只在文本真的变了时赋值（UI 线程调用；重复赋同值会触发无谓重绘）。</summary>
+        private void SetStatRowIfChanged(int index, string text)
+        {
+            try
+            {
+                object cur = listBox2.Items[index];
+                if (cur != null && text.Equals(cur.ToString())) return;
+                listBox2.Items[index] = text;
+            }
+            catch { }
+        }
 
         #endregion
         #endregion
@@ -6192,8 +6368,11 @@ namespace WindowsFormsApplication1
                 if (zhuanhuan == 0)
                 {
                     zhuanhuan = 1;
-                    if (tongji == 1 && Interlocked.CompareExchange(ref _uiStatInFlight, 1, 0) == 0)
+                    // ★第53轮 P0-2：统计关闭时也要把话说一遍（原先是一片没有数字的空标签，
+                    //   和"漏计数"看起来一模一样）。_statOffNoted 保证只画一次，不新增常驻 UI 负担。
+                    if ((tongji == 1 || !_statOffNoted) && Interlocked.CompareExchange(ref _uiStatInFlight, 1, 0) == 0)
                     {
+                        bool statOn = tongji == 1;
 
                         bool queuedStat = TryBeginInvoke(() =>
                         {
@@ -6201,17 +6380,41 @@ namespace WindowsFormsApplication1
                             //   最坏情况队列里只有 2 项（1 在执行 + 1 在等），不再无界增长。
                             Volatile.Write(ref _uiStatInFlight, 0);
                             if (manager1 == null) return;
+                            if (statOn) _statOffNoted = false;
+                            int jobCount = manager1.JobCount;
                             for (int _i = 0; _i < 12; _i++)
                             {
-                                if ((_i == 0 || manager1.JobCount > _i) && NormalizeTriggerMode(_jobs.Myjobs[_i].triggerMode) != "连续运行" && listBox2.Items.Count >= 6 + _i * 6)
+                                if (listBox2.Items.Count < 6 + _i * 6) continue;   // 该路未铺行（原守卫同口径）
+                                int _base = 1 + _i * 6;
+                                if (!statOn)
                                 {
-                                    int _base = 1 + _i * 6;
+                                    SetStatRowIfChanged(_base, "检测数:(统计关闭)");
+                                    SetStatRowIfChanged(_base + 1, "OK数:(统计关闭)");
+                                    SetStatRowIfChanged(_base + 2, "NG数:(统计关闭)");
+                                    SetStatRowIfChanged(_base + 3, "合格率:(统计关闭)");
+                                    continue;
+                                }
+                                // ★第53轮：删掉原先的 `!= "连续运行"` 排除——连续运行路的这四行
+                                //   从此根本不刷，界面停在种子文本"检测数:"（无数字）。
+                                bool inScheme = _i == 0 || jobCount > _i;
+                                if (inScheme)
+                                {
                                     listBox2.Items[_base] = "检测数:" + _jobs.Myjobs[_i].sum.ToString();
                                     listBox2.Items[_base + 1] = "OK数:" + _jobs.Myjobs[_i].oksum.ToString();
                                     listBox2.Items[_base + 2] = "NG数:" + (_jobs.Myjobs[_i].sum - _jobs.Myjobs[_i].oksum).ToString();
                                     listBox2.Items[_base + 3] = "合格率:" + _jobs.Myjobs[_i].rate.ToString("F3");
                                 }
+                                else
+                                {
+                                    // 不刷新 ≠ 零：按启动规则只有前 JobCount 路参与检测，
+                                    // 其余路的行必须自己说明原因，否则又是一处"看不见的改动"。
+                                    SetStatRowIfChanged(_base, "检测数:(该路不在方案流程数" + jobCount + "内)");
+                                    SetStatRowIfChanged(_base + 1, "OK数:(不参与检测)");
+                                    SetStatRowIfChanged(_base + 2, "NG数:(不参与检测)");
+                                    SetStatRowIfChanged(_base + 3, "合格率:(不参与检测)");
+                                }
                             }
+                            if (!statOn) _statOffNoted = true;
                         });
                         if (!queuedStat) Volatile.Write(ref _uiStatInFlight, 0);   // 未能入队（关窗/句柄已毁）：不遗留占用
                     }
@@ -13362,6 +13565,7 @@ namespace WindowsFormsApplication1
 
         private void TriggerExecFor(int index)
         {
+            if (index < 0 || index >= 12) return;
             if (!IsCameraGrabbing(index))
             {
                 _logger.WriteLog("相机" + (index + 1) + "未采集，无法触发");
@@ -13371,7 +13575,29 @@ namespace WindowsFormsApplication1
             if (MyCamera.MV_OK != nRet)
             {
                 ShowErrorMsg("Trigger Software Fail!", nRet);
+                return;
             }
+
+            // ★第53轮（问题1 根修：手动软触发成功后软件一句话都不说）：
+            //   相机实实在在拍了一张，但"会不会计入检测数"取决于总门——原先既无日志也无界面反馈，
+            //   现场只能把"没计数"理解成"漏计数"。这里把判据原样说清楚，并且只记次数、不改 sum
+            //   （停止态下单击软触发是调试动作，不是生产件，计入会污染合格率）。
+            try
+            {
+                _frameAcct.Note(index, FrameAccounting.Reason.ManualTrigger);
+                Myjob job = _jobs != null && _jobs.Myjobs != null && index < _jobs.Myjobs.Length
+                    ? _jobs.Myjobs[index] : null;
+                bool willCount = job != null && _jobs.yunxing && job.yun == 1 && job.en == 1;
+                if (!willCount)
+                    _frameAcct.Note(index, FrameAccounting.Reason.ManualTriggerStopped);
+                _logger.WriteLog("相机" + (index + 1) + " 软触发已发出（模式="
+                    + (job != null ? (NormalizeTriggerMode(job.triggerMode) == "" ? "未设置" : NormalizeTriggerMode(job.triggerMode)) : "未知")
+                    + "，" + (_jobs.yunxing ? "运行中" : "停止态")
+                    + "，该路启动=" + (job != null ? job.yun : -1) + "，该路使能=" + (job != null ? job.en : -1) + "）。"
+                    + (willCount ? "本帧应计入检测数。"
+                                 : "本帧按设计不计入检测数（只采图），累计次数见 设置→帧计数归因（只读）。"));
+            }
+            catch { }
         }
 
         private void SetStartGrabButtonState(int index, bool startEnabled)
@@ -13448,24 +13674,77 @@ namespace WindowsFormsApplication1
 
         private void ImageCallBack(IntPtr pData, ref MyCamera.MV_FRAME_OUT_INFO_EX pFrameInfo, IntPtr pUser)
         {
-            if (!_inspectionLifecycle.TryEnter()) return;
+            // ★第53轮：暂停（保存方案/切方案/停采/逐路停止）期间回调直接返回，且这一下发生在
+            //   m_nFrames 自增之前——机台实实在在拍了一张，界面「漏帧」却一分不涨。必须记账 + 留痕，
+            //   现场才可能把「机台触发数」和「我们的检测数」对上。
+            if (!_inspectionLifecycle.TryEnter())
+            {
+                int pausedSlot = (int)pUser;
+                NoteBeforeReceiveDrop(pausedSlot, FrameAccounting.Reason.CallbackPaused,
+                    "检测暂停中（保存/切方案/停采），本帧在进入接收计数之前被丢弃，不计入「漏帧」");
+                return;
+            }
             try { ProcessImageCallback(pData, ref pFrameInfo, pUser); }
             finally { _inspectionLifecycle.Exit(); }
         }
 
+        /// <summary>
+        /// ★第53轮：回调层「接收计数之前」丢弃的限流留痕（每路 5 秒一行）。
+        /// 本方法跑在 SDK 回调线程上，整段吞异常——记账工具绝不能反过来把取流线程搞崩。
+        /// </summary>
+        private void NoteBeforeReceiveDrop(int slot, FrameAccounting.Reason reason, string what)
+        {
+            try
+            {
+                if (slot < 0 || slot >= 12) return;
+                _frameAcct.Note(slot, reason);
+                int now = Environment.TickCount;
+                if (now - _lastAcctLogTick[slot] <= 5000) return;
+                _lastAcctLogTick[slot] = now;
+                _logger.WriteLog("相机" + (slot + 1) + " " + what + "（该类累计"
+                    + _frameAcct.Get(slot, reason) + "）");
+            }
+            catch { }
+        }
+
         private void ProcessImageCallback(IntPtr pData, ref MyCamera.MV_FRAME_OUT_INFO_EX pFrameInfo, IntPtr pUser)
         {
-            if (_disposingFlag || _switchingScheme || _inspectStop) return;
-
             int nIndex = (int)pUser;
-            if (nIndex < 0 || nIndex >= _jobs.Myjobs.Length || _jobs.Myjobs[nIndex] == null) return;
+            if (_disposingFlag || _switchingScheme || _inspectStop)
+            {
+                NoteBeforeReceiveDrop(nIndex, FrameAccounting.Reason.CallbackStopping,
+                    "停采/切方案/关窗中，本帧在进入接收计数之前被丢弃，不计入「漏帧」");
+                return;
+            }
+
+            if (nIndex < 0 || nIndex >= _jobs.Myjobs.Length || _jobs.Myjobs[nIndex] == null)
+            {
+                NoteBeforeReceiveDrop(nIndex, FrameAccounting.Reason.CallbackSlotInvalid,
+                    "回调槽位非法（越界或该路流程不存在），本帧在进入接收计数之前被丢弃，不计入「漏帧」");
+                return;
+            }
 
             if (!ShouldProcessImageCallback(nIndex))
+            {
+                // 模式门按触发模式分两类记账：通讯触发是"没有在途触发/未布防"，
+                // 其它（模式串为空或不认识）是"该模式本就不收图"——两者现场处置完全不同。
+                bool commMode = NormalizeTriggerMode(_jobs.Myjobs[nIndex].triggerMode) == "通讯触发";
+                NoteBeforeReceiveDrop(nIndex,
+                    commMode ? FrameAccounting.Reason.CommNoTrigger : FrameAccounting.Reason.ModeGate,
+                    commMode
+                        ? "通讯触发模式下未布防或无在途触发，本帧在进入接收计数之前被丢弃，不计入「漏帧」"
+                        : "触发模式不是连续运行/触发拍照/通讯触发（为空或不认识），本帧在进入接收计数之前被丢弃，不计入「漏帧」");
                 return;
+            }
 
             // Consume the trigger even when conversion fails, so its metadata cannot shift to the next frame.
             CameraTriggerRecord trigger = _jobs.TakeTrigger(nIndex);
-            if (IsCommTriggerMode(_jobs.Myjobs[nIndex].triggerMode) && trigger == null) return;
+            if (IsCommTriggerMode(_jobs.Myjobs[nIndex].triggerMode) && trigger == null)
+            {
+                NoteBeforeReceiveDrop(nIndex, FrameAccounting.Reason.CommNoTrigger,
+                    "通讯触发模式的在途触发记录已被取走（重复帧/超时清理），本帧在进入接收计数之前被丢弃，不计入「漏帧」");
+                return;
+            }
             Interlocked.Increment(ref m_nFrames[nIndex]);
 
             bool frameQueued = false;
@@ -13549,6 +13828,9 @@ namespace WindowsFormsApplication1
             {
                 if (!frameQueued)
                 {
+                    // 空帧入队按失败交易处理（判 NG），检测数照加——所以这是"备注"不是"丢帧"，
+                    // 不能进接收后对账组，否则漏帧差额会被重复扣一次。
+                    _frameAcct.Note(nIndex, FrameAccounting.Reason.AcquireFailed);
                     owned?.Dispose();
                     EnqueueInspectFrame(nIndex, null, trigger);
                 }

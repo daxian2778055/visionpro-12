@@ -66,6 +66,9 @@
     <!-- DeadImageScan：★第51.1轮 死引用诊断的扫描状态（预算/截断/去重/结论口径）。
          纯 BCL、零 Cognex 依赖，故可整文件链接；抽出同时修掉"static 计数不复位导致第二次诊断谎报未找到" -->
     <Compile Include="..\WindowsFormsApplication1\DeadImageScan.cs" Link="Linked\DeadImageScan.cs" />
+    <!-- FrameAccounting：★第53轮 帧账本（丢弃原因三组分类 + 与「漏帧」对账的诚实口径）。
+         同样纯 BCL、零 Cognex 依赖，可整文件链接 -->
+    <Compile Include="..\WindowsFormsApplication1\FrameAccounting.cs" Link="Linked\FrameAccounting.cs" />
 
     <!-- ===== ★第43轮：Modbus TCP 回环（127.0.0.1 自建 FC3 从站，无硬件跑完整轮询链）=====
          闭包：Runtime + Link + 配置 + 接口 + 渲染/助手类（HslCommunication 走 NuGet，见上） -->
