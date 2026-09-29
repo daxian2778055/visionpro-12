@@ -241,6 +241,36 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
+        /// 对象是否属于 .NET 反射元数据（Type / Assembly / Module / MemberInfo…）——这类对象**禁止下钻**。
+        /// <para>
+        /// ★第51.9轮：实测抓到的真因。2026-09-29 第二次手动诊断的日志原文：
+        /// <c>下钻深度超过 15 层（层号 16）：job1/CogJob1.Tools[1].Tools[0].Inputs[0].ValueType.Module
+        /// .Assembly.DefinedTypes[0].BaseType.Module.Assembly.DefinedTypes[0]…</c>
+        /// —— <c>Inputs[0].ValueType</c> 是个 <see cref="System.Type"/>，于是
+        /// Type → Module → Assembly → DefinedTypes[] → BaseType → Module → Assembly → …
+        /// 这是一条**可以无限深挖**的 .NET 元数据链，和图像引用毫无关系，却把整个节点预算吃光
+        /// （实测 50000/50000 打满，第 2 路 job 根本没走到）。
+        /// </para>
+        /// <para>
+        /// 代价是实打实的：51.2 把 MaxDepth 6→10、51.8 又提到 15，节点预算 20000→50000，
+        /// 全是在给这条无关的链子加预算，方向从根上就错了。真实工具结构排在它后面，
+        /// 所以第51轮"要走到 TrainImage"的目标**一次都没达成过**。
+        /// </para>
+        /// </summary>
+        public static bool IsReflectionMetadata(object v)
+        {
+            if (v == null) return false;
+            // Type（含 RuntimeType）单独判：它的 Namespace 是 "System" 而非 System.Reflection，
+            // 但 DefinedTypes[0] / BaseType 返回的都是它，不挡就等于漏掉整条链的第一环。
+            if (v is System.Type) return true;
+            System.Type t;
+            try { t = v.GetType(); } catch { return true; }   // 连类型都取不到就没法判断，不下钻更安全
+            if (t == null) return true;
+            string ns = t.Namespace;                          // Type/MemberInfo/Assembly/Module/MethodInfo…
+            return ns != null && ns.StartsWith("System.Reflection", System.StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// 手动诊断入口（★第51.6轮，菜单"已释放图像诊断"）是否该拒绝本次运行。
         /// 返回 null = 放行；否则返回给操作者的拒绝理由（日志与弹窗共用同一句话，避免两处说法不一）。
         /// <para>

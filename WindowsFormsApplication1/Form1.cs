@@ -5066,6 +5066,12 @@ namespace WindowsFormsApplication1
         private static void WalkValueForDeadImages(object v, string path, DeadImageScan scan, int depth)
         {
             if (v == null) return;
+            // ★第51.9轮 P1：反射元数据整条链禁止下钻（实测真因，判定见 DeadImageScan.IsReflectionMetadata）。
+            //   位置很重要——放在深度检查与 CountNode **之前**：它既不该占深度、也不该占节点预算。
+            //   实测就是这条链把 50000 节点吃光（Inputs[0].ValueType → Type → Module → Assembly
+            //   → DefinedTypes[] → BaseType → …，可无限深），第 2 路 job 因此根本没走到。
+            //   这里**不留痕**：不是"没查完"，是"本来就不该查"——留痕会平白把结论降级。
+            if (DeadImageScan.IsReflectionMetadata(v)) return;
             // ★第51.2轮 P2：同上，深度截断必须留痕
             // ★第51.8轮：同样带路径——这一处是"值对象链"（Operator/Items/Pattern/TrainImage），
             //   正是要走到 TrainImage 的那条路，路径信息在这里最值钱。

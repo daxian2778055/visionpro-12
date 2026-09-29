@@ -479,5 +479,45 @@ namespace WindowsFormsApplication1.Tests
             string text = new DeadImageScan().CoverageText(3, 5, 7);
             StringAssert.Contains(text, "不可信", "自相矛盾的分数不能当进度读");
         }
+
+        // ===== ★第51.9轮 P1：反射元数据禁止下钻（实测真因，不是推理） =====
+        // 2026-09-29 第二次手动诊断实测：50000/50000 节点打满、第 2 路 job 根本没走到，
+        // 撞深度上限的路径是
+        //   Inputs[0].ValueType → System.Type → .Module → System.Reflection.Module
+        //   → .Assembly → DefinedTypes[0] → .BaseType → .Module → .Assembly → …
+        // 即一条可无限深的 .NET 元数据链。51.2 的 6→10、51.8 的 10→15 全是在给它加预算。
+        // 这类对象里不可能藏 Cognex 的图像引用，遇到必须直接不下钻。
+
+        [TestMethod]
+        public void 反射元数据_必须被判定为禁止下钻()
+        {
+            // 链条第一环：ValueType 的返回值就是 System.Type 实例
+            Assert.IsTrue(DeadImageScan.IsReflectionMetadata(typeof(int)),
+                "Type 实例是整条元数据链的入口，不挡就等于没修");
+            // Type 的运行时类型是 System.RuntimeType，Namespace 是 System 而非 System.Reflection，
+            // 只按命名空间判会漏掉它（实测路径里的 DefinedTypes[0] / BaseType 就是它）
+            Assert.IsTrue(DeadImageScan.IsReflectionMetadata(typeof(int).GetType()),
+                "RuntimeType 的命名空间是 System，必须靠 is System.Type 兜住");
+            // 往后每一环
+            Assert.IsTrue(DeadImageScan.IsReflectionMetadata(typeof(int).Module), "Module");
+            Assert.IsTrue(DeadImageScan.IsReflectionMetadata(typeof(int).Assembly), "Assembly");
+            Assert.IsTrue(DeadImageScan.IsReflectionMetadata(typeof(int).GetType().GetMethod("ToString")),
+                "MethodInfo 属于 System.Reflection");
+            Assert.IsTrue(DeadImageScan.IsReflectionMetadata(typeof(int).GetType().GetProperty("Name")),
+                "PropertyInfo 属于 System.Reflection");
+        }
+
+        [TestMethod]
+        public void 非元数据的普通对象_必须放行_否则会漏掉真正的图像引用()
+        {
+            Assert.IsFalse(DeadImageScan.IsReflectionMetadata(null), "null 在调用方已先行 return，这里不该命中");
+            Assert.IsFalse(DeadImageScan.IsReflectionMetadata(new object()), "System 命名空间 ≠ 反射元数据");
+            Assert.IsFalse(DeadImageScan.IsReflectionMetadata("字符串"),
+                "字符串是死引用路径里常见的真实值，绝不能被当元数据挡掉");
+            Assert.IsFalse(DeadImageScan.IsReflectionMetadata(new System.Collections.Generic.List<int>()),
+                "集合要继续下钻——PMAlign 的 Items[] 正是走这条路");
+            Assert.IsFalse(DeadImageScan.IsReflectionMetadata(new int[] { 1, 2 }),
+                "数组同理，挡掉就等于放弃了 Items[] 那条路");
+        }
     }
 }
