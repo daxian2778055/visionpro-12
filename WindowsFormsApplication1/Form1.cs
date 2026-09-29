@@ -196,10 +196,15 @@ namespace WindowsFormsApplication1
         private readonly int[] _renderBusy = new int[12];   // ★ 性能优先：每相机渲染请求"单飞"标志（0/1，UI 未消化完则丢弃中间帧，允许漏显示）
         // ★ 显示降载（2026-09-19）：全局渲染速率门控。UI 线程光栅化天然串行，缺的是总量上限——
         //   12 路各自单飞叠加仍可能把 UI 打满。限制两次渲染启动的最小间隔（code.ini 可调），
-        //   间隔内到达的请求走各自丢帧路径；每相机饥饿计数防某路被高频路永久挤占。
+        //   间隔内到达的请求走各自丢帧路径。
+        // ★第54轮：上限不变，**分配方式**从"全局单一刻度先到先赢 + 被拒 40 次放行一次"改成
+        //   按需求解的 max-min 分摊。旧口径两处硬伤：判据用全局共享的"上次启动时刻"⇒ 先到先赢锁相，
+        //   与赢家同相的路每帧都被拒；逃生阀按**次数**不按时间 ⇒ 低频路要等满 40 个自己的帧才轮一次。
+        //   模拟实测：12 路 3fps（总需求 36/s、上限 62.5/s，预算根本没用完）旧法 11 路显示率 0%。
+        //   均分也不合理（现场反馈）：快慢版本来不同，均分把快路压到 17% 而慢路用不完份额；
+        //   按需求解后同场景快路 51%、慢路 100%、总量 62.4/s 仍在上限内。详见 RenderBudget.cs 头部。
         private int _renderMinIntervalMs = 16;
-        private int _lastRenderStartTick;
-        private readonly int[] _renderStarve = new int[12];
+        private readonly RenderBudget _renderBudget = new RenderBudget();
         // ★ 原图快速路径（弱机现场开关，code.ini [Display]RawImageMode 持久化）：
         //   只贴原图，跳过 VisionPro record 深拷贝与 overlay 光栅化，CPU 降一个量级。
         private volatile bool _displayRawImage;
@@ -4889,6 +4894,12 @@ namespace WindowsFormsApplication1
             int activeSlots = 0;
             try
             {
+                // ★第54轮：显示分摊只读快照。判读"某路画面不刷新"时先分清是显示预算还是检测侧丢帧——
+                //   本节的应得间隔只决定"这一帧显不显示"，检测、计数、存图、PLC 反馈都不受它影响。
+                int renderNowTick = System.Environment.TickCount;
+                lines.Add("显示分摊｜全局最小间隔=" + _renderMinIntervalMs + "ms｜交互间隔="
+                    + _renderInteractiveIntervalMs + "ms（0=交互时不限速）｜活跃 "
+                    + _renderBudget.ActivePaths(renderNowTick) + " 路（活跃=2 秒内请求过渲染）");
                 var jobs = _jobs;
                 for (int i = 0; i < 12; i++)
                 {
@@ -4910,6 +4921,11 @@ namespace WindowsFormsApplication1
                         + "，手动触发 " + _frameAcct.Get(i, FrameAccounting.Reason.ManualTrigger)
                         + "（其中停止态 " + _frameAcct.Get(i, FrameAccounting.Reason.ManualTriggerStopped)
                         + "，按设计只采图不计数）");
+                    int entitledMs = _renderBudget.EntitledMs(i, renderNowTick, _renderMinIntervalMs);
+                    lines.Add("  显示分摊｜相机" + (i + 1) + " 应得间隔 "
+                        + (entitledMs <= 0 ? "0ms（不限速）" : entitledMs + "ms")
+                        + (entitledMs <= 0 ? "" : "≈" + (1000 / entitledMs) + " 次/秒")
+                        + "（低频路应得=自身周期⇒一帧不丢，高频路按剩余预算分摊）");
                 }
             }
             catch (Exception ex)
@@ -6660,32 +6676,20 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
-        /// 全局渲染速率门控（检测线程并发调用，全 Interlocked/Volatile，无锁）。
-        /// 两次渲染启动之间不足最小间隔则拒绝本次（走丢帧路径），给 UI 光栅化总量封顶；
-        /// UI 线程本身串行，无需再加互斥。被拒相机累计饥饿计数，超阈值放行一次，
-        /// 防止低频相机（如通讯触发路）被高频连续采集路永久挤占显示。
+        /// 渲染限速入口（检测线程调用）。窗体侧只决定**用多大的全局间隔**：最近 120ms 内有
+        /// 鼠标/键盘活动时把间隔临时放宽到交互间隔（仅当它更小才生效；0=不限速不参与）；
+        /// 拿到间隔之后，"这一帧显不显示、轮到哪一路"全部交给 RenderBudget 按路分摊。
         /// Environment.TickCount 为 int 毫秒，差值运算对回绕自洽。
         /// </summary>
         private bool TryClaimRenderBudget(int slot)
         {
             int now = Environment.TickCount;
             int interval = _renderMinIntervalMs;
-            // 交互优先：最近 120ms 内有鼠标/键盘活动时，把限速临时放宽到交互间隔
-            //（仅当交互间隔更小时生效；interval=0 表示不限速，不参与）
             if (interval > 0
                 && _renderInteractiveIntervalMs < interval
                 && unchecked(now - _lastUserTick) < 120)
                 interval = _renderInteractiveIntervalMs;
-            if (interval > 0
-                && unchecked(now - Volatile.Read(ref _lastRenderStartTick)) < interval
-                && Volatile.Read(ref _renderStarve[slot]) < 40)
-            {
-                Volatile.Write(ref _renderStarve[slot], Volatile.Read(ref _renderStarve[slot]) + 1);
-                return false;
-            }
-            Volatile.Write(ref _renderStarve[slot], 0);
-            Volatile.Write(ref _lastRenderStartTick, now);
-            return true;
+            return _renderBudget.TryClaim(slot, now, interval);
         }
 
         /// <summary>
