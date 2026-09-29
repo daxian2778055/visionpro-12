@@ -227,6 +227,14 @@ namespace WindowsFormsApplication1
         //   初值必须与 _renderMinIntervalMs=16 配套：留 0 就是"交互时不限速"，第56轮 P4 实测那是性能反转点
         //   （12 路 30fps 一动鼠标瞬时 360 次/秒 = 封顶的 5.8 倍）；留 20 则"放宽"条件恒假＝纯摆设（F6）。
         private int _renderInteractiveIntervalMs = DisplayThrottleSettings.AutoInteractiveIntervalMs(16);
+        // ★第58轮③：这些键已从配置窗和 ini 读取里退出（前三项由代码派生，后两项对应的分支已删除），
+        //   但旧 ini 里可能还留着。读侧不再解析它们，只在启动时点名提示，免得现场改了数字
+        //   却查不出为什么不生效。新增废弃键往这里加一行即可，不要往读取段里塞兼容分支。
+        private static readonly string[] DeprecatedRenderKeys =
+        {
+            "RenderInteractiveIntervalMs", "RenderHighBandHz", "RenderHighMaxCutPercent",
+            "RenderMidMaxCutPercent", "RenderFloorMode", "RenderHardCeilingMs",
+        };
         private UserActivityFilter _userActivityFilter;
         private volatile bool _inspectStop;
         private Cognex.VisionPro.CogRecordDisplay[] _cogDisplay;
@@ -308,9 +316,26 @@ namespace WindowsFormsApplication1
             if (throttleFixed > 0)
                 _logger.WriteLog("显示降频参数有 " + throttleFixed + " 项越界/不可解析，已回默认："
                     + "阈值=" + throttleSettings.ProtectHz + "Hz 权重=" + throttleSettings.Weight
-                    + " 最大降幅=" + throttleSettings.HighMaxCutPercent + "%（中带降幅自动取一半 "
+                    + " 最大降幅=" + throttleSettings.MaxCutPercent + "%（中带降幅自动取一半 "
                     + throttleSettings.MidMaxCutPercent + "%，高频带分界固定 " + throttleSettings.HighBandHz
                     + "Hz，交互期间隔自动 " + _renderInteractiveIntervalMs + "ms）");
+            // ★第58轮③：废弃键从"静默忽略"改成"点名忽略"。本机 bin 里的 ini 从来没有过这些键，
+            //   但客户机上若存着第56轮写进去的旧键，现在会被直接忽略——现场手改一行数字、软件照旧、
+            //   还查不出原因，这跟静默忽略数据问题是同一类。所以这里只扫一眼、记一行日志，
+            //   不补任何兼容读取：这些值现在由代码派生，读回来反而制造第二个真相源。
+            StringBuilder legacyKeys = null;
+            for (int lk = 0; lk < DeprecatedRenderKeys.Length; lk++)
+            {
+                if (!_config.KeyExists("Display", DeprecatedRenderKeys[lk])) continue;
+                if (legacyKeys == null) legacyKeys = new StringBuilder();
+                else legacyKeys.Append('、');
+                legacyKeys.Append(DeprecatedRenderKeys[lk]);
+            }
+            if (legacyKeys != null)
+                _logger.WriteLog("检测到已废弃的显示降频键，已忽略（值现由代码派生或该分支已删除）："
+                    + legacyKeys + "｜当前生效：阈值=" + throttleSettings.ProtectHz
+                    + "Hz 权重=" + throttleSettings.Weight + " 最大降幅=" + throttleSettings.MaxCutPercent
+                    + "% 最小间隔=" + _renderMinIntervalMs + "ms");
             comboBoxLayoutMode.SelectedIndexChanged -= comboBoxLayoutMode_SelectedIndexChanged;
             comboBoxLayoutMode.Items.Clear();
             comboBoxLayoutMode.Items.AddRange(new object[] { "方格布局", "行布局" });
@@ -4941,7 +4966,7 @@ namespace WindowsFormsApplication1
                     + "ms；推出来不小于全局时交互期不放宽，所以不再单独开放这一格）｜活跃 "
                     + _renderBudget.ActivePaths(renderNowTick) + " 路（活跃=2 秒内请求过渲染）");
                 lines.Add("  参数｜阈值=" + th.ProtectHz + "Hz（封顶放得下时阈值以下一帧不丢，放不下见下方⚠）｜权重="
-                    + th.Weight + "｜最大降幅=" + th.HighMaxCutPercent + "%（权重>0 即主动压快路显示，"
+                    + th.Weight + "｜最大降幅=" + th.MaxCutPercent + "%（权重>0 即主动压快路显示，"
                     + "预算有余也照样压——用显示换 CPU）｜派生值：≥" + th.HighBandHz + "Hz 按最大降幅降，"
                     + th.ProtectHz + "~" + th.HighBandHz + "Hz 之间线性升到它的一半 ≤" + th.MidMaxCutPercent
                     + "%（高频带分界 " + th.HighBandHz + "Hz 固定，第57轮起不开放）"

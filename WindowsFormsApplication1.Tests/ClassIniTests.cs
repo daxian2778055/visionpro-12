@@ -116,6 +116,21 @@ namespace WindowsFormsApplication1.Tests
             Assert.IsFalse(_ini.ReadBool("secG", "absent", false));
         }
 
+        // ★第58轮③：启动时"检测到已废弃的键……已忽略"那行日志全靠这个判据——
+        //   误报会让现场以为自己的配置被读了（其实没有），漏报就是继续静默忽略。
+        [TestMethod]
+        public void ValueExists_默认值路径不算存在_落盘后才算存在()
+        {
+            Assert.AreEqual("16", _ini.ReadString("Display", "RenderHighBandHz", "16"), "缺键应走默认值路径");
+            Assert.IsFalse(_ini.ValueExists("Display", "RenderHighBandHz"),
+                "★只走过默认值路径（SynthKeys）的键不得报成存在，否则废弃键点名会凭空误报");
+
+            _ini.WriteString("Display", "RenderHighBandHz", "40");   // 模拟客户机上第56轮写进去的旧键
+            Assert.IsTrue(_ini.ValueExists("Display", "RenderHighBandHz"),
+                "文件里真有这个键时必须点名——静默忽略就是现场'改了数字没反应'的成因");
+            StringAssert.Contains(FileText(), "RenderHighBandHz=40");
+        }
+
         [TestMethod]
         public void DeleteKey_物理删除并同步清理合成标记()
         {

@@ -37,5 +37,15 @@ namespace WindowsFormsApplication1
         {
             _ini.WriteString(Section, Ident, Value);
         }
+
+        /// <summary>
+        /// ★第58轮③：该键是否真的写在文件里（ReadString 拿到的是默认值时区分不出来）。
+        /// 只服务于"已废弃键点名"这类**只诊断、不解析**的场景；不要拿它做旧键兼容读取，
+        /// 那会把已经收口的派生值重新变成第二个真相源。
+        /// </summary>
+        public bool KeyExists(string Section, string Ident)
+        {
+            return _ini.ValueExists(Section, Ident);
+        }
     }
 }

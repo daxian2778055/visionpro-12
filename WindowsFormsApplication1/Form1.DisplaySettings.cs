@@ -303,14 +303,14 @@ namespace WindowsFormsApplication1
             {
                 _config.WriteString("Display", "RenderProtectHz", settings.ProtectHz.ToString());
                 _config.WriteString("Display", "RenderWeight", settings.Weight.ToString());
-                _config.WriteString("Display", "RenderMaxCutPercent", settings.HighMaxCutPercent.ToString());
+                _config.WriteString("Display", "RenderMaxCutPercent", settings.MaxCutPercent.ToString());
                 _config.WriteString("Display", "RenderMinIntervalMs", _renderMinIntervalMs.ToString());
             }
             SyncRenderThrottleControls(settings);
             _logger.WriteLog("显示降频生效：全局间隔=" + _renderMinIntervalMs + "ms（交互期自动 "
                 + _renderInteractiveIntervalMs + "ms＝一半、地板 " + DisplayThrottleSettings.InteractiveFloorMs
                 + "ms；不小于全局时不放宽）｜阈值=" + settings.ProtectHz + "Hz 权重=" + settings.Weight
-                + " 最大降幅=" + settings.HighMaxCutPercent + "%（中带降幅自动取一半 ≤"
+                + " 最大降幅=" + settings.MaxCutPercent + "%（中带降幅自动取一半 ≤"
                 + settings.MidMaxCutPercent + "%，高频带分界固定 " + settings.HighBandHz + "Hz）"
                 + "｜降幅只减不加（预算有余也主动压快路）"
                 + (settings.IsLegacy ? "｜口径=第54轮回退基线" : "")
@@ -323,9 +323,9 @@ namespace WindowsFormsApplication1
             nudRenderMinIntervalMs.Value = RenderNudValue(nudRenderMinIntervalMs, _renderMinIntervalMs);
             nudRenderProtectHz.Value = RenderNudValue(nudRenderProtectHz, s.ProtectHz);
             nudRenderWeight.Value = RenderNudValue(nudRenderWeight, s.Weight);
-            nudRenderMaxCutPercent.Value = RenderNudValue(nudRenderMaxCutPercent, s.HighMaxCutPercent);
+            nudRenderMaxCutPercent.Value = RenderNudValue(nudRenderMaxCutPercent, s.MaxCutPercent);
             labelRenderEffective.Text = "生效值：全局间隔 " + _renderMinIntervalMs + "ms｜阈值 " + s.ProtectHz
-                + "Hz｜权重 " + s.Weight + "｜最大降幅 " + s.HighMaxCutPercent + "%"
+                + "Hz｜权重 " + s.Weight + "｜最大降幅 " + s.MaxCutPercent + "%"
                 + "｜自动推导：中带降幅 ≤" + s.MidMaxCutPercent + "%（一半）、高频带分界 " + s.HighBandHz
                 + "Hz（固定）、交互期 " + _renderInteractiveIntervalMs + "ms（全局的一半、地板 "
                 + DisplayThrottleSettings.InteractiveFloorMs + "ms，不小于全局时不放宽）"

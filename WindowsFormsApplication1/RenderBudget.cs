@@ -10,8 +10,9 @@ namespace WindowsFormsApplication1
     ///     第54轮的 max-min 只在"该路需求 ≤ 水位"时全显，水位=1000/RenderMinIntervalMs/路数，
     ///     12 路 16ms 时只有 5.2fps——10Hz 的触发路本来该全显却被挤，这条把保护写成硬承诺。
     ///   · 权重 RenderWeight 0~100：对**高于阈值**的路降得多狠，而且是**主动降**（不是"等预算不够才降"）。
-    ///   · 最大降幅 RenderMaxCutPercent：W=100 时高频路的降幅上限（现场原话"极致权重时 80Hz 显示 40Hz"
-    ///     ⇒ 默认 50%）。
+    ///   · 最大降幅 RenderMaxCutPercent：W=100 时的降幅上限，全带统一的那一个数（现场原话"极致权重时
+    ///     80Hz 显示 40Hz" ⇒ 默认 50%）。它是上限而不是"高频带专用值"：需求达到高频带分界（固定 50Hz）
+    ///     才取满，阈值~分界之间线性上升、最多只到它的一半（见 CutPermyriad 与下面的派生量）。
     ///
     /// 另外三个量第57轮起**由代码派生、不再开放给现场**，各自都有理由：
     ///   · 高频带分界 = 固定 HighBandHzFixed(50Hz)：它只决定"降幅斜坡在哪里封顶"，现场相机基本都在
@@ -56,16 +57,18 @@ namespace WindowsFormsApplication1
         public readonly int ProtectHz;          // 阈值（Hz）；0=不设保护带
         public readonly int Weight;             // 0~100
         public readonly int HighBandHz;         // 高频带分界（Hz），恒 = HighBandHzFixed
-        public readonly int HighMaxCutPercent;  // W=100 时高频带最大降幅（%）——现场那一格
-        public readonly int MidMaxCutPercent;   // W=100 时中频带最大降幅（%）——恒 = 高频带的一半
+        // ★第58轮②改名（原 HighMaxCutPercent）：本值即界面上那一格「最大降幅」，是全带统一的削减上限，
+        //   不只管高频带——中带恒取其一半，所以别被旧名字误导成"还有另一个高频带专用参数"。
+        public readonly int MaxCutPercent;      // W=100 时的最大降幅（%）——现场那一格
+        public readonly int MidMaxCutPercent;   // W=100 时中频带降幅（%）——恒 = MaxCutPercent 的一半
 
-        public DisplayThrottleSettings(int protectHz, int weight, int highMaxCutPercent)
+        public DisplayThrottleSettings(int protectHz, int weight, int maxCutPercent)
         {
             ProtectHz = protectHz;
             Weight = weight;
             HighBandHz = HighBandHzFixed;
-            HighMaxCutPercent = highMaxCutPercent;
-            MidMaxCutPercent = highMaxCutPercent / 2;
+            MaxCutPercent = maxCutPercent;
+            MidMaxCutPercent = maxCutPercent / 2;
         }
 
         /// <summary>第54轮口径（无保护带、无权重）——新参数的总开关位，也是回归基线。</summary>
@@ -391,7 +394,7 @@ namespace WindowsFormsApplication1
             int protectMilli = cfg.ProtectHz * MilliPerFps;
             int highMilli = cfg.HighBandHz * MilliPerFps;
             int span = highMilli - protectMilli;
-            if (span <= 0 || demandMilliFps >= highMilli) return cfg.HighMaxCutPercent * cfg.Weight;
+            if (span <= 0 || demandMilliFps >= highMilli) return cfg.MaxCutPercent * cfg.Weight;
             int over = demandMilliFps - protectMilli;
             if (over < 0) over = 0;
             // 中频带线性斜坡：越接近高频带分界降得越多（"频率越高降频比例越大"）

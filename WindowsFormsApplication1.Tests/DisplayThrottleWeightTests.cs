@@ -417,9 +417,9 @@ namespace WindowsFormsApplication1.Tests
             Assert.AreEqual(3, fixedCount, "三项越界应全部回报，实测 " + fixedCount);
             Assert.AreEqual(DisplayThrottleSettings.ProtectHzDefault, s.ProtectHz);
             Assert.AreEqual(DisplayThrottleSettings.WeightDefault, s.Weight);
-            Assert.AreEqual(DisplayThrottleSettings.MaxCutPercentDefault, s.HighMaxCutPercent);
+            Assert.AreEqual(DisplayThrottleSettings.MaxCutPercentDefault, s.MaxCutPercent);
             Assert.AreEqual(DisplayThrottleSettings.HighBandHzFixed, s.HighBandHz);
-            Assert.AreEqual(s.HighMaxCutPercent / 2, s.MidMaxCutPercent);
+            Assert.AreEqual(s.MaxCutPercent / 2, s.MidMaxCutPercent);
             Assert.IsFalse(s.IsLegacy, "回默认后阈值=10Hz 仍是保护带口径（默认值不启用主动降幅，保护带照旧从快路那份封顶里出）");
 
             DisplayThrottleSettings ok;
@@ -639,7 +639,7 @@ namespace WindowsFormsApplication1.Tests
                     "用例" + i + " 的最大降幅本就在合法区间内");
                 Assert.AreEqual(cases[i][1], s.MidMaxCutPercent,
                     "用例" + i + "：中带封顶应恒为最大降幅(" + cases[i][0] + "%)的一半");
-                Assert.AreEqual(cases[i][0], s.HighMaxCutPercent, "高频带封顶应等于现场那一格的值");
+                Assert.AreEqual(cases[i][0], s.MaxCutPercent, "高频带封顶应等于现场那一格的值");
                 Assert.AreEqual(DisplayThrottleSettings.HighBandHzFixed, s.HighBandHz,
                     "高频带分界第57轮起固定 50Hz，不再随入参变化");
                 Assert.AreEqual(50, DisplayThrottleSettings.HighBandHzFixed,

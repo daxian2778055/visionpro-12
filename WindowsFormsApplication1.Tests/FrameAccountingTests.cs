@@ -1,3 +1,4 @@
+using System;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace WindowsFormsApplication1.Tests
@@ -225,6 +226,67 @@ namespace WindowsFormsApplication1.Tests
             Assert.AreEqual("连续运行", FrameAccounting.NormalizeMode("\0 连续运行 \0"));
             Assert.AreEqual("", FrameAccounting.NormalizeMode(null), "null 归一化成空串，判定侧不得再抛");
             Assert.AreEqual("", FrameAccounting.NormalizeMode("  \0  "));
+        }
+
+        // ── ★第58轮（朋友复审①）：两张平行表的映射逐一对齐 ────────────────────
+        // Display[] / Groups[] 靠下标与 Reason 枚举对齐，全靠手工维护；TablesAligned 只比长度，
+        // 所以"把任意两项顺序写反"这种错长度检查照样过，但界面上的归因标签会张冠李戴——
+        // 现场照着错标签排查，比压根没标签更坑人。下面的表是**抄自语义**的期望值（不是从被测表生成），
+        // 任何一处错位/漏项都会红。标签连字面都钉住是有意的：改文案必须连带改这里，
+        // 因为界面念给现场听的就是这几个字。
+        [TestMethod]
+        public void 全部原因_显示标签与分组逐一对齐_枚举个数钉死()
+        {
+            string[] labels =
+            {
+                "暂停丢(回调)", "停止中丢(回调)", "槽位无效丢(回调)", "模式门丢(回调)", "无在途触发丢(回调)",
+                "队列满丢", "入队被拒丢", "取出后停线丢", "该路占用中丢", "停线排空丢",
+                "暂停丢(检测)", "检测中停线丢", "总门不通过", "作业非Stopped", "检测流程异常", "线程异常",
+                "取图失败(仍判NG)", "手动触发", "手动触发(停止态)",
+            };
+            FrameAccounting.ReasonGroup[] groups =
+            {
+                FrameAccounting.ReasonGroup.PreReceive, FrameAccounting.ReasonGroup.PreReceive,
+                FrameAccounting.ReasonGroup.PreReceive, FrameAccounting.ReasonGroup.PreReceive,
+                FrameAccounting.ReasonGroup.PreReceive,
+                FrameAccounting.ReasonGroup.AfterReceive, FrameAccounting.ReasonGroup.AfterReceive,
+                FrameAccounting.ReasonGroup.AfterReceive, FrameAccounting.ReasonGroup.AfterReceive,
+                FrameAccounting.ReasonGroup.AfterReceive, FrameAccounting.ReasonGroup.AfterReceive,
+                FrameAccounting.ReasonGroup.AfterReceive, FrameAccounting.ReasonGroup.AfterReceive,
+                FrameAccounting.ReasonGroup.AfterReceive, FrameAccounting.ReasonGroup.AfterReceive,
+                FrameAccounting.ReasonGroup.AfterReceive,
+                FrameAccounting.ReasonGroup.Note, FrameAccounting.ReasonGroup.Note,
+                FrameAccounting.ReasonGroup.Note,
+            };
+
+            // 先钉住"到底有几个原因"：新增 Reason 忘了扩表，这条比任何逐表检查都先红。
+            Assert.AreEqual(19, (int)FrameAccounting.Reason.Count, "新增原因必须同时补 Display/Groups 与下面两张期望表");
+            Assert.AreEqual((int)FrameAccounting.Reason.Count, labels.Length);
+            Assert.AreEqual((int)FrameAccounting.Reason.Count, groups.Length);
+
+            for (int r = 0; r < labels.Length; r++)
+            {
+                var reason = (FrameAccounting.Reason)r;
+                string name = reason.ToString();
+                string expect = labels[r] + "1";
+
+                var acct = new FrameAccounting();
+                acct.Note(0, reason);
+
+                // 单独记一笔时整串明细就是这个原因的标签——标签错位在这里暴露
+                Assert.AreEqual(expect, acct.Breakdown(0), name + " 的显示标签与枚举顺序不同步（Display[]）");
+
+                var group = FrameAccounting.GroupOf(reason);
+                Assert.AreEqual(groups[r], group, name + " 的分组与枚举顺序不同步（Groups[]）");
+
+                // 分组明细必须与 GroupOf 指认同一组，其余两组为空
+                foreach (FrameAccounting.ReasonGroup g in Enum.GetValues(typeof(FrameAccounting.ReasonGroup)))
+                    Assert.AreEqual(g == group ? expect : "无", acct.Breakdown(0, g),
+                        name + " 在分组 " + g + " 的明细里出现与否不符");
+
+                Assert.AreEqual(FrameAccounting.ReasonGroup.AfterReceive == group,
+                    FrameAccounting.IsAfterReceive(reason), name + " 的 IsAfterReceive 与分组不符");
+            }
         }
     }
 }
