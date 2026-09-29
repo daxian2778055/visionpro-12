@@ -306,7 +306,8 @@ namespace WindowsFormsApplication1.Tests
         [TestMethod]
         public void 检测运行中_手动诊断必须拒绝并要求先停检测()
         {
-            string why = DeadImageScan.ManualEntryRefusal(detectionRunning: true, schemeSwitching: false);
+            string why = DeadImageScan.ManualEntryRefusal(detectionRunning: true, schemeSwitching: false,
+                nothingLoaded: false, formDisposing: false);
             Assert.IsNotNull(why, "运行中反射读到的是执行到一半的瞬时状态，扫出来的结论可能是假的");
             StringAssert.Contains(why, "停止检测");
         }
@@ -314,7 +315,8 @@ namespace WindowsFormsApplication1.Tests
         [TestMethod]
         public void 方案切换中_手动诊断必须拒绝()
         {
-            string why = DeadImageScan.ManualEntryRefusal(detectionRunning: false, schemeSwitching: true);
+            string why = DeadImageScan.ManualEntryRefusal(detectionRunning: false, schemeSwitching: true,
+                nothingLoaded: false, formDisposing: false);
             Assert.IsNotNull(why, "切换时整棵工具树正在被替换，扫到的是新旧混合");
             StringAssert.Contains(why, "稍候");
         }
@@ -322,17 +324,126 @@ namespace WindowsFormsApplication1.Tests
         [TestMethod]
         public void 两种状态都空闲_手动诊断必须放行()
         {
-            Assert.IsNull(DeadImageScan.ManualEntryRefusal(false, false),
+            Assert.IsNull(DeadImageScan.ManualEntryRefusal(false, false, false, false),
                 "常态（保存成功、检测已停）正是本入口要服务的场景，不能被自己挡掉");
         }
 
         [TestMethod]
         public void 两种拒绝理由同时成立_以运行中优先()
         {
-            string why = DeadImageScan.ManualEntryRefusal(true, true);
+            string why = DeadImageScan.ManualEntryRefusal(true, true, false, false);
             Assert.IsNotNull(why);
             StringAssert.Contains(why, "停止检测",
                 "先答更本质的那条：即便切完方案，运行中依然不可信");
+        }
+
+        // ===== ★第51.7轮：守卫补两条 + 节点级沉默记账（P1） =====
+        // 本轮的洞是"结论行自己会说谎"： walker 里结构性 catch{ } 吞掉异常后状态仍是
+        // "未截断 + 预算未用尽 + 覆盖走到最后一棵"，Conclusion() 于是照样断言"没找到"。
+        // 单测钉的是**记账与措辞的对应关系**——这类缺陷读代码与跑现场都抓不到。
+
+        [TestMethod]
+        public void 方案未加载_必须拒绝_且不得与切方案中的说法混用()
+        {
+            string why = DeadImageScan.ManualEntryRefusal(false, false, nothingLoaded: true, formDisposing: false);
+            Assert.IsNotNull(why, "此刻压根没有稳定工具树，扫出来只能是空树");
+            StringAssert.Contains(why, "加载方案", "要给的是动作，不是等待");
+            Assert.IsFalse(why.Contains("稍候"),
+                "与'方案切换中，请稍候'必须是两句——后者把人引向等待，前者要求先加载");
+        }
+
+        [TestMethod]
+        public void 窗体正在关闭_优先于其它拒绝理由()
+        {
+            string why = DeadImageScan.ManualEntryRefusal(true, true, true, formDisposing: true);
+            StringAssert.Contains(why, "正在关闭", "关窗途中再跑 1.5 秒反射只会拖死退出路径");
+        }
+
+        [TestMethod]
+        public void 扫描期间检测被后台启动_必须给出复查标注()
+        {
+            // yunxing 是 button1_Click 里 Task.Run 在后台线程置真的，诊断在 UI 线程冻结挡不住它。
+            Assert.IsNull(DeadImageScan.MidScanStateChangeNote(false, false), "状态没变就不该多一行");
+            string note = DeadImageScan.MidScanStateChangeNote(true, false);
+            StringAssert.Contains(note, "扫描期间");
+            StringAssert.Contains(note, "按扫描开始时的状态得出",
+                "结论不推翻，但前提必须标掉——否则守卫形同给过期快照背书");
+            StringAssert.Contains(DeadImageScan.MidScanStateChangeNote(true, true), "检测启动且方案切换开始");
+        }
+
+        [TestMethod]
+        public void 结构性中断_结论不得断言未找到_并带出跳过账目()
+        {
+            var scan = new DeadImageScan();
+            scan.CountNode();
+            scan.NoteSkippedBranch("job1/CogToolBlock1 属性环（TargetInvocationException）");
+
+            Assert.AreEqual(1, scan.SkippedBranches);
+            Assert.IsFalse(scan.IsConclusive, "有一整支没走完就不能算结论成立");
+            string text = scan.Conclusion();
+            Assert.IsFalse(text.Contains("未在工具树里找到"),
+                "本轮修的正是这一条：沉默的 catch 不许再换来一句'没找到'");
+            StringAssert.Contains(text, "跳过账目");
+            StringAssert.Contains(text, "结构性中断 1 处");
+            StringAssert.Contains(text, "TargetInvocationException", "首因要能指出断在哪一支");
+        }
+
+        [TestMethod]
+        public void 整路跳过_原因用调用方给的整句_不得统称为异常()
+        {
+            var scan = new DeadImageScan();
+            scan.NoteSkippedTree("job5 未取到根工具（job 未挂上且 block 为空）");
+
+            Assert.AreEqual(1, scan.SkippedTrees);
+            string text = scan.Conclusion();
+            Assert.IsFalse(text.Contains("未在工具树里找到"));
+            StringAssert.Contains(text, "未取到根工具",
+                "这一路并没有抛异常，把'未取到根'说成'遍历中途异常'是又一处归因骗人");
+        }
+
+        [TestMethod]
+        public void 没有任何树可扫_结论必须说什么都没看到()
+        {
+            var scan = new DeadImageScan();
+            scan.NoteNothingToScan();
+
+            Assert.IsFalse(scan.IsConclusive);
+            string text = scan.Conclusion();
+            Assert.IsFalse(text.Contains("未在工具树里找到"),
+                "挂树数为 0 时'没找到'是空话——原写法正是在这里给出一句断言");
+            StringAssert.Contains(text, "不能据此判断");
+        }
+
+        [TestMethod]
+        public void 属性读失败只计软账_不否掉结论_但必须看得见()
+        {
+            var scan = new DeadImageScan();
+            scan.CountNode();
+            for (int i = 0; i < 3; i++) scan.NoteSkippedRead();
+
+            Assert.IsTrue(scan.IsConclusive,
+                "单属性读失败在 Cognex 上是常态，算成不结论会让这道闸恒为假（本轮明示的取舍）");
+            string text = scan.Conclusion();
+            StringAssert.Contains(text, "未在工具树里找到", "软口径不得把可信结论降级");
+            StringAssert.Contains(text, "属性/元素读值失败 3 处", "但也不能不吭声");
+        }
+
+        [TestMethod]
+        public void 干净结论_不得带跳过账目的噪音()
+        {
+            var scan = new DeadImageScan();
+            scan.CountNode();
+            StringAssert.Contains(scan.Conclusion(), "未在工具树里找到");
+            Assert.IsFalse(scan.Conclusion().Contains("跳过账目"),
+                "全是 0 时输出账目会让读的人以为有东西要查");
+        }
+
+        [TestMethod]
+        public void 分子大于分母_覆盖口径必须自认不可信()
+        {
+            // 分母与分子来自两次枚举，中间并发重绑会出现"挂树 3 路中走到第 5 路"。
+            string text = new DeadImageScan().CoverageText(3, 5, 7);
+            StringAssert.Contains(text, "不可信", "自相矛盾的分数不能当进度读");
         }
     }
 }

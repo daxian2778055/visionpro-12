@@ -4813,14 +4813,18 @@ namespace WindowsFormsApplication1
         private void InstallManualDiagnosisEntry()
         {
             if (_manualDiagItem != null) return;   // 幂等：Form1_Load 只会走一次，但不赌
-            _manualDiagItem = new ToolStripMenuItem("已释放图像诊断（只读）");
-            _manualDiagItem.Name = "手动诊断ToolStripMenuItem";
-            _manualDiagItem.ToolTipText = "只读扫描工具树里已失效的图像引用，不修改任何对象";
-            _manualDiagItem.Click += 手动诊断ToolStripMenuItem_Click;
+            ToolStripMenuItem item = new ToolStripMenuItem("已释放图像诊断（只读）");
+            item.Name = "手动诊断ToolStripMenuItem";
+            item.ToolTipText = "只读扫描工具树里已失效的图像引用，不修改任何对象";
+            item.Click += 手动诊断ToolStripMenuItem_Click;
             // 注意：设置菜单每次打开会按 Menu.ini 重建带 SchemeHistoryMenuTag 的历史项，
             // 本项 Tag 为 null，不在重建范围内，不会被它删掉。
             this.设置ToolStripMenuItem.DropDownItems.Add(new ToolStripSeparator());
-            this.设置ToolStripMenuItem.DropDownItems.Add(_manualDiagItem);
+            this.设置ToolStripMenuItem.DropDownItems.Add(item);
+            // ★第51.7轮 P3：字段必须**挂在成功之后**再赋值。原先一进方法就赋值，若下面任何
+            // 一句抛异常（菜单未初始化、集合已满…），字段已非 null ⇒ 之后的重试被这句幂等
+            // 守卫直接挡掉，入口永久装不上且日志里一行痕迹都没有。
+            _manualDiagItem = item;
             // 挂载成功必须留痕：这行是"入口到底装上没有"的唯一可观测证据，
             // 同时直接告诉操作者去哪儿点——否则又变成"看不见的改动"。
             _logger.WriteLog("手动诊断入口已挂载：菜单 设置 → 已释放图像诊断（只读）");
@@ -4829,7 +4833,19 @@ namespace WindowsFormsApplication1
         private void 手动诊断ToolStripMenuItem_Click(object sender, EventArgs e)
         {
             // 判定式在 DeadImageScan.ManualEntryRefusal（有单测），日志与弹窗用同一句话，避免两处说法不一。
-            string refusal = DeadImageScan.ManualEntryRefusal(_jobs.yunxing, _switchingScheme);
+            // ★第51.7轮 P3：原先只挡"检测运行中/切方案中"两种，漏了"此刻压根没有稳定工具树"——
+            //   方案未加载（manager1 空或 JobCount 0）和启动/切型握手未完成（qiehuanzhong 初值即 1）
+            //   都会扫出一棵空树，配上本轮新加的 NoteNothingToScan 才是完整说法。
+            bool nothingLoaded = false;
+            try { nothingLoaded = manager1 == null || manager1.JobCount == 0 || qiehuanzhong == 1; }
+            catch (Exception exReady)
+            {
+                // 读"就绪与否"本身失败时**不据此拒绝**诊断——诊断侧现在会如实报有没有树可扫，
+                // 拿一次读失败去挡门只会把一个可信度检查变成新的拒因。但必须留痕。
+                _logger.WriteLog("【手动诊断】就绪状态读取失败（不作为拒绝条件）: " + exReady.GetType().Name + ": " + exReady.Message);
+            }
+            bool runningBefore = _jobs.yunxing, switchingBefore = _switchingScheme;
+            string refusal = DeadImageScan.ManualEntryRefusal(runningBefore, switchingBefore, nothingLoaded, _disposingFlag);
             if (refusal != null)
             {
                 _logger.WriteLog("【手动诊断】已忽略：" + refusal);
@@ -4839,7 +4855,16 @@ namespace WindowsFormsApplication1
             _logger.WriteLog("【手动诊断】开始：只读扫描（不修改任何对象），时间上限 "
                 + DeadImageScan.MaxElapsedMs + "ms，期间界面会短暂卡住一下，属正常");
             DiagnoseDeadImages("手动诊断");
-            _logger.WriteLog("【手动诊断】结束。判读口径：看上一行的耗时/节点/覆盖，结论若出现截断字样说明没查全，按其给出的原因判断");
+            // ★第51.7轮 P2-3：守卫读的是**点击那一刻**的状态，而诊断在 UI 线程最多冻结 1.5 秒。
+            //   _jobs.yunxing 由 button1_Click 的 Task.Run 在后台线程置真，冻结挡不住它 ⇒ 扫完后复查一次。
+            string midScan = DeadImageScan.MidScanStateChangeNote(_jobs.yunxing && !runningBefore,
+                _switchingScheme && !switchingBefore);
+            if (midScan != null) _logger.WriteLog("【手动诊断】复查：" + midScan);
+            // ★第51.7轮 P3：原话"看上一行"是错的——结论行之后还有 ⚠ 行与最多 20 条明细，
+            //   照字面看只会看到最后一条明细。改成按场景前缀去找那一行。
+            _logger.WriteLog("【手动诊断】结束。判读口径：找【手动诊断】已释放图像诊断 那一行——"
+                + "耗时/节点/覆盖与结论都在同一行；结论里出现\"截断/未查全/没有可扫描的工具树\"任一字样即说明没查全，"
+                + "按其给出的原因与\"跳过账目\"判断这条结论值多少");
         }
 
         // ★第51轮：保存失败后的**只读**诊断——把"哪一个工具的哪一条路径上的哪张图已经死了"
@@ -4867,12 +4892,14 @@ namespace WindowsFormsApplication1
             //      预算若在最后一路中途到点，原写法会打"走到第 12/12 路"却伴随 BudgetExhausted——
             //      读者以为全走完了（外部模拟实测：Nodes=20001、BudgetExhausted=True 正是这个组合）。
             //      ⇒ 预算耗尽时把最后一路标成"未完"。
-            int totalTrees = 0, reachedTrees = 0, lastMyjob = 0, failedTrees = 0;
+            int totalTrees = 0, reachedTrees = 0, lastMyjob = 0, errorTrees = 0, noRootTrees = 0;
             string firstJobError = "";
             try
             {
                 foreach (var mj in _jobs.Myjobs)
                     if (mj != null && (mj.job != null || mj.block != null)) totalTrees++;  // 分母=真挂树
+                // ★第51.7轮 P2：一棵都没挂时，"没找到"是空话（典型场景：方案没加载就点了诊断）。
+                if (totalTrees == 0) scan.NoteNothingToScan();
                 int myjobIdx = 0, treeIdx = 0;
                 foreach (var mj in _jobs.Myjobs)
                 {
@@ -4889,11 +4916,13 @@ namespace WindowsFormsApplication1
                         if (root == null) root = mj.block;   // job 未挂上（加载异常态）：退回覆盖 mj.block
                         if (root == null)
                         {
-                            // 分母已按 mj.job != null 计了它，却取不到根工具 ⇒ 必须记为异常：
+                            // 分母已按 mj.job != null 计了它，却取不到根工具 ⇒ 必须记为没走完：
                             // 否则覆盖数会把它算成"走到了"，而实际一个节点都没进。
-                            failedTrees++;
-                            if (firstJobError == "")
-                                firstJobError = "job" + myjobIdx + " 未取到根工具（job 未挂上且 block 为空）";
+                            // ★第51.7轮 P3：这一路并没有"抛异常"，措辞不再混进异常里。
+                            noRootTrees++;
+                            string whyNoRoot = "job" + myjobIdx + " 未取到根工具（job 未挂上且 block 为空）";
+                            if (firstJobError == "") firstJobError = whyNoRoot;
+                            scan.NoteSkippedTree(whyNoRoot);
                         }
                         else
                         {
@@ -4904,13 +4933,12 @@ namespace WindowsFormsApplication1
                     {
                         // ★第51.6轮：这一路走进去了却没走完。原实现是 catch{} 静默吞掉 ⇒ 12 路全炸
                         //   也会显示"走到第 12/12 路"且一句不提，与 51.5 修的"末路未完不标"同一类冒充。
-                        failedTrees++;
-                        if (firstJobError == "")
-                        {
-                            string em = exJob.Message ?? "";
-                            if (em.Length > 160) em = em.Substring(0, 160) + "...";
-                            firstJobError = "job" + myjobIdx + " " + exJob.GetType().Name + ": " + em;
-                        }
+                        errorTrees++;
+                        string em = exJob.Message ?? "";
+                        if (em.Length > 160) em = em.Substring(0, 160) + "...";
+                        string whyErr = "job" + myjobIdx + " 遍历中途异常 " + exJob.GetType().Name + ": " + em;
+                        if (firstJobError == "") firstJobError = whyErr;
+                        scan.NoteSkippedTree(whyErr);   // ★第51.7轮 P1：并进 scan 的硬口径，结论侧同享
                     }
                 }
                 // ★第51.1轮：结论必须区分"没查完"与"真没有"（DeadImageScan.Conclusion）——
@@ -4922,14 +4950,30 @@ namespace WindowsFormsApplication1
                     + scan.CoverageText(totalTrees, reachedTrees, lastMyjob)
                     + " —— " + scan.Conclusion());
                 // ★第51.6轮：异常跳过的路必须单独说——不说的话"走到第 N/M"会把它们算成走完了。
-                if (failedTrees > 0)
-                    _logger.WriteLog("    ⚠ " + failedTrees + " 路遍历中途异常、已跳过（覆盖数含这几路，但结论对它们无效），第一处：" + firstJobError);
-                for (int i = 0; i < scan.Dead.Count && i < 20; i++) _logger.WriteLog("    " + scan.Dead[i]);
+                // ★第51.7轮：这行原先**不带【scene】前缀**，而弹窗恰恰教操作者抄
+                //   "【保存方案】已释放图像诊断 的几行"——不带前缀的旁证行最容易被漏抄，
+                //   漏掉它等于让上层只看到那句会骗人的结论。
+                if (errorTrees > 0 || noRootTrees > 0)
+                    _logger.WriteLog("【" + scene + "】⚠ 未查全：" + errorTrees + " 路遍历中途异常、"
+                        + noRootTrees + " 路未取到根工具（覆盖数含这几路，但结论对它们无效），第一处：" + firstJobError);
+                // ★第51.7轮：明细只打前 20 条，而结论说的是全量条数（MaxReport=60，>20 完全可达）。
+                //   原先什么都不说，读的人会以为"位置如下"下面就是全部。
+                int printedDetails = 0;
+                for (int i = 0; i < scan.Dead.Count && i < 20; i++) { _logger.WriteLog("    " + scan.Dead[i]); printedDetails++; }
+                if (scan.Dead.Count > printedDetails)
+                    _logger.WriteLog("    （其余 " + (scan.Dead.Count - printedDetails) + " 条省略：明细每趟最多打 20 条，"
+                        + "结论里的\"共 N 处\"才是全量）");
             }
             catch (Exception exDiag)
             {
                 // 异常分支同样报覆盖口径：跑到一半崩了时，"走到第几棵"是判断进度的唯一线索。
-                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms、" + scan.CoverageText(totalTrees, reachedTrees, lastMyjob) + (failedTrees > 0 ? "、异常 " + failedTrees + " 路" : "") + "）: " + exDiag.Message); } catch { }
+                try { _logger.WriteLog("【" + scene + "】已释放图像诊断自身异常（不影响保存结果，已耗时 " + scan.ElapsedMs + "ms、" + scan.CoverageText(totalTrees, reachedTrees, lastMyjob) + (scan.SkippedTrees > 0 ? "、异常 " + scan.SkippedTrees + " 路" : "") + "、已记下 " + scan.Dead.Count + " 处）: " + exDiag.Message); } catch { }
+                // ★第51.7轮 P3：原先异常分支只留一句"诊断自身异常"，本轮**已经扫到的确切路径全丢**
+                //   ——丢的正是最需要看的东西。补打，且每条单独包 try：日志器本身出问题时不再往上抛。
+                for (int i = 0; i < scan.Dead.Count && i < 20; i++)
+                {
+                    try { _logger.WriteLog("    " + scan.Dead[i]); } catch { break; }
+                }
             }
         }
 
@@ -4944,6 +4988,7 @@ namespace WindowsFormsApplication1
             }
             if (!scan.CountNode()) return;
             string name = "";
+            // 名称取不到只影响这一条边的标签、不丢任何子树 ⇒ 不算"没查全"，不记账（★51.7 口径）
             try { name = tool.Name; } catch { }
             string here = scope + "/" + (name.Length > 0 ? name : tool.GetType().Name);
 
@@ -4966,14 +5011,19 @@ namespace WindowsFormsApplication1
                     System.Type pt = pi.PropertyType;
                     if (pt.IsPrimitive || pt.IsEnum || pt == typeof(string) || typeof(System.Delegate).IsAssignableFrom(pt)) continue;
                     object v;
-                    try { v = pi.GetValue(tool, null); } catch { continue; }
+                    try { v = pi.GetValue(tool, null); } catch { scan.NoteSkippedRead(); continue; }
                     if (v == null) continue;
                     if (v is ICogImage) { ReportIfDead(v, here + "." + pi.Name, scan); continue; }
                     if (v is ICogTool) continue;   // 子工具由 Tools/DisabledTools 集合统一走，不重复
                     WalkValueForDeadImages(v, here + "." + pi.Name, scan, depth + 1);
                 }
             }
-            catch { }
+            catch (Exception exProps)
+            {
+                // ★第51.7轮 P1：这一抛，本工具**剩余属性**全部不再遍历。原先是裸 catch{ }，
+                // 状态停在"未截断 + 预算未用尽 + 覆盖走到最后一棵"，结论照样断言"没找到"。
+                scan.NoteSkippedBranch(here + " 属性环（" + exProps.GetType().Name + "）");
+            }
 
             if (blk != null)
             {
@@ -4982,7 +5032,11 @@ namespace WindowsFormsApplication1
                     foreach (ICogTool child in blk.Tools) WalkToolForDeadImages(child, here, scan, depth + 1);
                     foreach (ICogTool child in blk.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", scan, depth + 1);
                 }
-                catch { }
+                catch (Exception exBlk)
+                {
+                    // 两个 foreach 在同一 try 内：Tools 一抛，紧跟的 DisabledTools 整支一个不进。
+                    scan.NoteSkippedBranch(here + " 子工具集合+停用集合（" + exBlk.GetType().Name + "）");
+                }
             }
             else
             {
@@ -4994,7 +5048,10 @@ namespace WindowsFormsApplication1
                         foreach (ICogTool child in grp.Tools) WalkToolForDeadImages(child, here, scan, depth + 1);
                         foreach (ICogTool child in grp.DisabledTools) WalkToolForDeadImages(child, here + "(停用)", scan, depth + 1);
                     }
-                    catch { }
+                    catch (Exception exGrp)
+                    {
+                        scan.NoteSkippedBranch(here + " 子组集合+停用集合（" + exGrp.GetType().Name + "）");
+                    }
                 }
             }
         }
@@ -5030,7 +5087,11 @@ namespace WindowsFormsApplication1
                         if (i > 200) { scan.MarkTruncated("集合元素超过 200 个"); break; }   // ★第51.2轮 P2：截断留痕
                     }
                 }
-                catch { }
+                catch (Exception exEnum)
+                {
+                    // ★第51.7轮 P1：枚举器一抛，该集合**剩余元素**全部没走（原为裸 catch{ }）。
+                    scan.NoteSkippedBranch(path + " 集合枚举（" + exEnum.GetType().Name + "）");
+                }
                 return;
             }
 
@@ -5044,28 +5105,36 @@ namespace WindowsFormsApplication1
                     System.Type pt = pi.PropertyType;
                     if (pt.IsPrimitive || pt.IsEnum || pt == typeof(string) || typeof(System.Delegate).IsAssignableFrom(pt)) continue;
                     object pv;
-                    try { pv = pi.GetValue(v, null); } catch { continue; }
+                    try { pv = pi.GetValue(v, null); } catch { scan.NoteSkippedRead(); continue; }
                     if (pv == null) continue;
                     if (pv is ICogImage) ReportIfDead(pv, path + "." + pi.Name, scan);
                     else WalkValueForDeadImages(pv, path + "." + pi.Name, scan, depth + 1);
                 }
             }
-            catch { }
+            catch (Exception exValProps)
+            {
+                // ★第51.7轮 P1：原为裸 catch{ }——本对象剩余属性全部没走，却一句不提。
+                scan.NoteSkippedBranch(path + " 属性环（" + exValProps.GetType().Name + "）");
+            }
         }
 
         private static void ScanTerminalsForDeadImages(CogToolBlockTerminalCollection terminals, string scope, DeadImageScan scan)
         {
             if (terminals == null) return;
+            // ★第51.7轮 P1 口径核对：这里的 try 在 for **体内**，是逐端子粒度——抛一个只丢那一格，
+            // 剩余端子照常扫，故记软口径（NoteSkippedRead）而不是结构性中断。
+            // 但集合本身取 Count/整体枚举失败会**逃出本方法**（调用处不在 try 内），落到 job 层
+            // 被计成"整路遍历异常"——归因偏大、方向仍安全，不改。
             for (int i = 0; i < terminals.Count; i++)
             {
                 try
                 {
                     object v;
-                    try { v = terminals[i].Value; } catch { continue; }
+                    try { v = terminals[i].Value; } catch { scan.NoteSkippedRead(); continue; }
                     ICogImage img = v as ICogImage;
                     if (img != null) ReportIfDead(img, scope + "[" + terminals[i].Name + "]", scan);
                 }
-                catch { }
+                catch { scan.NoteSkippedRead(); }
             }
         }
 
