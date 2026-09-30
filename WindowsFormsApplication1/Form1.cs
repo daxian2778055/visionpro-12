@@ -215,7 +215,9 @@ namespace WindowsFormsApplication1
         private readonly RenderCostMeter _recordRenderCost = new RenderCostMeter(1000);
         private readonly RenderCostMeter _rawRenderCost = new RenderCostMeter(1000);
         private readonly RenderCostMeter _claimCost = new RenderCostMeter(1000);
-        // ★ 原图快速路径（弱机现场开关，code.ini [Display]RawImageMode 持久化）：
+        // ★ 原图快速路径（弱机现场开关，**只读**）：启动时从 code.ini [Display]RawImageMode 读一次，
+        //   本软件不往这个键写回（写侧只有 LayoutMode/RenderMinIntervalMs/RenderProtectHz/RenderWeight/
+        //   RenderMaxCutPercent 五个键），运行时也没有切换入口——要开只能手工编辑 ini 再重启。
         //   只贴原图，跳过 VisionPro record 深拷贝与 overlay 光栅化，CPU 降一个量级。
         private volatile bool _displayRawImage;
         private readonly PictureBox[] _rawBox = new PictureBox[12];
