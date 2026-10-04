@@ -1007,6 +1007,7 @@ namespace WindowsFormsApplication1
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown_saveDays)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown1)).BeginInit();
+            this.groupBoxRenderThrottle.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderMinIntervalMs)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderProtectHz)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderWeight)).BeginInit();
@@ -2258,116 +2259,6 @@ namespace WindowsFormsApplication1
             this.tabPage5.Text = "配置窗";
             this.tabPage5.UseVisualStyleBackColor = true;
             this.tabPage5.Click += new System.EventHandler(this.tabPage5_Click);
-            //
-            // groupBoxRenderThrottle
-            //
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderMinInterval);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderMinIntervalMs);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderProtectHz);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderProtectHz);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderWeight);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderWeight);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderMaxCut);
-            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderMaxCutPercent);
-            this.groupBoxRenderThrottle.Controls.Add(this.buttonRenderApply);
-            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderEffective);
-            this.groupBoxRenderThrottle.Location = new System.Drawing.Point(6, 360);
-            this.groupBoxRenderThrottle.Name = "groupBoxRenderThrottle";
-            this.groupBoxRenderThrottle.Size = new System.Drawing.Size(572, 168);
-            this.groupBoxRenderThrottle.TabIndex = 200;
-            this.groupBoxRenderThrottle.TabStop = false;
-            this.groupBoxRenderThrottle.Text = "显示降频（阈值以下一帧不丢；权重越大、频率越高的路降得越狠，最大降幅是它的上限）";
-            //
-            // labelRenderMinInterval
-            //
-            this.labelRenderMinInterval.AutoSize = true;
-            this.labelRenderMinInterval.Location = new System.Drawing.Point(12, 27);
-            this.labelRenderMinInterval.Name = "labelRenderMinInterval";
-            this.labelRenderMinInterval.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderMinInterval.TabIndex = 201;
-            this.labelRenderMinInterval.Text = "全局最小间隔(ms)";
-            //
-            // nudRenderMinIntervalMs
-            //
-            this.nudRenderMinIntervalMs.Location = new System.Drawing.Point(178, 25);
-            this.nudRenderMinIntervalMs.Maximum = new decimal(new int[] { 1000, 0, 0, 0 });
-            this.nudRenderMinIntervalMs.Name = "nudRenderMinIntervalMs";
-            this.nudRenderMinIntervalMs.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderMinIntervalMs.TabIndex = 202;
-            this.nudRenderMinIntervalMs.Value = new decimal(new int[] { 16, 0, 0, 0 });
-            //
-            // labelRenderProtectHz
-            //
-            this.labelRenderProtectHz.AutoSize = true;
-            this.labelRenderProtectHz.Location = new System.Drawing.Point(268, 27);
-            this.labelRenderProtectHz.Name = "labelRenderProtectHz";
-            this.labelRenderProtectHz.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderProtectHz.TabIndex = 203;
-            this.labelRenderProtectHz.Text = "保护阈值(Hz)";
-            //
-            // nudRenderProtectHz
-            //
-            this.nudRenderProtectHz.Location = new System.Drawing.Point(448, 25);
-            this.nudRenderProtectHz.Maximum = new decimal(new int[] { 1000, 0, 0, 0 });
-            this.nudRenderProtectHz.Name = "nudRenderProtectHz";
-            this.nudRenderProtectHz.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderProtectHz.TabIndex = 204;
-            this.nudRenderProtectHz.Value = new decimal(new int[] { 10, 0, 0, 0 });
-            //
-            // labelRenderWeight
-            //
-            this.labelRenderWeight.AutoSize = true;
-            this.labelRenderWeight.Location = new System.Drawing.Point(12, 55);
-            this.labelRenderWeight.Name = "labelRenderWeight";
-            this.labelRenderWeight.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderWeight.TabIndex = 205;
-            this.labelRenderWeight.Text = "降频权重(0~100)";
-            //
-            // nudRenderWeight
-            //
-            this.nudRenderWeight.Location = new System.Drawing.Point(178, 53);
-            this.nudRenderWeight.Maximum = new decimal(new int[] { 100, 0, 0, 0 });
-            this.nudRenderWeight.Name = "nudRenderWeight";
-            this.nudRenderWeight.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderWeight.TabIndex = 206;
-            this.nudRenderWeight.Value = new decimal(new int[] { 0, 0, 0, 0 });
-            //
-            // labelRenderMaxCut
-            //
-            this.labelRenderMaxCut.AutoSize = true;
-            this.labelRenderMaxCut.Location = new System.Drawing.Point(268, 55);
-            this.labelRenderMaxCut.Name = "labelRenderMaxCut";
-            this.labelRenderMaxCut.Size = new System.Drawing.Size(105, 12);
-            this.labelRenderMaxCut.TabIndex = 207;
-            this.labelRenderMaxCut.Text = "最大降幅(%)";
-            //
-            // nudRenderMaxCutPercent
-            //
-            this.nudRenderMaxCutPercent.Location = new System.Drawing.Point(448, 53);
-            this.nudRenderMaxCutPercent.Maximum = new decimal(new int[] { 90, 0, 0, 0 });
-            this.nudRenderMaxCutPercent.Name = "nudRenderMaxCutPercent";
-            this.nudRenderMaxCutPercent.Size = new System.Drawing.Size(62, 21);
-            this.nudRenderMaxCutPercent.TabIndex = 208;
-            this.nudRenderMaxCutPercent.Value = new decimal(new int[] { 50, 0, 0, 0 });
-            //
-            // buttonRenderApply
-            //
-            this.buttonRenderApply.Location = new System.Drawing.Point(448, 83);
-            this.buttonRenderApply.Name = "buttonRenderApply";
-            this.buttonRenderApply.Size = new System.Drawing.Size(100, 28);
-            this.buttonRenderApply.TabIndex = 209;
-            this.buttonRenderApply.Text = "应用显示降频";
-            this.buttonRenderApply.UseVisualStyleBackColor = true;
-            this.buttonRenderApply.Click += new System.EventHandler(this.buttonRenderApply_Click);
-            //
-            // labelRenderEffective
-            //
-            this.labelRenderEffective.ForeColor = System.Drawing.SystemColors.MenuHighlight;
-            this.labelRenderEffective.Location = new System.Drawing.Point(12, 120);
-            this.labelRenderEffective.Name = "labelRenderEffective";
-            this.labelRenderEffective.Size = new System.Drawing.Size(546, 40);
-            this.labelRenderEffective.TabIndex = 210;
-            this.labelRenderEffective.Text = "生效值：（启动时按 code.ini 读回）";
             // 
             // label79
             // 
@@ -2931,6 +2822,138 @@ namespace WindowsFormsApplication1
             this.comboBoxLayoutMode.Size = new System.Drawing.Size(100, 20);
             this.comboBoxLayoutMode.TabIndex = 160;
             this.comboBoxLayoutMode.SelectedIndexChanged += new System.EventHandler(this.comboBoxLayoutMode_SelectedIndexChanged);
+            // 
+            // groupBoxRenderThrottle
+            // 
+            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderMinInterval);
+            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderMinIntervalMs);
+            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderProtectHz);
+            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderProtectHz);
+            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderWeight);
+            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderWeight);
+            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderMaxCut);
+            this.groupBoxRenderThrottle.Controls.Add(this.nudRenderMaxCutPercent);
+            this.groupBoxRenderThrottle.Controls.Add(this.buttonRenderApply);
+            this.groupBoxRenderThrottle.Controls.Add(this.labelRenderEffective);
+            this.groupBoxRenderThrottle.Location = new System.Drawing.Point(6, 360);
+            this.groupBoxRenderThrottle.Name = "groupBoxRenderThrottle";
+            this.groupBoxRenderThrottle.Size = new System.Drawing.Size(572, 168);
+            this.groupBoxRenderThrottle.TabIndex = 200;
+            this.groupBoxRenderThrottle.TabStop = false;
+            this.groupBoxRenderThrottle.Text = "显示降频（阈值以下一帧不丢；权重越大、频率越高的路降得越狠，最大降幅是它的上限）";
+            // 
+            // labelRenderMinInterval
+            // 
+            this.labelRenderMinInterval.AutoSize = true;
+            this.labelRenderMinInterval.Location = new System.Drawing.Point(12, 27);
+            this.labelRenderMinInterval.Name = "labelRenderMinInterval";
+            this.labelRenderMinInterval.Size = new System.Drawing.Size(101, 12);
+            this.labelRenderMinInterval.TabIndex = 201;
+            this.labelRenderMinInterval.Text = "全局最小间隔(ms)";
+            // 
+            // nudRenderMinIntervalMs
+            // 
+            this.nudRenderMinIntervalMs.Location = new System.Drawing.Point(178, 25);
+            this.nudRenderMinIntervalMs.Maximum = new decimal(new int[] {
+            1000,
+            0,
+            0,
+            0});
+            this.nudRenderMinIntervalMs.Name = "nudRenderMinIntervalMs";
+            this.nudRenderMinIntervalMs.Size = new System.Drawing.Size(62, 21);
+            this.nudRenderMinIntervalMs.TabIndex = 202;
+            this.nudRenderMinIntervalMs.Value = new decimal(new int[] {
+            16,
+            0,
+            0,
+            0});
+            // 
+            // labelRenderProtectHz
+            // 
+            this.labelRenderProtectHz.AutoSize = true;
+            this.labelRenderProtectHz.Location = new System.Drawing.Point(268, 27);
+            this.labelRenderProtectHz.Name = "labelRenderProtectHz";
+            this.labelRenderProtectHz.Size = new System.Drawing.Size(77, 12);
+            this.labelRenderProtectHz.TabIndex = 203;
+            this.labelRenderProtectHz.Text = "保护阈值(Hz)";
+            // 
+            // nudRenderProtectHz
+            // 
+            this.nudRenderProtectHz.Location = new System.Drawing.Point(448, 25);
+            this.nudRenderProtectHz.Maximum = new decimal(new int[] {
+            1000,
+            0,
+            0,
+            0});
+            this.nudRenderProtectHz.Name = "nudRenderProtectHz";
+            this.nudRenderProtectHz.Size = new System.Drawing.Size(62, 21);
+            this.nudRenderProtectHz.TabIndex = 204;
+            this.nudRenderProtectHz.Value = new decimal(new int[] {
+            10,
+            0,
+            0,
+            0});
+            // 
+            // labelRenderWeight
+            // 
+            this.labelRenderWeight.AutoSize = true;
+            this.labelRenderWeight.Location = new System.Drawing.Point(12, 55);
+            this.labelRenderWeight.Name = "labelRenderWeight";
+            this.labelRenderWeight.Size = new System.Drawing.Size(95, 12);
+            this.labelRenderWeight.TabIndex = 205;
+            this.labelRenderWeight.Text = "降频权重(0~100)";
+            // 
+            // nudRenderWeight
+            // 
+            this.nudRenderWeight.Location = new System.Drawing.Point(178, 53);
+            this.nudRenderWeight.Name = "nudRenderWeight";
+            this.nudRenderWeight.Size = new System.Drawing.Size(62, 21);
+            this.nudRenderWeight.TabIndex = 206;
+            // 
+            // labelRenderMaxCut
+            // 
+            this.labelRenderMaxCut.AutoSize = true;
+            this.labelRenderMaxCut.Location = new System.Drawing.Point(268, 55);
+            this.labelRenderMaxCut.Name = "labelRenderMaxCut";
+            this.labelRenderMaxCut.Size = new System.Drawing.Size(71, 12);
+            this.labelRenderMaxCut.TabIndex = 207;
+            this.labelRenderMaxCut.Text = "最大降幅(%)";
+            // 
+            // nudRenderMaxCutPercent
+            // 
+            this.nudRenderMaxCutPercent.Location = new System.Drawing.Point(448, 53);
+            this.nudRenderMaxCutPercent.Maximum = new decimal(new int[] {
+            90,
+            0,
+            0,
+            0});
+            this.nudRenderMaxCutPercent.Name = "nudRenderMaxCutPercent";
+            this.nudRenderMaxCutPercent.Size = new System.Drawing.Size(62, 21);
+            this.nudRenderMaxCutPercent.TabIndex = 208;
+            this.nudRenderMaxCutPercent.Value = new decimal(new int[] {
+            50,
+            0,
+            0,
+            0});
+            // 
+            // buttonRenderApply
+            // 
+            this.buttonRenderApply.Location = new System.Drawing.Point(448, 83);
+            this.buttonRenderApply.Name = "buttonRenderApply";
+            this.buttonRenderApply.Size = new System.Drawing.Size(100, 28);
+            this.buttonRenderApply.TabIndex = 209;
+            this.buttonRenderApply.Text = "应用显示降频";
+            this.buttonRenderApply.UseVisualStyleBackColor = true;
+            this.buttonRenderApply.Click += new System.EventHandler(this.buttonRenderApply_Click);
+            // 
+            // labelRenderEffective
+            // 
+            this.labelRenderEffective.ForeColor = System.Drawing.SystemColors.MenuHighlight;
+            this.labelRenderEffective.Location = new System.Drawing.Point(12, 120);
+            this.labelRenderEffective.Name = "labelRenderEffective";
+            this.labelRenderEffective.Size = new System.Drawing.Size(546, 40);
+            this.labelRenderEffective.TabIndex = 210;
+            this.labelRenderEffective.Text = "生效值：（启动时按 code.ini 读回）";
             // 
             // tabPage6
             // 
@@ -13673,7 +13696,7 @@ namespace WindowsFormsApplication1
             this.label148.Name = "label148";
             this.label148.Size = new System.Drawing.Size(82, 21);
             this.label148.TabIndex = 125;
-            this.label148.Text = "YA0930";
+            this.label148.Text = "YA1004";
             // 
             // timer17
             // 
@@ -13828,12 +13851,12 @@ namespace WindowsFormsApplication1
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown_saveDays)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown1)).EndInit();
+            this.groupBoxRenderThrottle.ResumeLayout(false);
+            this.groupBoxRenderThrottle.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderMinIntervalMs)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderProtectHz)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderWeight)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudRenderMaxCutPercent)).EndInit();
-            this.groupBoxRenderThrottle.ResumeLayout(false);
-            this.groupBoxRenderThrottle.PerformLayout();
             this.tabPage6.ResumeLayout(false);
             this.panel1.ResumeLayout(false);
             this.groupBox20.ResumeLayout(false);
