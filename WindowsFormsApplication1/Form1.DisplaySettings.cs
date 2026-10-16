@@ -1432,13 +1432,9 @@ namespace WindowsFormsApplication1
                     int ttt1 = int.Parse(time111[0] + time111[1] + time111[2]);
                     string ttt2 = time111[3];
                     int ttt3 = int.Parse(time111[4]);
-                    Process myProc = null;
-                    myProc = Process.Start(myjob.pathhead_ng + day1 + "\\" + SafeNamePart(ttt2) + ttt1 + "#" + ttt3 + ".bmp");//开启一个进程
-                    try
-                    {
-                        myProc.Kill();//关闭一个进程
-                    }
-                    catch { }
+                    // ★第60轮：改用窗体内预览，不再 Process.Start 图片再 Kill（单实例看图器会复用已开窗口，Kill 误伤）
+                    string picPath = myjob.pathhead_ng + day1 + "\\" + SafeNamePart(ttt2) + ttt1 + "#" + ttt3 + ".bmp";
+                    NgImagePreviewForm.ShowPreview(this, picPath, "第" + jobhao + "路 NG 图");
                 }
                 catch (Exception ex)
                 { _logger.WriteLog(ex.Message + "图片显示" + jobhao); };

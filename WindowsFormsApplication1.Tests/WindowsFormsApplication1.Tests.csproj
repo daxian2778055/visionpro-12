@@ -57,6 +57,7 @@
     <Compile Include="..\WindowsFormsApplication1\Services\FinsIniStore.cs" Link="Linked\FinsIniStore.cs" />
     <!-- FinsIniStore 的类型依赖：FinsLinkConfig/FinsDataBlockConfig 等配置类 -->
     <Compile Include="..\WindowsFormsApplication1\Services\FinsConfig.cs" Link="Linked\FinsConfig.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Services\PathLayout.cs" Link="Linked\PathLayout.cs" />
     <!-- PendingCameraTriggers：★通讯触发队列（容量不驱逐在途/失败即撤/FIFO/Clear 等发送锁串行） -->
     <Compile Include="..\WindowsFormsApplication1\Services\PendingCameraTriggers.cs" Link="Linked\PendingCameraTriggers.cs" />
     <!-- 其类型依赖 CommTriggerSource（★第43轮自 Myjob.cs 抽出：Myjob.cs 依赖 Cognex，无法链接） -->

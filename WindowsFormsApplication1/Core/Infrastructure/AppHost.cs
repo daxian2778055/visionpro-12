@@ -38,7 +38,7 @@ namespace WindowsFormsApplication1.Core.Infrastructure
                 // 相机编排服务（薄封装 12 路 MyCamera，收口相机所有权与共享状态）
                 _provider.RegisterSingleton<CameraController>(new CameraController());
 
-                // 生产统计服务（委托既有 RunLog 写 E:\生产统计 / E:\每日统计 CSV 良率统计）
+                // 生产统计服务（委托既有 RunLog 写 统计根\生产统计 / 每日统计（根默认 E:\，可经 camera/statistics_root 配置） CSV 良率统计）
                 _provider.RegisterSingleton<StatisticsService>(new StatisticsService());
 
                 // 日志服务（委托既有 ErrorLog 异步落盘，业务与检测热路径统一使用）
