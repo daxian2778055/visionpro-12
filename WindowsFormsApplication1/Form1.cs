@@ -548,6 +548,25 @@ namespace WindowsFormsApplication1
             return "（按 " + key + "=\"" + shown + "\"）";
         }
 
+        /// <summary>★第63轮 D-2：根目录可达性标注——"配了个盘但那个盘不在"要在启动就看得见，
+        /// 而不是等第一张图存失败、再从"存图失败(累计 N 张)"的 30 秒限流提示反推半天。
+        /// 本方法在 <see cref="InitializeJobManager"/> 的<b>后台线程</b>里跑（网络盘探测再慢也不卡界面）；
+        /// 任何异常一律降级成"未确认"，绝不影响启动。
+        /// 措辞边界：Directory.Exists 对"盘不在/目录未建/无权限"都返回假，所以只说"访问不到"，
+        /// 不替现场断定是硬件故障。</summary>
+        private static string RootReachNote(string root)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(root)) return "";
+                string drive = Path.GetPathRoot(root);
+                if (Directory.Exists(root)) return "（可达）";
+                return "（★当前访问不到——盘 " + (string.IsNullOrEmpty(drive) ? root : drive)
+                    + " 不在、目录未建或无权限，存图/统计会失败）";
+            }
+            catch (Exception ex) { return "（可达性未确认：" + ex.GetType().Name + "）"; }
+        }
+
         private void InitializeJobManager()
         {
             try
@@ -627,8 +646,10 @@ namespace WindowsFormsApplication1
                     RunLog.Root = statRoot;
                     _logger.WriteLog("存图/统计根目录｜存图=" + imgRoot
                         + RootSourceNote("pathhead_root", imgRootRaw, imgUsedFallback, "默认 " + PathLayout.DefaultImageRoot)
+                        + RootReachNote(imgRoot)
                         + "｜统计=" + statRoot
                         + RootSourceNote("statistics_root", statRootRaw, statUsedFallback, "跟随存图根")
+                        + (statRoot == imgRoot ? "" : RootReachNote(statRoot))
                         + "｜两键本软件只读不写回，改 ini 后需重启");
                     _jobs.myjob1.pathhead_ok = imgRoot + "fu1ok\\";
                     _jobs.myjob2.pathhead_ok = imgRoot + "fu2ok\\";
@@ -9618,10 +9639,17 @@ namespace WindowsFormsApplication1
         /// 无协议连接切方案：把子窗上报的方案路径收口到整机唯一切型入口 xinghao_qiehuan。
         /// 本事件由子窗的串口/TCP 接收线程发出，故经 Task.Run + Invoke 切到 UI 线程执行；
         /// 无协议串口/TCP 切换不产生通讯回执（ackProto 取默认 0，与连接 1 的 timer10 口径一致）。
-        /// 来源连接号仅用于日志标识；xinghao_qiehuan 内部已有 CAS 门控，重复/在途请求会被拒绝。
+        /// 来源连接号仅用于日志标识。
         /// ★第61轮：与 FINS/Modbus/RTU 三条连接 2~4 分支同判据先比 path_1——旧写法靠 timer10
         ///   "消费后清空 lujing"顺带合并了同一批命中帧，改事件直投后这层合并没了，不判同路径就会
         ///   让同一方案的连续命中各起一次整机卸载/重载（几十秒停检）。
+        /// ★第63轮：在途判定分两层，缺一层就盖不住（上一轮这里只写了 CAS 一层，注释还把它说成
+        ///   "切换在途时在源头挡下"，那是错的）：
+        ///   ①`_switchingScheme`＝整机切方案在途——它在切换前言里置真、在**后台卸载/加载任务**收尾置假，
+        ///     正是那几十秒；本方法的 CAS 只到 xinghao_qiehuan 返回为止（它把实活 Task.Run 出去就回来了），
+        ///     单靠 CAS 在这几十秒里是空的，同连接每枚命中帧仍会各起一次 Task.Run+Invoke，
+        ///     最后撞 xinghao_qiehuan 那句**不限流**的"已有切换在途"日志；
+        ///   ②按连接 CAS＝"请求已接收、前言还没跑起来"那段（UI 线程排队/忙）的窗口。
         /// </summary>
         private void RouteNoProtoSchemeSwitch(string schemePath, int sourceLink)
         {
@@ -9636,15 +9664,23 @@ namespace WindowsFormsApplication1
                     "切方案请求与当前方案相同（" + target + "），已忽略", 5000);
                 return;
             }
-            // ★修复（回审低危①）：按连接的在途门控。切换在途时同连接的重复请求在此挡下，
-            //   与 FINS/Modbus/RTU 的 GetSwitchLock!=0 口径一致（此前只做同路径早退，在途期仍会空转请求）。
             if (sourceLink < 0 || sourceLink >= _noProtoSwitchLock.Length) return;
+            // ①整机在途（覆盖后台卸载/加载那几十秒；复用上一轮已定的"切方案在途"tag，不新增检索锚）
+            if (_switchingScheme)
+            {
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[无协议-连接" + sourceLink + "-切方案在途]",
+                    m => _logger.WriteLog(m),
+                    "整机方案切换在途（旧方案卸载/新方案加载未完），本次请求已忽略（" + target + "）", 5000);
+                return;
+            }
+            // ②本连接请求已接收、但切换前言还没跑起来（UI 线程排队/正忙）这段窗口
             if (Interlocked.CompareExchange(ref _noProtoSwitchLock[sourceLink], 1, 0) != 0)
             {
                 WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
                     "[无协议-连接" + sourceLink + "-切方案在途]",
                     m => _logger.WriteLog(m),
-                    "连接" + sourceLink + " 上一次切方案尚未结束，本次请求已忽略（" + target + "）", 5000);
+                    "连接" + sourceLink + " 已有请求在排队（尚未进入切换前言），本次请求已忽略（" + target + "）", 5000);
                 return;
             }
             Task.Run(() =>
@@ -9668,9 +9704,10 @@ namespace WindowsFormsApplication1
             });
         }
 
-        // 无协议切方案的“在途”门控（按连接号）：0=空闲，1=切换在途。
-        // 与 FINS/Modbus/RTU 的 GetSwitchLock/SetSwitchLock 同语义——事件直投后没有了 timer10 的“同批帧合并”，
-        // 切换在途时同连接的重复请求在源头挡下，避免每个命中帧都生成一次被 CAS 丢弃的 Task.Run+Invoke。
+        // 无协议切方案的“本连接请求已接收、尚未进入切换前言”门控（按连接号）：0=空闲，1=已接收。
+        // 只覆盖 UI 线程排队/正忙那一段；真正切换在途那几十秒由 _switchingScheme 判（见
+        // RouteNoProtoSchemeSwitch 头注释，第63轮订正：此前这里写成“切换在途时在源头挡下”，是夸大了——
+        // xinghao_qiehuan 把实活 Task.Run 出去就返回，本锁在那一刻已放开）。
         private readonly int[] _noProtoSwitchLock = new int[16];
 
         // 方案路径等价判据已搬到 PathLayout.SchemePathEquals——Form1.cs 依赖 Cognex、不进测试编译集，
