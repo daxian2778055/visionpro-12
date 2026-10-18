@@ -68,5 +68,28 @@ namespace WindowsFormsApplication1
             string n = (name ?? "").Trim().Trim('\\', '/');
             return n.Length == 0 ? r : r + n + "\\";
         }
+
+        /// <summary>
+        /// ★第62轮自 Form1.cs 搬入：方案路径等价判据（"同路径不重复切换"用它）。
+        /// 搬进来的理由是本项目的既定口径——**判定要收口到被测试工程源码链接的纯函数文件里**，
+        /// 否则它被改坏（比如丢掉 TrimEnd、换成 SequenceEqual）不会有任何一行测试变红
+        /// （Form1.cs 依赖 Cognex，根本不进测试编译集；第55轮 FrameAccounting.NormalizeMode、
+        /// 第60轮本文件都是这个先例）。
+        /// 忽略：NUL、首尾空白、正/反斜杠写法、末尾斜杠、大小写（OrdinalIgnoreCase，不走文化规则）。
+        /// **不忽略连续多个分隔符**（<c>E:\\方案\\20A.vpp</c> 与 <c>E:\方案\20A.vpp</c> 判不等）——
+        /// 折叠它们会把 UNC 开头（<c>\\server\share</c>）一并改坏，而漏判的代价只是多起一次整机重载，
+        /// 误判成相等的代价是"以为换好了其实没换"，两个方向都保守处理。
+        /// </summary>
+        public static bool SchemePathEquals(string a, string b)
+        {
+            return string.Equals(NormalizeSchemePathKey(a), NormalizeSchemePathKey(b), StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary><see cref="SchemePathEquals"/> 的规范化键；null/空一律归成空串（永不抛）。</summary>
+        public static string NormalizeSchemePathKey(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            return path.Replace("\0", "").Trim().Replace('/', '\\').TrimEnd('\\');
+        }
     }
 }

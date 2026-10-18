@@ -103,5 +103,36 @@ namespace WindowsFormsApplication1.Tests
             Assert.AreEqual(@"D:\data\", PathLayout.NormalizeRoot(@"D:\data", PathLayout.DefaultImageRoot),
                 "两参旧签名语义不变（三参只多一个回报，不改判词）");
         }
+
+        [TestMethod]
+        public void 方案路径等价_写法差异必须判等()
+        {
+            // ★第62轮自 Form1.cs 搬入的判据。它守的是"同路径不重复切换"——漏判的代价是多起一次
+            // 整机卸载/重载（几十秒停检），所以四种"人眼看起来同一个文件"的写法都要判等。
+            string cur = @"E:\方案\20A.vpp";
+            Assert.IsTrue(PathLayout.SchemePathEquals(cur, cur), "完全相同");
+            Assert.IsTrue(PathLayout.SchemePathEquals(cur, @"E:\方案\20a.vpp"), "仅大小写不同");
+            Assert.IsTrue(PathLayout.SchemePathEquals(cur, @"E:/方案/20A.vpp"), "正斜杠写法");
+            Assert.IsTrue(PathLayout.SchemePathEquals(cur, "   E:\\方案\\20A.vpp   "), "两端空白");
+            Assert.IsTrue(PathLayout.SchemePathEquals(cur, "E:\\方案\\20A.vpp\0"), "尾部 NUL（ini 脏值）");
+            Assert.IsTrue(PathLayout.SchemePathEquals(cur, @"E:\方案\20A.vpp\"), "只有末尾斜杠之差");
+            Assert.IsTrue(PathLayout.SchemePathEquals(null, ""), "null 与空串同为空键");
+        }
+
+        [TestMethod]
+        public void 方案路径等价_相近路径必须判不等()
+        {
+            // 反方向同样要钉：这条判据一旦把两个不同方案判成相等，PLC 要的换型会被"静默跳过"，
+            // 现场看到的就是"发了换型字符但画面还是旧方案"——比漏判更坑人，所以逐条钉死。
+            string cur = @"E:\方案\20A.vpp";
+            Assert.IsFalse(PathLayout.SchemePathEquals(cur, @"E:\方案2\20A.vpp"), "不同目录");
+            Assert.IsFalse(PathLayout.SchemePathEquals(cur, @"E:\方案\20B.vpp"), "不同文件");
+            Assert.IsFalse(PathLayout.SchemePathEquals(cur, @"E:\方案\20AB.vpp"), "前缀相似（20A vs 20AB）");
+            Assert.IsFalse(PathLayout.SchemePathEquals(cur, @"E:\方案\20A.vppx"), "扩展名相似（.vpp vs .vppx）");
+            Assert.IsFalse(PathLayout.SchemePathEquals(cur, ""), "空目标不得被判成与当前方案相同");
+            // 连续分隔符**刻意不折叠**：折叠会把 UNC 开头（\\server\share）一并改坏，
+            // 而这一写法在现场从未出现过；记在这里，将来要折叠的人得先解决 UNC 那条。
+            Assert.IsFalse(PathLayout.SchemePathEquals(cur, @"E:\\方案\\20A.vpp"), "双反斜杠不折叠（保 UNC）");
+        }
     }
 }

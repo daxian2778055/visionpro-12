@@ -9627,7 +9627,7 @@ namespace WindowsFormsApplication1
         {
             if (string.IsNullOrEmpty(schemePath)) return;
             string target = schemePath.Replace("\0", "");
-            if (target.Length == 0 || SchemePathEquals(path_1, target))
+            if (target.Length == 0 || PathLayout.SchemePathEquals(path_1, target))
             {
                 // 同路径（或规范化后为空）：不切换。限流报一行，现场能从日志确认"请求到过、被有意忽略"。
                 WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
@@ -9673,18 +9673,19 @@ namespace WindowsFormsApplication1
         // 切换在途时同连接的重复请求在源头挡下，避免每个命中帧都生成一次被 CAS 丢弃的 Task.Run+Invoke。
         private readonly int[] _noProtoSwitchLock = new int[16];
 
-        /// <summary>方案路径等价判据：忽略大小写、正/反斜杠、首尾空白与末尾斜杠。
-        /// 用于“同路径不重复切换”——现场在不同连接的方案格手填同一个文件时写法常不一致
-        /// （大小写、E:\ 与 E:/），逐字比较会漏判、退化成多起一次整机卸载/重载（几十秒停检）。</summary>
-        private static bool SchemePathEquals(string a, string b)
-        {
-            return string.Equals(NormalizeSchemePathKey(a), NormalizeSchemePathKey(b), StringComparison.OrdinalIgnoreCase);
-        }
+        // 方案路径等价判据已搬到 PathLayout.SchemePathEquals——Form1.cs 依赖 Cognex、不进测试编译集，
+        // 判据留在这里被改坏不会有测试变红（第62轮复审 P2-1）。
 
-        private static string NormalizeSchemePathKey(string path)
+        /// <summary>★第62轮：切方案请求被**有意跳过**时的限流留痕。此前 FINS/Modbus/RTU 三条连接 2~4 分支
+        /// 的"同路径/未持锁/在途"跳过全静默，现场问"PLC 发了换型字符却没反应"只能靠猜；无协议那条
+        /// （RouteNoProtoSchemeSwitch）第61轮已有同类日志，这里补齐同一口径。
+        /// tag 只含协议名+连接号（有限集合），符合 RateLimitedLog 对 tag 的约束。</summary>
+        private void LogSchemeSwitchSkip(string proto, int linkId, string target, string reason)
         {
-            if (string.IsNullOrEmpty(path)) return "";
-            return path.Replace("\0", "").Trim().Replace('/', '\\').TrimEnd('\\');
+            WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                "[" + proto + "-连接" + linkId + "-切方案跳过]",
+                m => _logger.WriteLog(m),
+                "切方案请求已跳过：" + reason + "｜目标=" + target, 5000);
         }
 
         /// <summary>
@@ -9794,7 +9795,7 @@ namespace WindowsFormsApplication1
                 if (e.LinkId > 1)
                 {
                     string linkPath = (e.SchemePath ?? "").Replace("\0", "");
-                    if (linkPath.Length > 0 && !SchemePathEquals(path_1, linkPath) && _comm.Omron.GetSwitchLock(e.LinkId) == 0)
+                    if (linkPath.Length > 0 && !PathLayout.SchemePathEquals(path_1, linkPath) && _comm.Omron.GetSwitchLock(e.LinkId) == 0)
                     {
                         _comm.Omron.SetSwitchLock(e.LinkId, 1);
                         // ★M4：回执来源随调用参数传递（连接 1=FINS）
@@ -9816,6 +9817,14 @@ namespace WindowsFormsApplication1
                                 _comm.Omron.SetSwitchLock(e.LinkId, 0);
                             }
                         });
+                    }
+                    else
+                    {
+                        // ★第62轮：三种"有意跳过"以前全静默，现场只能靠猜。锁由本分支取放（==0 才切），
+                        //   所以锁非 0 就是该连接上一次切换还在途。
+                        LogSchemeSwitchSkip("FINS", e.LinkId, linkPath,
+                            _comm.Omron.GetSwitchLock(e.LinkId) != 0 ? "该连接上一次切换尚未结束"
+                            : (linkPath.Length == 0 ? "该连接方案路径为空" : "与当前方案相同，不重复切换"));
                     }
                 }
                 else if (path_1 != _comm.Omron.lujing.Replace("\0", "") && qiehuanzhong == 0)
@@ -9893,7 +9902,7 @@ namespace WindowsFormsApplication1
                     string linkPath = (_comm.Modbustcp.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
                     // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
-                    if (linkPath.Length > 0 && !SchemePathEquals(path_1, linkPath) && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
+                    if (linkPath.Length > 0 && !PathLayout.SchemePathEquals(path_1, linkPath) && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
                     {
                         // ★M4：回执来源随调用参数传递（连接 1=ModbusTCP）
                         int ackProto = 2;
@@ -9920,7 +9929,14 @@ namespace WindowsFormsApplication1
                         // ★C4 修复：子实例轮询侧命中切型已置锁（qiehuanzhong=1），但主窗判定
                         //   "路径已相同/无需切换"时不进入上方分支 → 该连接锁永不复位，
                         //   TrySchemeSwitch 首行恒 false → 该通道切型静默死。此处补 else 复位本连接锁。
+                        // ★第62轮：跳过留痕。锁状态必须在复位**之前**取快照——复位后再读恒为 0，
+                        //   "未持有切换锁"这一支会永远命中、"同路径"永远读不到（本分支判据与 FINS 相反：
+                        //   要求"仍持有锁"才切，所以锁为 0 是轮询侧没命中/已被复位，与"同路径"是两回事）。
+                        bool heldByPoll = _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0;
                         _comm.Modbustcp.SetSwitchLock(e.LinkId, 0);
+                        LogSchemeSwitchSkip("ModbusTCP", e.LinkId, linkPath,
+                            !heldByPoll ? "该连接未持有切换锁（轮询侧未命中或已复位）"
+                            : (linkPath.Length == 0 ? "该连接方案路径为空" : "与当前方案相同，不重复切换"));
                     }
                 }
                 else if (path_1 != _comm.Modbustcp.lujing.Replace("\0", "") && qiehuanzhong == 0)
@@ -9993,7 +10009,7 @@ namespace WindowsFormsApplication1
                     string linkPath = (_comm.ModbusRtu.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
                     // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
-                    if (linkPath.Length > 0 && !SchemePathEquals(path_1, linkPath) && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
+                    if (linkPath.Length > 0 && !PathLayout.SchemePathEquals(path_1, linkPath) && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
                     {
                         // ★M4：回执来源随调用参数传递（连接 1=ModbusRTU）
                         int ackProto = 3;
@@ -10018,7 +10034,13 @@ namespace WindowsFormsApplication1
                     else
                     {
                         // ★C4 修复（同 ModbusTCP）：已置锁但主窗判定无需切换时补复位，防该通道切型静默死
+                        // ★第62轮：跳过留痕，锁状态同样取复位前的快照（复位后再读恒为 0，会永远报成
+                        //   "未持有切换锁"、"同路径"那一支永远读不到）。
+                        bool heldByPoll = _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0;
                         _comm.ModbusRtu.SetSwitchLock(e.LinkId, 0);
+                        LogSchemeSwitchSkip("ModbusRTU", e.LinkId, linkPath,
+                            !heldByPoll ? "该连接未持有切换锁（轮询侧未命中或已复位）"
+                            : (linkPath.Length == 0 ? "该连接方案路径为空" : "与当前方案相同，不重复切换"));
                     }
                 }
                 else if (path_1 != _comm.ModbusRtu.lujing.Replace("\0", "") && qiehuanzhong == 0)
