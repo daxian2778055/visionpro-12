@@ -537,6 +537,17 @@ namespace WindowsFormsApplication1
             catch { }
         }
 
+        /// <summary>★第61轮P2-4：根目录配置的来源标注。"没配"与"配了但识别不了、已回退"必须分开写——
+        /// 前者是正常态，后者是现场最容易误判的（以为换了盘，其实一个字都没生效）。</summary>
+        private static string RootSourceNote(string key, string raw, bool usedFallback, string fallbackDesc)
+        {
+            // ★修复：展示前先剥离 NUL——ini 值被写进不可见字符时，原样内插会把 NUL 带进日志文件。
+            string shown = (raw ?? "").Replace("\0", "");
+            if (string.IsNullOrEmpty(raw)) return "（" + key + " 未配置，" + fallbackDesc + "）";
+            if (usedFallback) return "（★" + key + "=\"" + shown + "\" 去空白/成对引号后无内容，已回退" + fallbackDesc + "）";
+            return "（按 " + key + "=\"" + shown + "\"）";
+        }
+
         private void InitializeJobManager()
         {
             try
@@ -602,30 +613,47 @@ namespace WindowsFormsApplication1
                     int[] _master = { 0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66 };
                     for (int _i = 0; _i < 12; _i++) { _jobs.Myjobs[_i].master = _master[_i]; _jobs.Myjobs[_i].trrigersum = 0; _jobs.Myjobs[_i].trriger = 0; }
                     jiankongshijian = 1000;
-                    _jobs.myjob1.pathhead_ok = @"E:\fu1ok\";
-                    _jobs.myjob2.pathhead_ok = @"E:\fu2ok\";
-                    _jobs.myjob3.pathhead_ok = @"E:\fu3ok\";
-                    _jobs.myjob4.pathhead_ok = @"E:\fu4ok\";
-                    _jobs.myjob1.pathhead_ng = @"E:\fu1ng\";
-                    _jobs.myjob2.pathhead_ng = @"E:\fu2ng\";
-                    _jobs.myjob3.pathhead_ng = @"E:\fu3ng\";
-                    _jobs.myjob4.pathhead_ng = @"E:\fu4ng\";
-                    _jobs.myjob5.pathhead_ok = @"E:\fu5ok\";
-                    _jobs.myjob6.pathhead_ok = @"E:\fu6ok\";
-                    _jobs.myjob7.pathhead_ok = @"E:\fu7ok\";
-                    _jobs.myjob8.pathhead_ok = @"E:\fu8ok\";
-                    _jobs.myjob5.pathhead_ng = @"E:\fu5ng\";
-                    _jobs.myjob6.pathhead_ng = @"E:\fu6ng\";
-                    _jobs.myjob7.pathhead_ng = @"E:\fu7ng\";
-                    _jobs.myjob8.pathhead_ng = @"E:\fu8ng\";
-                    _jobs.myjob9.pathhead_ok = @"E:\fu9ok\";
-                    _jobs.myjob10.pathhead_ok = @"E:\fu10ok\";
-                    _jobs.myjob11.pathhead_ok = @"E:\fu11ok\";
-                    _jobs.myjob12.pathhead_ok = @"E:\fu12ok\";
-                    _jobs.myjob9.pathhead_ng = @"E:\fu9ng\";
-                    _jobs.myjob10.pathhead_ng = @"E:\fu10ng\";
-                    _jobs.myjob11.pathhead_ng = @"E:\fu11ng\";
-                    _jobs.myjob12.pathhead_ng = @"E:\fu12ng\";
+                    // ★第60轮：存图/统计根目录改为 ini 可配（camera/pathhead_root / statistics_root）
+                    //   默认 E:\ 与改动前逐字一致；statistics_root 不设时跟随 pathhead_root。
+                    // ★第61轮P2-4：这两键是"只读键"（软件不写回、配置窗没有格），所以生效值必须启动
+                    //   点名一次——现场把盘符配错时，日志要能直接回答"现在按哪个根在存"，
+                    //   否则只能从"图去哪了"反推（与废弃显示降频键点名同口径）。
+                    string imgRootRaw = _config.ReadString("camera", "pathhead_root", "");
+                    bool imgUsedFallback;
+                    string imgRoot = PathLayout.NormalizeRoot(imgRootRaw, PathLayout.DefaultImageRoot, out imgUsedFallback);
+                    string statRootRaw = _config.ReadString("camera", "statistics_root", "");
+                    bool statUsedFallback;
+                    string statRoot = PathLayout.NormalizeRoot(statRootRaw, imgRoot, out statUsedFallback);
+                    RunLog.Root = statRoot;
+                    _logger.WriteLog("存图/统计根目录｜存图=" + imgRoot
+                        + RootSourceNote("pathhead_root", imgRootRaw, imgUsedFallback, "默认 " + PathLayout.DefaultImageRoot)
+                        + "｜统计=" + statRoot
+                        + RootSourceNote("statistics_root", statRootRaw, statUsedFallback, "跟随存图根")
+                        + "｜两键本软件只读不写回，改 ini 后需重启");
+                    _jobs.myjob1.pathhead_ok = imgRoot + "fu1ok\\";
+                    _jobs.myjob2.pathhead_ok = imgRoot + "fu2ok\\";
+                    _jobs.myjob3.pathhead_ok = imgRoot + "fu3ok\\";
+                    _jobs.myjob4.pathhead_ok = imgRoot + "fu4ok\\";
+                    _jobs.myjob1.pathhead_ng = imgRoot + "fu1ng\\";
+                    _jobs.myjob2.pathhead_ng = imgRoot + "fu2ng\\";
+                    _jobs.myjob3.pathhead_ng = imgRoot + "fu3ng\\";
+                    _jobs.myjob4.pathhead_ng = imgRoot + "fu4ng\\";
+                    _jobs.myjob5.pathhead_ok = imgRoot + "fu5ok\\";
+                    _jobs.myjob6.pathhead_ok = imgRoot + "fu6ok\\";
+                    _jobs.myjob7.pathhead_ok = imgRoot + "fu7ok\\";
+                    _jobs.myjob8.pathhead_ok = imgRoot + "fu8ok\\";
+                    _jobs.myjob5.pathhead_ng = imgRoot + "fu5ng\\";
+                    _jobs.myjob6.pathhead_ng = imgRoot + "fu6ng\\";
+                    _jobs.myjob7.pathhead_ng = imgRoot + "fu7ng\\";
+                    _jobs.myjob8.pathhead_ng = imgRoot + "fu8ng\\";
+                    _jobs.myjob9.pathhead_ok = imgRoot + "fu9ok\\";
+                    _jobs.myjob10.pathhead_ok = imgRoot + "fu10ok\\";
+                    _jobs.myjob11.pathhead_ok = imgRoot + "fu11ok\\";
+                    _jobs.myjob12.pathhead_ok = imgRoot + "fu12ok\\";
+                    _jobs.myjob9.pathhead_ng = imgRoot + "fu9ng\\";
+                    _jobs.myjob10.pathhead_ng = imgRoot + "fu10ng\\";
+                    _jobs.myjob11.pathhead_ng = imgRoot + "fu11ng\\";
+                    _jobs.myjob12.pathhead_ng = imgRoot + "fu12ng\\";
                     day1 = DateTime.Now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);   // ★ 存图子目录按日期命名（原为星期名，每周复用导致误删/堆叠）
                     _jobs.myjob1.fileng = new FileInfo(_jobs.myjob1.pathhead_ng + day1 + "\\");
                     _jobs.myjob2.fileng = new FileInfo(_jobs.myjob2.pathhead_ng + day1 + "\\");
@@ -9453,6 +9481,14 @@ namespace WindowsFormsApplication1
 
         private void DataChange(object sender, Form3.SelectionChangedEventArgs e)
         {
+            // ★修复（回审缺陷3）：无协议连接 2~4 的“切方案”事件（e.SchemePath 非空）——
+            //   按来源连接路由切型。原实现由子窗直接改写连接 1 主窗的 lujing/zifu、再由 timer10 轮询处理，
+            //   多条无协议连接同刻命中不同方案会互相覆盖、且丢失来源连接号。
+            if (!string.IsNullOrEmpty(e.SchemePath))
+            {
+                RouteNoProtoSchemeSwitch(e.SchemePath, e.LinkId);
+                return;
+            }
             // ★G6 修复（2026-09-23）：本事件由 Form3 串口/TCP 接收线程发出，原首行裸写 textBox1.Text——
             //   Debug 版必抛"线程间操作无效"并把异常打回接收线程（该连接接收中断），Release 版与 UI 竞写。
             SafeBeginInvoke(new Action(() => { textBox1.Text = e.Selection; }));
@@ -9579,6 +9615,80 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
+        /// 无协议连接切方案：把子窗上报的方案路径收口到整机唯一切型入口 xinghao_qiehuan。
+        /// 本事件由子窗的串口/TCP 接收线程发出，故经 Task.Run + Invoke 切到 UI 线程执行；
+        /// 无协议串口/TCP 切换不产生通讯回执（ackProto 取默认 0，与连接 1 的 timer10 口径一致）。
+        /// 来源连接号仅用于日志标识；xinghao_qiehuan 内部已有 CAS 门控，重复/在途请求会被拒绝。
+        /// ★第61轮：与 FINS/Modbus/RTU 三条连接 2~4 分支同判据先比 path_1——旧写法靠 timer10
+        ///   "消费后清空 lujing"顺带合并了同一批命中帧，改事件直投后这层合并没了，不判同路径就会
+        ///   让同一方案的连续命中各起一次整机卸载/重载（几十秒停检）。
+        /// </summary>
+        private void RouteNoProtoSchemeSwitch(string schemePath, int sourceLink)
+        {
+            if (string.IsNullOrEmpty(schemePath)) return;
+            string target = schemePath.Replace("\0", "");
+            if (target.Length == 0 || PathLayout.SchemePathEquals(path_1, target))
+            {
+                // 同路径（或规范化后为空）：不切换。限流报一行，现场能从日志确认"请求到过、被有意忽略"。
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[无协议-连接" + sourceLink + "-同路径切方案]",
+                    m => _logger.WriteLog(m),
+                    "切方案请求与当前方案相同（" + target + "），已忽略", 5000);
+                return;
+            }
+            // ★修复（回审低危①）：按连接的在途门控。切换在途时同连接的重复请求在此挡下，
+            //   与 FINS/Modbus/RTU 的 GetSwitchLock!=0 口径一致（此前只做同路径早退，在途期仍会空转请求）。
+            if (sourceLink < 0 || sourceLink >= _noProtoSwitchLock.Length) return;
+            if (Interlocked.CompareExchange(ref _noProtoSwitchLock[sourceLink], 1, 0) != 0)
+            {
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[无协议-连接" + sourceLink + "-切方案在途]",
+                    m => _logger.WriteLog(m),
+                    "连接" + sourceLink + " 上一次切方案尚未结束，本次请求已忽略（" + target + "）", 5000);
+                return;
+            }
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (InvokeRequired)
+                        Invoke(new Action(() => xinghao_qiehuan(target)));
+                    else
+                        xinghao_qiehuan(target);
+                }
+                catch (Exception ex)
+                {
+                    _logger.WriteLog("无协议连接" + sourceLink + " 切方案失败: " + ex.Message);
+                }
+                finally
+                {
+                    // 无论成功失败都复位，防止该连接切方案被永久锁死（与 FINS 的 finally SetSwitchLock(0) 同）
+                    Interlocked.Exchange(ref _noProtoSwitchLock[sourceLink], 0);
+                }
+            });
+        }
+
+        // 无协议切方案的“在途”门控（按连接号）：0=空闲，1=切换在途。
+        // 与 FINS/Modbus/RTU 的 GetSwitchLock/SetSwitchLock 同语义——事件直投后没有了 timer10 的“同批帧合并”，
+        // 切换在途时同连接的重复请求在源头挡下，避免每个命中帧都生成一次被 CAS 丢弃的 Task.Run+Invoke。
+        private readonly int[] _noProtoSwitchLock = new int[16];
+
+        // 方案路径等价判据已搬到 PathLayout.SchemePathEquals——Form1.cs 依赖 Cognex、不进测试编译集，
+        // 判据留在这里被改坏不会有测试变红（第62轮复审 P2-1）。
+
+        /// <summary>★第62轮：切方案请求被**有意跳过**时的限流留痕。此前 FINS/Modbus/RTU 三条连接 2~4 分支
+        /// 的"同路径/未持锁/在途"跳过全静默，现场问"PLC 发了换型字符却没反应"只能靠猜；无协议那条
+        /// （RouteNoProtoSchemeSwitch）第61轮已有同类日志，这里补齐同一口径。
+        /// tag 只含协议名+连接号（有限集合），符合 RateLimitedLog 对 tag 的约束。</summary>
+        private void LogSchemeSwitchSkip(string proto, int linkId, string target, string reason)
+        {
+            WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                "[" + proto + "-连接" + linkId + "-切方案跳过]",
+                m => _logger.WriteLog(m),
+                "切方案请求已跳过：" + reason + "｜目标=" + target, 5000);
+        }
+
+        /// <summary>
         /// 无协议通讯（串口/TCP）：由 Form3 界面"拍照触发字符"文本框写入，
         /// 直接赋给所有相机的 triggerZifu，不再依赖 VP 方案。
         /// </summary>
@@ -9685,7 +9795,7 @@ namespace WindowsFormsApplication1
                 if (e.LinkId > 1)
                 {
                     string linkPath = (e.SchemePath ?? "").Replace("\0", "");
-                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.Omron.GetSwitchLock(e.LinkId) == 0)
+                    if (linkPath.Length > 0 && !PathLayout.SchemePathEquals(path_1, linkPath) && _comm.Omron.GetSwitchLock(e.LinkId) == 0)
                     {
                         _comm.Omron.SetSwitchLock(e.LinkId, 1);
                         // ★M4：回执来源随调用参数传递（连接 1=FINS）
@@ -9707,6 +9817,14 @@ namespace WindowsFormsApplication1
                                 _comm.Omron.SetSwitchLock(e.LinkId, 0);
                             }
                         });
+                    }
+                    else
+                    {
+                        // ★第62轮：三种"有意跳过"以前全静默，现场只能靠猜。锁由本分支取放（==0 才切），
+                        //   所以锁非 0 就是该连接上一次切换还在途。
+                        LogSchemeSwitchSkip("FINS", e.LinkId, linkPath,
+                            _comm.Omron.GetSwitchLock(e.LinkId) != 0 ? "该连接上一次切换尚未结束"
+                            : (linkPath.Length == 0 ? "该连接方案路径为空" : "与当前方案相同，不重复切换"));
                     }
                 }
                 else if (path_1 != _comm.Omron.lujing.Replace("\0", "") && qiehuanzhong == 0)
@@ -9784,7 +9902,7 @@ namespace WindowsFormsApplication1
                     string linkPath = (_comm.Modbustcp.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
                     // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
-                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
+                    if (linkPath.Length > 0 && !PathLayout.SchemePathEquals(path_1, linkPath) && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
                     {
                         // ★M4：回执来源随调用参数传递（连接 1=ModbusTCP）
                         int ackProto = 2;
@@ -9811,7 +9929,14 @@ namespace WindowsFormsApplication1
                         // ★C4 修复：子实例轮询侧命中切型已置锁（qiehuanzhong=1），但主窗判定
                         //   "路径已相同/无需切换"时不进入上方分支 → 该连接锁永不复位，
                         //   TrySchemeSwitch 首行恒 false → 该通道切型静默死。此处补 else 复位本连接锁。
+                        // ★第62轮：跳过留痕。锁状态必须在复位**之前**取快照——复位后再读恒为 0，
+                        //   "未持有切换锁"这一支会永远命中、"同路径"永远读不到（本分支判据与 FINS 相反：
+                        //   要求"仍持有锁"才切，所以锁为 0 是轮询侧没命中/已被复位，与"同路径"是两回事）。
+                        bool heldByPoll = _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0;
                         _comm.Modbustcp.SetSwitchLock(e.LinkId, 0);
+                        LogSchemeSwitchSkip("ModbusTCP", e.LinkId, linkPath,
+                            !heldByPoll ? "该连接未持有切换锁（轮询侧未命中或已复位）"
+                            : (linkPath.Length == 0 ? "该连接方案路径为空" : "与当前方案相同，不重复切换"));
                     }
                 }
                 else if (path_1 != _comm.Modbustcp.lujing.Replace("\0", "") && qiehuanzhong == 0)
@@ -9884,7 +10009,7 @@ namespace WindowsFormsApplication1
                     string linkPath = (_comm.ModbusRtu.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
                     // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
-                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
+                    if (linkPath.Length > 0 && !PathLayout.SchemePathEquals(path_1, linkPath) && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
                     {
                         // ★M4：回执来源随调用参数传递（连接 1=ModbusRTU）
                         int ackProto = 3;
@@ -9909,7 +10034,13 @@ namespace WindowsFormsApplication1
                     else
                     {
                         // ★C4 修复（同 ModbusTCP）：已置锁但主窗判定无需切换时补复位，防该通道切型静默死
+                        // ★第62轮：跳过留痕，锁状态同样取复位前的快照（复位后再读恒为 0，会永远报成
+                        //   "未持有切换锁"、"同路径"那一支永远读不到）。
+                        bool heldByPoll = _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0;
                         _comm.ModbusRtu.SetSwitchLock(e.LinkId, 0);
+                        LogSchemeSwitchSkip("ModbusRTU", e.LinkId, linkPath,
+                            !heldByPoll ? "该连接未持有切换锁（轮询侧未命中或已复位）"
+                            : (linkPath.Length == 0 ? "该连接方案路径为空" : "与当前方案相同，不重复切换"));
                     }
                 }
                 else if (path_1 != _comm.ModbusRtu.lujing.Replace("\0", "") && qiehuanzhong == 0)

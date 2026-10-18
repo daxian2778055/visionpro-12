@@ -488,6 +488,7 @@
     <Compile Include="Core\Camera\CameraController.cs" />
     <Compile Include="Services\StatisticsService.cs" />
     <Compile Include="Services\LoggingService.cs" />
+    <Compile Include="Services\PathLayout.cs" />
     <Compile Include="Services\ConfigService.cs" />
     <Compile Include="Services\CommunicationService.cs" />
     <Compile Include="Services\JobService.cs" />
@@ -643,6 +644,9 @@
     <Compile Include="CrashMonitor.cs" />
     <Compile Include="ErrorLog.cs" />
     <Compile Include="Form1.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="NgImagePreviewForm.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Form1.Designer.cs">

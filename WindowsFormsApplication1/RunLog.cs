@@ -6,6 +6,12 @@ namespace WindowsFormsApplication1
 {
     class RunLog
     {
+        /// <summary>
+        /// ★第60轮：统计 CSV 根目录。启动时由 Form1 按 camera/statistics_root 设置，
+        /// 默认 E:\ 与改动前逐字一致；SubDirectory 内部对空值/非法值有兜底。
+        /// </summary>
+        internal static string Root = PathLayout.DefaultStatisticsRoot;
+
         ErrorLog Errorwrite = new ErrorLog();
 
         // 多路相机检测线程都会调用 WriteDate/WriteDate1 写同一批 CSV，必须串行化，
@@ -32,8 +38,8 @@ namespace WindowsFormsApplication1
             {
                 string strYear = DateTime.Now.Year.ToString();
                 string strMoth = DateTime.Now.ToString("Y");
-                string strDirectoryCsvPath = @"E:\生产统计\" + "\\" + path22 + "\\" + strYear;
-                string strDirectoryCsvPath1 = @"E:\每日统计\" + "\\" + path22 + "\\" + strYear + "\\" + strMoth;
+                string strDirectoryCsvPath = PathLayout.SubDirectory(Root, "生产统计") + "\\" + path22 + "\\" + strYear;
+                string strDirectoryCsvPath1 = PathLayout.SubDirectory(Root, "每日统计") + "\\" + path22 + "\\" + strYear + "\\" + strMoth;
                 if (!Directory.Exists(strDirectoryCsvPath))
                 {
                     Directory.CreateDirectory(strDirectoryCsvPath);
@@ -59,8 +65,8 @@ namespace WindowsFormsApplication1
                 string strYear = DateTime.Now.Year.ToString();
                 string strMoth = DateTime.Now.ToString("Y");
                 string strDay = DateTime.Now.ToString("m");
-                string strCsvPath = @"E:\生产统计\" + path22 + "\\" + strYear + "\\" + strMoth + ".csv";
-                string strCsvPath2 = @"E:\每日统计\" + path22 + "\\" + strYear + "\\" + strMoth + "\\" + strDay + ".csv";
+                string strCsvPath = PathLayout.SubDirectory(Root, "生产统计") + path22 + "\\" + strYear + "\\" + strMoth + ".csv";
+                string strCsvPath2 = PathLayout.SubDirectory(Root, "每日统计") + path22 + "\\" + strYear + "\\" + strMoth + "\\" + strDay + ".csv";
                 if (!File.Exists(strCsvPath))
                 {
                     using (new FileStream(strCsvPath, FileMode.OpenOrCreate, FileAccess.ReadWrite)) { }
@@ -137,7 +143,7 @@ namespace WindowsFormsApplication1
                     string strYear = DateTime.Now.Year.ToString();
                     string strMoth = DateTime.Now.ToString("Y");
                     string str = DateTime.Now.ToString("m");
-                    string strCsvPath = @"E:\生产统计\" + path22 + "\\" + strYear + "\\" + strMoth + ".csv";
+                    string strCsvPath = PathLayout.SubDirectory(Root, "生产统计") + path22 + "\\" + strYear + "\\" + strMoth + ".csv";
 
                     if (!File.Exists(strCsvPath))
                     {
@@ -252,7 +258,7 @@ namespace WindowsFormsApplication1
                     string strYear = DateTime.Now.Year.ToString();
                     string strMoth = DateTime.Now.ToString("Y");
                     string str = DateTime.Now.ToString("m");
-                    string strCsvPath = @"E:\每日统计\" + path22 + "\\" + strYear + "\\" + strMoth + "\\" + str + ".csv";
+                    string strCsvPath = PathLayout.SubDirectory(Root, "每日统计") + path22 + "\\" + strYear + "\\" + strMoth + "\\" + str + ".csv";
 
                     if (!File.Exists(strCsvPath))
                     {

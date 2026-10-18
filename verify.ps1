@@ -1,8 +1,10 @@
 ﻿#Requires -Version 5.0
 <#
   一键验收脚本（本机口径）：
-    [1/2] 主工程 MSBuild Rebuild（Cognex VisionPro 依赖，只能本机编）
-    [2/2] 单元测试 dotnet test（源码链接工程，无第三方依赖）
+    [1/3] 主工程 MSBuild Rebuild（Cognex VisionPro 依赖，只能本机编）
+    [2/3] 单元测试 dotnet test（源码链接工程，无第三方依赖）
+    [3/3] 检测回归 tests\Run-InspectionRegression.ps1（反射加载主工程 exe，走 VS 自带 Roslyn csc；
+          完整模式必跑；CI 托管 runner 无 Cognex/VS，故只进本机口径）
   用法：
     .\verify.ps1                 # Debug：先编主工程再跑测试（完整验收）
     .\verify.ps1 -Configuration Release
@@ -35,7 +37,7 @@ function Find-MSBuild {
 
 if (-not $SkipMainBuild) {
     $msbuild = Find-MSBuild
-    Write-Host "== [1/2] 主工程 Rebuild ($Configuration) =="
+    Write-Host "== [1/3] 主工程 Rebuild ($Configuration) =="
     & $msbuild (Join-Path $root 'WindowsFormsApplication1\WindowsFormsApplication1.csproj') `
         /t:Rebuild "/p:Configuration=$Configuration" /v:minimal /nologo
     if ($LASTEXITCODE -ne 0) {
@@ -44,10 +46,10 @@ if (-not $SkipMainBuild) {
     }
 }
 else {
-    Write-Host '== [1/2] 跳过主工程编译（-SkipMainBuild） =='
+    Write-Host '== [1/3] 跳过主工程编译（-SkipMainBuild） =='
 }
 
-Write-Host "== [2/2] 单元测试 ($Configuration) =="
+Write-Host "== [2/3] 单元测试 ($Configuration) =="
 dotnet test (Join-Path $root 'WindowsFormsApplication1.Tests\WindowsFormsApplication1.Tests.csproj') `
     -c $Configuration --nologo
 if ($LASTEXITCODE -ne 0) {
@@ -55,5 +57,18 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-Write-Host 'verify.ps1：主工程编译 + 单元测试 全部通过。' -ForegroundColor Green
+if ($SkipMainBuild) {
+    Write-Host '== [3/3] 检测回归（跳过：-SkipMainBuild 未重编主工程，拿旧 exe 跑会出假绿） =='
+    Write-Host 'verify.ps1：单元测试通过（主工程编译与检测回归已跳过）。' -ForegroundColor Green
+}
+else {
+    Write-Host "== [3/3] 检测回归 ($Configuration) =="
+    $regExe = Join-Path $root "WindowsFormsApplication1\bin\$Configuration\WindowsFormsApplication1.exe"
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tests\Run-InspectionRegression.ps1') -AssemblyPath $regExe
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "检测回归失败，exit=$LASTEXITCODE" -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
+    Write-Host 'verify.ps1：主工程编译 + 单元测试 + 检测回归 全部通过。' -ForegroundColor Green
+}
 exit 0

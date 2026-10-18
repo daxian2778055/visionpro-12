@@ -7,7 +7,19 @@ on:
 jobs:
   # 单元测试：WindowsFormsApplication1.Tests 采用"源码链接"设计（Compile Include 直链主工程源文件，
   # 不引用主工程程序集），因此不依赖 Cognex VisionPro（主工程的绝对路径 HintPath 在托管 runner 上不存在）
-  # 即可真实编译并运行 169 个用例（★第58轮：+2 例——① FrameAccounting 两张手工平行表的映射对齐：
+  # 即可真实编译并运行 178 个用例（★第62轮：+2 例——PathLayout.SchemePathEquals（"同路径不重复切换"判据，
+  # 本轮自 Form1.cs 搬入可测文件）两个方向都钉住：写法差异（大小写/正斜杠/两端空白/尾部 NUL/末尾斜杠）必须判等，
+  # 相近路径（不同目录/不同文件/前缀相似/扩展名相似/空目标/双反斜杠）必须判不等——后者一旦误判成相等，
+  # PLC 要的换型会被静默跳过，现场看到的就是"发了换型字符但画面还是旧方案"，比漏判更坑人；
+  # ★第61轮：+1 例——PathLayout.NormalizeRoot 三参版的回报位
+  # usedFallback 必须把「采纳了配置值」与「取了回退值」分开：启动那行「存图/统计根目录｜…」
+  # 的三分支（未配置/脏值已回退/按配置）全靠它，判反的方向就是现场以为换了盘、其实一个字没生效；
+  # ★第60轮：+6 例——PathLayout 存图/统计根目录解析：
+  # 空/NUL/成对引号回退默认、尾斜杠补齐、子目录拼接去双斜杠，重点钉死"默认值下拼出的
+  # E:\fuNok\ 等路径与硬编码时代逐字一致"——这类漂移现场几天后才会从"图去哪了"暴露；
+  # 另 RunLogWriteDateTests 8 例改为把 RunLog.Root 指到临时目录，不再依赖 E 盘、
+  # 本 job 从 Inconclusive 变为真跑（原 Directory.Exists(@"E:\") 判据已删）；
+  # ★第58轮：+2 例——① FrameAccounting 两张手工平行表的映射对齐：
   # 逐个原因单独记一笔后 Breakdown 整串必须等于「该原因标签+1」，GroupOf/三组明细/IsAfterReceive
   # 同时指认同一组，并钉死枚举个数 19——TablesAligned 只比长度，抓不到"两项顺序写反"这种错，
   # 而错标签会让现场照着假归因排查，比没标签更坑人；② ClassIni.ValueExists 把"只走过默认值路径"
@@ -33,7 +45,9 @@ jobs:
   # ★第51.8轮：+2 例——三个预算常量按现场实测校准、深度截断留痕必须带路径；
   # ★第51.7轮：+9 例节点级沉默记账/守卫扩项；跑数一律取本机
   # dotnet test 实测，不手推——51.2 起按"用例数随实测同步"的口径）。
-  # 注：含 E:\ 统计根目录的端到端用例在无 E 盘的 runner 上会自动 Inconclusive 跳过，本机 verify.ps1 覆盖。
+  # 注：tests\ 检测回归（PendingCameraTriggers 并发 8 场景，反射加载主工程 exe、需 VS 自带 Roslyn csc）
+  # 物理上跑不进本 job——它先要主工程 exe 而主工程引 Cognex 编不了；去向为本机口径 verify.ps1
+  # 第 [3/3] 步（完整模式必跑；-SkipMainBuild 时明确跳过并说明原因）。
   # 主工程本身（WinExe + Cognex 引用）只能在装有 VisionPro 的开发机编译：本机跑 verify.ps1。
   unit-tests:
     runs-on: windows-latest

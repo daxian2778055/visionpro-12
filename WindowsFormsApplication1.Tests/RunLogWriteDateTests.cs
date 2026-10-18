@@ -13,9 +13,10 @@ namespace WindowsFormsApplication1.Tests
     /// ★复盘P1-2（编码不符新一天走字节级追加，历史字节不动）、P2-4（5 秒限流日志）、
     /// 性能#3（序号单槽缓存命中/失效回退）、第26轮#20（方案切换追加表头分界）。
     ///
-    /// 环境约束：统计根目录在生产代码里写死 E:\ —— 无 E 盘的环境（CI 托管 runner）
-    /// 自动 Assert.Inconclusive 跳过；本机（有 E 盘）真实执行。
-    /// 每个用例用 GUID 隔离子目录，Cleanup 整目录删除，绝不触碰现场真实统计文件。
+    /// ★第60轮：统计根目录改由 RunLog.Root 决定（现场默认仍 E:\，生产代码不再写死）。
+    /// 本类 Setup 把 Root 指向系统临时目录下的 GUID 子目录 —— 有无 E 盘都能真跑
+    /// （CI 托管 runner 不再 Inconclusive），且绝不触碰现场真实统计文件。
+    /// 每个用例用 GUID 隔离子目录，Cleanup 整目录删除。
     /// </summary>
     [TestClass]
     public class RunLogWriteDateTests
@@ -24,6 +25,7 @@ namespace WindowsFormsApplication1.Tests
         private string _monthCsv;
         private string _prodRoot;
         private string _dayRoot;
+        private string _tempRoot;
         private RunLog _log;
         private CapturingLogger _cap;
 
@@ -67,16 +69,17 @@ namespace WindowsFormsApplication1.Tests
         [TestInitialize]
         public void Setup()
         {
-            if (!Directory.Exists(@"E:\"))
-                Assert.Inconclusive("当前环境无 E: 盘（生产统计根目录写死 E 盘根），本类端到端用例跳过");
+            // ★第60轮：统计根指到系统临时目录 —— 不依赖 E 盘（CI 也能真跑），不碰现场真实目录
+            _tempRoot = Path.Combine(Path.GetTempPath(), "vp12t_" + Guid.NewGuid().ToString("N"));
+            RunLog.Root = _tempRoot;
 
             _p22 = "vp12t_" + Guid.NewGuid().ToString("N");
             string year = DateTime.Now.Year.ToString();
             string month = DateTime.Now.ToString("Y");   // 与生产代码同口径："2026年9月"
             string day = DateTime.Now.ToString("m");     // 与生产代码同口径："9月"
 
-            _prodRoot = Path.Combine(@"E:\生产统计", _p22);
-            _dayRoot = Path.Combine(@"E:\每日统计", _p22);
+            _prodRoot = Path.Combine(_tempRoot, "生产统计", _p22);
+            _dayRoot = Path.Combine(_tempRoot, "每日统计", _p22);
             _monthCsv = Path.Combine(_prodRoot, year, month + ".csv");
             string dayCsv = Path.Combine(_dayRoot, year, month, day + ".csv");
             Directory.CreateDirectory(Path.GetDirectoryName(_monthCsv));
@@ -94,8 +97,8 @@ namespace WindowsFormsApplication1.Tests
         public void Cleanup()
         {
             try { LogManager.Initialize(null); } catch { }   // 恢复默认（惰性）日志器
-            try { if (Directory.Exists(_prodRoot)) Directory.Delete(_prodRoot, true); } catch { }
-            try { if (Directory.Exists(_dayRoot)) Directory.Delete(_dayRoot, true); } catch { }
+            try { RunLog.Root = PathLayout.DefaultStatisticsRoot; } catch { }   // 恢复默认统计根，防污染后续用例
+            try { if (Directory.Exists(_tempRoot)) Directory.Delete(_tempRoot, true); } catch { }
         }
 
         // ---------- 功能⑧：新一天首条 → 整表原子追加，无空行 ----------

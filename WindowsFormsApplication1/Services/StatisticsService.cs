@@ -3,7 +3,7 @@ using System;
 namespace WindowsFormsApplication1
 {
     /// <summary>
-    /// 生产统计服务。收口原 Form1 中散落的 <see cref="RunLog"/> 调用（向 E:\生产统计 / E:\每日统计 写入 CSV 良率统计）。
+    /// 生产统计服务。收口原 Form1 中散落的 <see cref="RunLog"/> 调用（向 统计根\生产统计 / 每日统计（根默认 E:\，可经 camera/statistics_root 配置） 写入 CSV 良率统计）。
     /// <para>
     /// 内部委托既有的 <see cref="RunLog"/> 实现，保持 CSV 写入行为完全不变；Form1 只通过本服务记录统计，
     /// 不再直接持有 <see cref="RunLog"/> 实例，便于后续统一路径配置与单测。
