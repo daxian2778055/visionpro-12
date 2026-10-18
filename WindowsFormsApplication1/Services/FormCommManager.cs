@@ -685,7 +685,17 @@ namespace WindowsFormsApplication1
             // 桥接：本实例的触发/切型事件经主连接 comm.Omron 的 getData 通知主界面（带 LinkId + SchemePath）。
             FormOmron.GetSeletionData handler = (s, e) =>
             {
-                try { _comm.Omron.RaiseSelectionChanged(e.Selection, e.Camera, e.SchemePath, link); }
+                try
+                {
+                    // ★修复（回审缺陷1）：切方案事件必须走 RaiseSchemeSwitch（带 SchemePath）。
+                    //   原实现一律经 RaiseSelectionChanged 转发，而该方法会丢弃其第三个参数，
+                    //   导致主界面 FINS 连接 2~4 分支读到的 e.SchemePath 恒为空 → 切方案静默不执行、无日志。
+                    //   与 Modbus/RTU（用 GetLinkSchemePath(e.LinkId) 取路径）行为对齐。
+                    if (!string.IsNullOrEmpty(e.SchemePath))
+                        _comm.Omron.RaiseSchemeSwitch(e.Selection, e.SchemePath, link);
+                    else
+                        _comm.Omron.RaiseSelectionChanged(e.Selection, e.Camera, e.SchemePath, link);
+                }
                 catch { }
             };
             host.Tag = handler;

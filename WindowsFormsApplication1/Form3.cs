@@ -1251,6 +1251,10 @@ namespace WindowsFormsApplication1
             // 来源链路号：连接 2~4 触发经主窗宿主转发时保留“是谁发的”这一身份，
             // 供 Form1.DataChange 记录到相机，使检测结果能回到发出触发的那条无协议连接的端口。
             public int LinkId;
+
+            // 命中切型时携带的方案路径（非空表示这是一次“切方案”事件，而非相机触发）。
+            // 供 Form1 按来源连接（LinkId）路由切型，不再经由连接 1 主窗的 lujing/timer10。
+            public string SchemePath;
             public SelectionChangedEventArgs(string selection)
             {
 
@@ -1668,9 +1672,26 @@ namespace WindowsFormsApplication1
                 }
                 else if (!IsMainWindow && HostMain != null && !string.IsNullOrEmpty(lujing))
                 {
-                    HostMain.lujing = lujing;
-                    HostMain.zifu = zifu;
+                    // ★修复（回审缺陷3）：原实现直接改写连接 1 主窗的 HostMain.lujing/HostMain.zifu，
+                    //   多条无协议连接同刻命中不同方案时会互相覆盖、且丢失来源连接号。
+                    //   改走主窗宿主的切方案事件（带 LinkId），由 Form1 按连接路由切型。
+                    HostMain.RaiseSchemeSwitch(lujing, _linkId);
                 }
+            }
+            catch { }
+        }
+
+        /// <summary>把“命中切型”的外部链路帧上报主窗宿主（带方案路径 + 来源链路号），
+        /// 由 Form1 按连接路由切型。连接 1 主窗仍走 timer10 + frm3.lujing 原路径，行为不变。</summary>
+        public void RaiseSchemeSwitch(string schemePath, int sourceLink)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(schemePath)) return;
+                SelectionChangedEventArgs E = new SelectionChangedEventArgs(schemePath);
+                E.LinkId = sourceLink;
+                E.SchemePath = schemePath;
+                if (getData != null) getData(this, E);
             }
             catch { }
         }

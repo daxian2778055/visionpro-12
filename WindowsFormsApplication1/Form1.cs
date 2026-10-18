@@ -9457,6 +9457,14 @@ namespace WindowsFormsApplication1
 
         private void DataChange(object sender, Form3.SelectionChangedEventArgs e)
         {
+            // ★修复（回审缺陷3）：无协议连接 2~4 的“切方案”事件（e.SchemePath 非空）——
+            //   按来源连接路由切型。原实现由子窗直接改写连接 1 主窗的 lujing/zifu、再由 timer10 轮询处理，
+            //   多条无协议连接同刻命中不同方案会互相覆盖、且丢失来源连接号。
+            if (!string.IsNullOrEmpty(e.SchemePath))
+            {
+                RouteNoProtoSchemeSwitch(e.SchemePath, e.LinkId);
+                return;
+            }
             // ★G6 修复（2026-09-23）：本事件由 Form3 串口/TCP 接收线程发出，原首行裸写 textBox1.Text——
             //   Debug 版必抛"线程间操作无效"并把异常打回接收线程（该连接接收中断），Release 版与 UI 竞写。
             SafeBeginInvoke(new Action(() => { textBox1.Text = e.Selection; }));
@@ -9580,6 +9588,31 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog("Trigger Software Fail!---" + nRet);
                 }
             }
+        }
+
+        /// <summary>
+        /// 无协议连接切方案：把子窗上报的方案路径收口到整机唯一切型入口 xinghao_qiehuan。
+        /// 本事件由子窗的串口/TCP 接收线程发出，故经 Task.Run + Invoke 切到 UI 线程执行；
+        /// 无协议串口/TCP 切换不产生通讯回执（ackProto 取默认 0，与连接 1 的 timer10 口径一致）。
+        /// 来源连接号仅用于日志标识；xinghao_qiehuan 内部已有 CAS 门控，重复/在途请求会被拒绝。
+        /// </summary>
+        private void RouteNoProtoSchemeSwitch(string schemePath, int sourceLink)
+        {
+            if (string.IsNullOrEmpty(schemePath)) return;
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (InvokeRequired)
+                        Invoke(new Action(() => xinghao_qiehuan(schemePath)));
+                    else
+                        xinghao_qiehuan(schemePath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.WriteLog("无协议连接" + sourceLink + " 切方案失败: " + ex.Message);
+                }
+            });
         }
 
         /// <summary>

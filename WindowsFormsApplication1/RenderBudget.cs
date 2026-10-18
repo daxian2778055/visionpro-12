@@ -742,6 +742,10 @@ namespace WindowsFormsApplication1
         public int IsPathProtected(int slot, int now, int minIntervalMs)
         {
             if (slot < 0 || slot >= Slots) return 0;
+            // ★修复（回审缺陷2）：与 WaterLevelFps/PressureCode/ProtectionDemoted/CapUsedPercent 同级口径一致。
+            //   minIntervalMs<=0（0=不限速，文档明示支持）时 Compute 首行会整数除零，
+            //   打开"帧计数归因"弹窗即抛 DivideByZeroException、被 try 吞掉后整段明细丢失。
+            if (minIntervalMs <= 0) return 0;
             DisplayThrottleSettings cfg = Volatile.Read(ref _settings);
             if (cfg == null || cfg.IsLegacy) return 0;
             Allocation a = Compute(now, minIntervalMs, cfg);
