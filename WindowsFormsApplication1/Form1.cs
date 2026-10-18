@@ -537,6 +537,15 @@ namespace WindowsFormsApplication1
             catch { }
         }
 
+        /// <summary>★第61轮P2-4：根目录配置的来源标注。"没配"与"配了但识别不了、已回退"必须分开写——
+        /// 前者是正常态，后者是现场最容易误判的（以为换了盘，其实一个字都没生效）。</summary>
+        private static string RootSourceNote(string key, string raw, bool usedFallback, string fallbackDesc)
+        {
+            if (string.IsNullOrEmpty(raw)) return "（" + key + " 未配置，" + fallbackDesc + "）";
+            if (usedFallback) return "（★" + key + "=\"" + raw + "\" 去空白/成对引号后无内容，已回退" + fallbackDesc + "）";
+            return "（按 " + key + "=\"" + raw + "\"）";
+        }
+
         private void InitializeJobManager()
         {
             try
@@ -604,8 +613,21 @@ namespace WindowsFormsApplication1
                     jiankongshijian = 1000;
                     // ★第60轮：存图/统计根目录改为 ini 可配（camera/pathhead_root / statistics_root）
                     //   默认 E:\ 与改动前逐字一致；statistics_root 不设时跟随 pathhead_root。
-                    string imgRoot = PathLayout.NormalizeRoot(_config.ReadString("camera", "pathhead_root", PathLayout.DefaultImageRoot), PathLayout.DefaultImageRoot);
-                    RunLog.Root = PathLayout.NormalizeRoot(_config.ReadString("camera", "statistics_root", imgRoot), imgRoot);
+                    // ★第61轮P2-4：这两键是"只读键"（软件不写回、配置窗没有格），所以生效值必须启动
+                    //   点名一次——现场把盘符配错时，日志要能直接回答"现在按哪个根在存"，
+                    //   否则只能从"图去哪了"反推（与废弃显示降频键点名同口径）。
+                    string imgRootRaw = _config.ReadString("camera", "pathhead_root", "");
+                    bool imgUsedFallback;
+                    string imgRoot = PathLayout.NormalizeRoot(imgRootRaw, PathLayout.DefaultImageRoot, out imgUsedFallback);
+                    string statRootRaw = _config.ReadString("camera", "statistics_root", "");
+                    bool statUsedFallback;
+                    string statRoot = PathLayout.NormalizeRoot(statRootRaw, imgRoot, out statUsedFallback);
+                    RunLog.Root = statRoot;
+                    _logger.WriteLog("存图/统计根目录｜存图=" + imgRoot
+                        + RootSourceNote("pathhead_root", imgRootRaw, imgUsedFallback, "默认 " + PathLayout.DefaultImageRoot)
+                        + "｜统计=" + statRoot
+                        + RootSourceNote("statistics_root", statRootRaw, statUsedFallback, "跟随存图根")
+                        + "｜两键本软件只读不写回，改 ini 后需重启");
                     _jobs.myjob1.pathhead_ok = imgRoot + "fu1ok\\";
                     _jobs.myjob2.pathhead_ok = imgRoot + "fu2ok\\";
                     _jobs.myjob3.pathhead_ok = imgRoot + "fu3ok\\";
@@ -9595,18 +9617,31 @@ namespace WindowsFormsApplication1
         /// 本事件由子窗的串口/TCP 接收线程发出，故经 Task.Run + Invoke 切到 UI 线程执行；
         /// 无协议串口/TCP 切换不产生通讯回执（ackProto 取默认 0，与连接 1 的 timer10 口径一致）。
         /// 来源连接号仅用于日志标识；xinghao_qiehuan 内部已有 CAS 门控，重复/在途请求会被拒绝。
+        /// ★第61轮：与 FINS/Modbus/RTU 三条连接 2~4 分支同判据先比 path_1——旧写法靠 timer10
+        ///   "消费后清空 lujing"顺带合并了同一批命中帧，改事件直投后这层合并没了，不判同路径就会
+        ///   让同一方案的连续命中各起一次整机卸载/重载（几十秒停检）。
         /// </summary>
         private void RouteNoProtoSchemeSwitch(string schemePath, int sourceLink)
         {
             if (string.IsNullOrEmpty(schemePath)) return;
+            string target = schemePath.Replace("\0", "");
+            if (target.Length == 0 || path_1 == target)
+            {
+                // 同路径（或规范化后为空）：不切换。限流报一行，现场能从日志确认"请求到过、被有意忽略"。
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[无协议-连接" + sourceLink + "-同路径切方案]",
+                    m => _logger.WriteLog(m),
+                    "切方案请求与当前方案相同（" + target + "），已忽略", 5000);
+                return;
+            }
             Task.Run(() =>
             {
                 try
                 {
                     if (InvokeRequired)
-                        Invoke(new Action(() => xinghao_qiehuan(schemePath)));
+                        Invoke(new Action(() => xinghao_qiehuan(target)));
                     else
-                        xinghao_qiehuan(schemePath);
+                        xinghao_qiehuan(target);
                 }
                 catch (Exception ex)
                 {

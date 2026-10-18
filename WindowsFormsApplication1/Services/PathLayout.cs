@@ -31,16 +31,29 @@ namespace WindowsFormsApplication1
         /// </summary>
         public static string NormalizeRoot(string raw, string fallback)
         {
+            bool ignored;
+            return NormalizeRoot(raw, fallback, out ignored);
+        }
+
+        /// <summary>
+        /// 同上，另外回报<b>本次是否取了 fallback</b>（<paramref name="usedFallback"/>）。
+        /// 调用方要靠它把"配置值不可识别、已按回退值走"点名到日志里——光比对字符串判不出来：
+        /// 例如值是单个引号（不成对，不剥）会原样带出一个怪路径，而"配了却等于没配"正是现场最难查的那种。
+        /// 注意：true 只代表"取了 fallback"，不区分键根本没配 / 配了但是脏值，那是调用方的措辞问题。
+        /// </summary>
+        public static string NormalizeRoot(string raw, string fallback, out bool usedFallback)
+        {
             string dflt = string.IsNullOrEmpty(fallback) ? DefaultStatisticsRoot : fallback;
-            if (raw == null) return dflt;
+            if (raw == null) { usedFallback = true; return dflt; }
             string s = raw.Replace("\0", "").Trim();
-            if (s.Length == 0) return dflt;
+            if (s.Length == 0) { usedFallback = true; return dflt; }
             // 现场常见手工编辑 ini 时把值连带引号一起写进来（"E:\data"），成对时剥掉
             if (s.Length >= 2 && s[0] == '"' && s[s.Length - 1] == '"')
             {
                 s = s.Substring(1, s.Length - 2).Trim();
-                if (s.Length == 0) return dflt;
+                if (s.Length == 0) { usedFallback = true; return dflt; }
             }
+            usedFallback = false;
             if (s[s.Length - 1] == '\\' || s[s.Length - 1] == '/') return s;
             return s + "\\";
         }

@@ -77,5 +77,31 @@ namespace WindowsFormsApplication1.Tests
             Assert.AreEqual(PathLayout.DefaultStatisticsRoot, PathLayout.NormalizeRoot(null, null), "fallback 为 null 时用统计默认值");
             Assert.AreEqual(PathLayout.DefaultStatisticsRoot, PathLayout.NormalizeRoot(null, ""), "fallback 为空时用统计默认值");
         }
+
+        [TestMethod]
+        public void 带回报_采纳配置与取了回退必须分得开()
+        {
+            // ★第61轮P2-4：启动那行「存图/统计根目录」的三分支（未配置 / 脏值已回退 / 按配置）
+            // 全靠这个回报位分诊。它判错的方向就是「现场以为换了盘、其实一个字没生效」，逐分支钉住。
+            bool used;
+            Assert.AreEqual(@"D:\data\", PathLayout.NormalizeRoot(@"D:\data", PathLayout.DefaultImageRoot, out used),
+                "值被采纳时结果就是规范化值");
+            Assert.IsFalse(used, "采纳配置值不得报成「取了回退」");
+
+            Assert.AreEqual(PathLayout.DefaultImageRoot, PathLayout.NormalizeRoot(null, PathLayout.DefaultImageRoot, out used),
+                "null 取默认");
+            Assert.IsTrue(used, "null 要报成回退（调用方据此写「未配置」）");
+
+            Assert.AreEqual(PathLayout.DefaultImageRoot, PathLayout.NormalizeRoot("  \0 ", PathLayout.DefaultImageRoot, out used),
+                "去 NUL+空白后为空取默认");
+            Assert.IsTrue(used, "★配了但识别不了必须报成回退——现场最容易误判的就是这一支");
+
+            Assert.AreEqual(PathLayout.DefaultImageRoot, PathLayout.NormalizeRoot("\"\"", PathLayout.DefaultImageRoot, out used),
+                "成对空引号取默认");
+            Assert.IsTrue(used, "引号里没内容同样算回退");
+
+            Assert.AreEqual(@"D:\data\", PathLayout.NormalizeRoot(@"D:\data", PathLayout.DefaultImageRoot),
+                "两参旧签名语义不变（三参只多一个回报，不改判词）");
+        }
     }
 }

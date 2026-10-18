@@ -134,7 +134,13 @@ namespace WindowsFormsApplication1
                 Bitmap bmp;
                 using (MemoryStream ms = new MemoryStream(bytes, false))
                 {
-                    bmp = new Bitmap(ms);
+                    using (Image fromStream = Image.FromStream(ms))
+                    {
+                        // GDI+ 要求 Image 生存期内流保持打开（流 Dispose 后 Clone/Save 实测抛
+                        // OutOfMemoryException / ExternalException）——趁流还活着做一次完整拷贝，
+                        // 之后这张位图与流再无关系，DropImage 只释放拷贝。
+                        bmp = new Bitmap(fromStream);
+                    }
                 }
                 _image = bmp;
                 _pic.Image = _image;
