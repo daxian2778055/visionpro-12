@@ -541,9 +541,11 @@ namespace WindowsFormsApplication1
         /// 前者是正常态，后者是现场最容易误判的（以为换了盘，其实一个字都没生效）。</summary>
         private static string RootSourceNote(string key, string raw, bool usedFallback, string fallbackDesc)
         {
+            // ★修复：展示前先剥离 NUL——ini 值被写进不可见字符时，原样内插会把 NUL 带进日志文件。
+            string shown = (raw ?? "").Replace("\0", "");
             if (string.IsNullOrEmpty(raw)) return "（" + key + " 未配置，" + fallbackDesc + "）";
-            if (usedFallback) return "（★" + key + "=\"" + raw + "\" 去空白/成对引号后无内容，已回退" + fallbackDesc + "）";
-            return "（按 " + key + "=\"" + raw + "\"）";
+            if (usedFallback) return "（★" + key + "=\"" + shown + "\" 去空白/成对引号后无内容，已回退" + fallbackDesc + "）";
+            return "（按 " + key + "=\"" + shown + "\"）";
         }
 
         private void InitializeJobManager()
@@ -9625,13 +9627,24 @@ namespace WindowsFormsApplication1
         {
             if (string.IsNullOrEmpty(schemePath)) return;
             string target = schemePath.Replace("\0", "");
-            if (target.Length == 0 || path_1 == target)
+            if (target.Length == 0 || SchemePathEquals(path_1, target))
             {
                 // 同路径（或规范化后为空）：不切换。限流报一行，现场能从日志确认"请求到过、被有意忽略"。
                 WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
                     "[无协议-连接" + sourceLink + "-同路径切方案]",
                     m => _logger.WriteLog(m),
                     "切方案请求与当前方案相同（" + target + "），已忽略", 5000);
+                return;
+            }
+            // ★修复（回审低危①）：按连接的在途门控。切换在途时同连接的重复请求在此挡下，
+            //   与 FINS/Modbus/RTU 的 GetSwitchLock!=0 口径一致（此前只做同路径早退，在途期仍会空转请求）。
+            if (sourceLink < 0 || sourceLink >= _noProtoSwitchLock.Length) return;
+            if (Interlocked.CompareExchange(ref _noProtoSwitchLock[sourceLink], 1, 0) != 0)
+            {
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[无协议-连接" + sourceLink + "-切方案在途]",
+                    m => _logger.WriteLog(m),
+                    "连接" + sourceLink + " 上一次切方案尚未结束，本次请求已忽略（" + target + "）", 5000);
                 return;
             }
             Task.Run(() =>
@@ -9647,7 +9660,31 @@ namespace WindowsFormsApplication1
                 {
                     _logger.WriteLog("无协议连接" + sourceLink + " 切方案失败: " + ex.Message);
                 }
+                finally
+                {
+                    // 无论成功失败都复位，防止该连接切方案被永久锁死（与 FINS 的 finally SetSwitchLock(0) 同）
+                    Interlocked.Exchange(ref _noProtoSwitchLock[sourceLink], 0);
+                }
             });
+        }
+
+        // 无协议切方案的“在途”门控（按连接号）：0=空闲，1=切换在途。
+        // 与 FINS/Modbus/RTU 的 GetSwitchLock/SetSwitchLock 同语义——事件直投后没有了 timer10 的“同批帧合并”，
+        // 切换在途时同连接的重复请求在源头挡下，避免每个命中帧都生成一次被 CAS 丢弃的 Task.Run+Invoke。
+        private readonly int[] _noProtoSwitchLock = new int[16];
+
+        /// <summary>方案路径等价判据：忽略大小写、正/反斜杠、首尾空白与末尾斜杠。
+        /// 用于“同路径不重复切换”——现场在不同连接的方案格手填同一个文件时写法常不一致
+        /// （大小写、E:\ 与 E:/），逐字比较会漏判、退化成多起一次整机卸载/重载（几十秒停检）。</summary>
+        private static bool SchemePathEquals(string a, string b)
+        {
+            return string.Equals(NormalizeSchemePathKey(a), NormalizeSchemePathKey(b), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeSchemePathKey(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "";
+            return path.Replace("\0", "").Trim().Replace('/', '\\').TrimEnd('\\');
         }
 
         /// <summary>
@@ -9757,7 +9794,7 @@ namespace WindowsFormsApplication1
                 if (e.LinkId > 1)
                 {
                     string linkPath = (e.SchemePath ?? "").Replace("\0", "");
-                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.Omron.GetSwitchLock(e.LinkId) == 0)
+                    if (linkPath.Length > 0 && !SchemePathEquals(path_1, linkPath) && _comm.Omron.GetSwitchLock(e.LinkId) == 0)
                     {
                         _comm.Omron.SetSwitchLock(e.LinkId, 1);
                         // ★M4：回执来源随调用参数传递（连接 1=FINS）
@@ -9856,7 +9893,7 @@ namespace WindowsFormsApplication1
                     string linkPath = (_comm.Modbustcp.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
                     // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
-                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
+                    if (linkPath.Length > 0 && !SchemePathEquals(path_1, linkPath) && _comm.Modbustcp.GetSwitchLock(e.LinkId) != 0)
                     {
                         // ★M4：回执来源随调用参数传递（连接 1=ModbusTCP）
                         int ackProto = 2;
@@ -9956,7 +9993,7 @@ namespace WindowsFormsApplication1
                     string linkPath = (_comm.ModbusRtu.GetLinkSchemePath(e.LinkId) ?? "").Replace("\0", "");
                     // 连接2~4 的切型锁已由本连接 TrySchemeSwitch 命中切型时置 1；此处以“仍持有锁”作为防重入保单，
                     // 切换完成后在 finally 复位（与连接 1 锁互不干扰）。
-                    if (linkPath.Length > 0 && path_1 != linkPath && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
+                    if (linkPath.Length > 0 && !SchemePathEquals(path_1, linkPath) && _comm.ModbusRtu.GetSwitchLock(e.LinkId) != 0)
                     {
                         // ★M4：回执来源随调用参数传递（连接 1=ModbusRTU）
                         int ackProto = 3;
