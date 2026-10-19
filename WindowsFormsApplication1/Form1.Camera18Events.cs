@@ -184,17 +184,9 @@ namespace WindowsFormsApplication1
                 _config.WriteString("camera1", "exposure", tbExposure1.Text);
                 _config.WriteString("camera1", "gain", tbGain1.Text);
                 _config.WriteString("camera1", "rate", tbFrameRate1.Text);
-                // ★第32轮：原先把 textBox3.Text 原样写入 code.ini，非法文本随下次启动读回形成
-                //   "读回即踩雷"闭环。写入侧同口径校验：非法则落回当前生效值。
-                string outtimeText = (textBox3.Text ?? "").Trim();
-                int outtimeValue;
-                if (!int.TryParse(outtimeText, out outtimeValue) || outtimeValue < 1)
-                {
-                    int effective = _jobs.myjob1.timespace;
-                    outtimeText = (effective >= 1 ? effective : 100).ToString();
-                    _logger.WriteLog("保存配置: 输出时间非法，按当前生效值写入 code.ini: " + outtimeText);
-                }
-                _config.WriteString("camera1", "outtime", outtimeText);
+                // ★输出时间：控件已改 NumericUpDown（天然无非法值），直接写当前值即可
+                //   （改动时 nudOutTime_ValueChanged 已写一次，此处是"保存参数"时的兜底落盘）。
+                try { _config.WriteString("camera1", "outtime", decimal.ToInt32(nudOutTime.Value).ToString()); } catch { }
 
                 if (checkBox25.CheckState == CheckState.Checked)
                     _config.WriteString("camera", "datajilu", "true");

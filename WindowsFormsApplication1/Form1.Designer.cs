@@ -93,7 +93,9 @@ namespace WindowsFormsApplication1
             this.mysqlToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.版本信息ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.数据库管理ToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.textBox3 = new System.Windows.Forms.TextBox();
+            this.nudOutTime = new System.Windows.Forms.NumericUpDown();
+            this.labelContOut = new System.Windows.Forms.Label();
+            this.nudContOut = new System.Windows.Forms.NumericUpDown();
             this.label5 = new System.Windows.Forms.Label();
             this.button11 = new System.Windows.Forms.Button();
             this.timer6 = new System.Windows.Forms.Timer(this.components);
@@ -127,7 +129,9 @@ namespace WindowsFormsApplication1
             this.bnSetParam1 = new System.Windows.Forms.Button();
             this.tabControl1 = new System.Windows.Forms.TabControl();
             this.tabPage5 = new System.Windows.Forms.TabPage();
+            this.label48 = new System.Windows.Forms.Label();
             this.label79 = new System.Windows.Forms.Label();
+            this.numericUpDown5 = new System.Windows.Forms.NumericUpDown();
             this.label163 = new System.Windows.Forms.Label();
             this.checkBox71 = new System.Windows.Forms.CheckBox();
             this.button77 = new System.Windows.Forms.Button();
@@ -158,6 +162,8 @@ namespace WindowsFormsApplication1
             this.comboBox21 = new System.Windows.Forms.ComboBox();
             this.label_saveDays = new System.Windows.Forms.Label();
             this.numericUpDown_saveDays = new System.Windows.Forms.NumericUpDown();
+            this.labelRootDir = new System.Windows.Forms.Label();
+            this.tbRootDir = new System.Windows.Forms.TextBox();
             this.button3 = new System.Windows.Forms.Button();
             this.label61 = new System.Windows.Forms.Label();
             this.label60 = new System.Windows.Forms.Label();
@@ -867,8 +873,6 @@ namespace WindowsFormsApplication1
             this.timer12 = new System.Windows.Forms.Timer(this.components);
             this.button12 = new System.Windows.Forms.Button();
             this.groupBox13 = new System.Windows.Forms.GroupBox();
-            this.label48 = new System.Windows.Forms.Label();
-            this.numericUpDown5 = new System.Windows.Forms.NumericUpDown();
             this.numericUpDown3 = new System.Windows.Forms.NumericUpDown();
             this.label73 = new System.Windows.Forms.Label();
             this.label74 = new System.Windows.Forms.Label();
@@ -999,10 +1003,13 @@ namespace WindowsFormsApplication1
             this.groupBox2.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).BeginInit();
             this.menuStrip1.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.nudContOut)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudOutTime)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown22)).BeginInit();
             this.groupBox4.SuspendLayout();
             this.tabControl1.SuspendLayout();
             this.tabPage5.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.numericUpDown5)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown4)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown_saveDays)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).BeginInit();
@@ -1074,7 +1081,6 @@ namespace WindowsFormsApplication1
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView12)).BeginInit();
             this.groupBox26.SuspendLayout();
             this.groupBox13.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.numericUpDown5)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown3)).BeginInit();
             this.tableLayoutPanel1.SuspendLayout();
             this.tableLayoutPanel18.SuspendLayout();
@@ -1168,7 +1174,7 @@ namespace WindowsFormsApplication1
             this.groupBox2.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(0)))), ((int)(((byte)(192)))), ((int)(((byte)(192)))));
             this.groupBox2.Location = new System.Drawing.Point(4, 89);
             this.groupBox2.Name = "groupBox2";
-            this.groupBox2.Size = new System.Drawing.Size(130, 176);
+            this.groupBox2.Size = new System.Drawing.Size(130, 225);
             this.groupBox2.TabIndex = 15;
             this.groupBox2.TabStop = false;
             this.groupBox2.Text = "运行结果";
@@ -1181,7 +1187,7 @@ namespace WindowsFormsApplication1
             this.listBox2.ItemHeight = 12;
             this.listBox2.Location = new System.Drawing.Point(3, 20);
             this.listBox2.Name = "listBox2";
-            this.listBox2.Size = new System.Drawing.Size(124, 148);
+            this.listBox2.Size = new System.Drawing.Size(124, 196);
             this.listBox2.TabIndex = 25;
             // 
             // button4
@@ -1304,7 +1310,7 @@ namespace WindowsFormsApplication1
             // textBox1
             // 
             this.textBox1.Enabled = false;
-            this.textBox1.Location = new System.Drawing.Point(467, 67);
+            this.textBox1.Location = new System.Drawing.Point(81, 267);
             this.textBox1.Name = "textBox1";
             this.textBox1.Size = new System.Drawing.Size(92, 21);
             this.textBox1.TabIndex = 42;
@@ -1773,21 +1779,64 @@ namespace WindowsFormsApplication1
             // 
             // textBox3
             // 
-            this.textBox3.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-            this.textBox3.Enabled = false;
-            this.textBox3.Location = new System.Drawing.Point(80, 332);
-            this.textBox3.Name = "textBox3";
-            this.textBox3.Size = new System.Drawing.Size(48, 21);
-            this.textBox3.TabIndex = 54;
-            this.textBox3.Text = "100";
-            this.textBox3.TextChanged += new System.EventHandler(this.textBox3_TextChanged);
-            this.textBox3.Leave += new System.EventHandler(this.textBox3_Leave);
+            this.nudOutTime.Enabled = false;
+            this.nudOutTime.Location = new System.Drawing.Point(509, 2);
+            this.nudOutTime.Maximum = new decimal(new int[] {
+            65535,
+            0,
+            0,
+            0});
+            this.nudOutTime.Minimum = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
+            this.nudOutTime.Name = "nudOutTime";
+            this.nudOutTime.Size = new System.Drawing.Size(64, 21);
+            this.nudOutTime.TabIndex = 54;
+            this.nudOutTime.Value = new decimal(new int[] {
+            100,
+            0,
+            0,
+            0});
+            this.nudOutTime.ValueChanged += new System.EventHandler(this.nudOutTime_ValueChanged);
+            // 
+            // labelContOut
+            // 
+            this.labelContOut.AutoSize = true;
+            this.labelContOut.Location = new System.Drawing.Point(433, 29);
+            this.labelContOut.Name = "labelContOut";
+            this.labelContOut.Size = new System.Drawing.Size(77, 12);
+            this.labelContOut.TabIndex = 145;
+            this.labelContOut.Text = "连续输出(ms)";
+            // 
+            // nudContOut
+            // 
+            this.nudContOut.Location = new System.Drawing.Point(511, 27);
+            this.nudContOut.Maximum = new decimal(new int[] {
+            65535,
+            0,
+            0,
+            0});
+            this.nudContOut.Minimum = new decimal(new int[] {
+            1,
+            0,
+            0,
+            0});
+            this.nudContOut.Name = "nudContOut";
+            this.nudContOut.Size = new System.Drawing.Size(64, 21);
+            this.nudContOut.TabIndex = 146;
+            this.nudContOut.Value = new decimal(new int[] {
+            100,
+            0,
+            0,
+            0});
+            this.nudContOut.ValueChanged += new System.EventHandler(this.nudContOut_ValueChanged);
             // 
             // label5
             // 
-            this.label5.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
             this.label5.AutoSize = true;
-            this.label5.Location = new System.Drawing.Point(76, 319);
+            this.label5.Location = new System.Drawing.Point(438, 6);
             this.label5.Name = "label5";
             this.label5.Size = new System.Drawing.Size(53, 12);
             this.label5.TabIndex = 55;
@@ -1852,9 +1901,8 @@ namespace WindowsFormsApplication1
             // 
             // label111
             // 
-            this.label111.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
             this.label111.AutoSize = true;
-            this.label111.Location = new System.Drawing.Point(2, 298);
+            this.label111.Location = new System.Drawing.Point(297, 7);
             this.label111.Name = "label111";
             this.label111.Size = new System.Drawing.Size(65, 12);
             this.label111.TabIndex = 129;
@@ -1862,14 +1910,13 @@ namespace WindowsFormsApplication1
             // 
             // numericUpDown22
             // 
-            this.numericUpDown22.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
             this.numericUpDown22.Enabled = false;
             this.numericUpDown22.Increment = new decimal(new int[] {
             5,
             0,
             0,
             0});
-            this.numericUpDown22.Location = new System.Drawing.Point(72, 294);
+            this.numericUpDown22.Location = new System.Drawing.Point(364, 3);
             this.numericUpDown22.Maximum = new decimal(new int[] {
             9999,
             0,
@@ -2178,11 +2225,11 @@ namespace WindowsFormsApplication1
             this.tabControl1.Controls.Add(this.tabPage12);
             this.tabControl1.Controls.Add(this.tabPage13);
             this.tabControl1.Controls.Add(this.tabPage14);
-            this.tabControl1.Location = new System.Drawing.Point(399, 369);
+            this.tabControl1.Location = new System.Drawing.Point(399, 323);
             this.tabControl1.Margin = new System.Windows.Forms.Padding(2);
             this.tabControl1.Name = "tabControl1";
             this.tabControl1.SelectedIndex = 0;
-            this.tabControl1.Size = new System.Drawing.Size(607, 174);
+            this.tabControl1.Size = new System.Drawing.Size(607, 220);
             this.tabControl1.TabIndex = 68;
             this.tabControl1.Visible = false;
             // 
@@ -2190,9 +2237,15 @@ namespace WindowsFormsApplication1
             // 
             this.tabPage5.AutoScroll = true;
             this.tabPage5.BorderStyle = System.Windows.Forms.BorderStyle.Fixed3D;
+            this.tabPage5.Controls.Add(this.label48);
             this.tabPage5.Controls.Add(this.label79);
+            this.tabPage5.Controls.Add(this.numericUpDown5);
             this.tabPage5.Controls.Add(this.label163);
+            this.tabPage5.Controls.Add(this.label111);
+            this.tabPage5.Controls.Add(this.nudOutTime);
             this.tabPage5.Controls.Add(this.checkBox71);
+            this.tabPage5.Controls.Add(this.label5);
+            this.tabPage5.Controls.Add(this.numericUpDown22);
             this.tabPage5.Controls.Add(this.button77);
             this.tabPage5.Controls.Add(this.button76);
             this.tabPage5.Controls.Add(this.textBox5);
@@ -2221,6 +2274,10 @@ namespace WindowsFormsApplication1
             this.tabPage5.Controls.Add(this.comboBox21);
             this.tabPage5.Controls.Add(this.label_saveDays);
             this.tabPage5.Controls.Add(this.numericUpDown_saveDays);
+            this.tabPage5.Controls.Add(this.labelRootDir);
+            this.tabPage5.Controls.Add(this.tbRootDir);
+            this.tabPage5.Controls.Add(this.labelContOut);
+            this.tabPage5.Controls.Add(this.nudContOut);
             this.tabPage5.Controls.Add(this.textBox1);
             this.tabPage5.Controls.Add(this.button3);
             this.tabPage5.Controls.Add(this.label61);
@@ -2254,11 +2311,20 @@ namespace WindowsFormsApplication1
             this.tabPage5.Controls.Add(this.groupBoxRenderThrottle);
             this.tabPage5.Location = new System.Drawing.Point(4, 22);
             this.tabPage5.Name = "tabPage5";
-            this.tabPage5.Size = new System.Drawing.Size(599, 148);
+            this.tabPage5.Size = new System.Drawing.Size(599, 194);
             this.tabPage5.TabIndex = 2;
             this.tabPage5.Text = "配置窗";
             this.tabPage5.UseVisualStyleBackColor = true;
             this.tabPage5.Click += new System.EventHandler(this.tabPage5_Click);
+            // 
+            // label48
+            // 
+            this.label48.AutoSize = true;
+            this.label48.Location = new System.Drawing.Point(297, 30);
+            this.label48.Name = "label48";
+            this.label48.Size = new System.Drawing.Size(53, 12);
+            this.label48.TabIndex = 131;
+            this.label48.Text = "输出延时";
             // 
             // label79
             // 
@@ -2269,6 +2335,24 @@ namespace WindowsFormsApplication1
             this.label79.Size = new System.Drawing.Size(95, 12);
             this.label79.TabIndex = 149;
             this.label79.Text = "协议：modbusrtu";
+            // 
+            // numericUpDown5
+            // 
+            this.numericUpDown5.Increment = new decimal(new int[] {
+            5,
+            0,
+            0,
+            0});
+            this.numericUpDown5.Location = new System.Drawing.Point(364, 26);
+            this.numericUpDown5.Maximum = new decimal(new int[] {
+            5000,
+            0,
+            0,
+            0});
+            this.numericUpDown5.Name = "numericUpDown5";
+            this.numericUpDown5.Size = new System.Drawing.Size(64, 21);
+            this.numericUpDown5.TabIndex = 130;
+            this.numericUpDown5.ValueChanged += new System.EventHandler(this.numericUpDown5_ValueChanged);
             // 
             // label163
             // 
@@ -2297,7 +2381,7 @@ namespace WindowsFormsApplication1
             this.button77.FlatAppearance.MouseDownBackColor = System.Drawing.Color.Red;
             this.button77.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(255)))), ((int)(((byte)(128)))), ((int)(((byte)(0)))));
             this.button77.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.button77.Location = new System.Drawing.Point(112, 293);
+            this.button77.Location = new System.Drawing.Point(79, 293);
             this.button77.Name = "button77";
             this.button77.Size = new System.Drawing.Size(65, 28);
             this.button77.TabIndex = 146;
@@ -2312,7 +2396,7 @@ namespace WindowsFormsApplication1
             this.button76.FlatAppearance.MouseDownBackColor = System.Drawing.Color.Red;
             this.button76.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(255)))), ((int)(((byte)(128)))), ((int)(((byte)(0)))));
             this.button76.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.button76.Location = new System.Drawing.Point(41, 293);
+            this.button76.Location = new System.Drawing.Point(8, 293);
             this.button76.Name = "button76";
             this.button76.Size = new System.Drawing.Size(65, 27);
             this.button76.TabIndex = 145;
@@ -2322,7 +2406,7 @@ namespace WindowsFormsApplication1
             // 
             // textBox5
             // 
-            this.textBox5.Location = new System.Drawing.Point(41, 327);
+            this.textBox5.Location = new System.Drawing.Point(8, 327);
             this.textBox5.Margin = new System.Windows.Forms.Padding(2);
             this.textBox5.Name = "textBox5";
             this.textBox5.Size = new System.Drawing.Size(162, 21);
@@ -2513,7 +2597,7 @@ namespace WindowsFormsApplication1
             // label76
             // 
             this.label76.AutoSize = true;
-            this.label76.Location = new System.Drawing.Point(386, 70);
+            this.label76.Location = new System.Drawing.Point(8, 271);
             this.label76.Name = "label76";
             this.label76.Size = new System.Drawing.Size(65, 12);
             this.label76.TabIndex = 120;
@@ -2594,7 +2678,7 @@ namespace WindowsFormsApplication1
             // label_saveDays
             // 
             this.label_saveDays.AutoSize = true;
-            this.label_saveDays.Location = new System.Drawing.Point(493, 38);
+            this.label_saveDays.Location = new System.Drawing.Point(496, 64);
             this.label_saveDays.Name = "label_saveDays";
             this.label_saveDays.Size = new System.Drawing.Size(65, 12);
             this.label_saveDays.TabIndex = 142;
@@ -2602,7 +2686,7 @@ namespace WindowsFormsApplication1
             // 
             // numericUpDown_saveDays
             // 
-            this.numericUpDown_saveDays.Location = new System.Drawing.Point(430, 34);
+            this.numericUpDown_saveDays.Location = new System.Drawing.Point(431, 60);
             this.numericUpDown_saveDays.Maximum = new decimal(new int[] {
             365,
             0,
@@ -2622,6 +2706,24 @@ namespace WindowsFormsApplication1
             0,
             0});
             this.numericUpDown_saveDays.ValueChanged += new System.EventHandler(this.numericUpDown_saveDays_ValueChanged);
+            // 
+            // labelRootDir
+            // 
+            this.labelRootDir.AutoSize = true;
+            this.labelRootDir.Location = new System.Drawing.Point(240, 158);
+            this.labelRootDir.Name = "labelRootDir";
+            this.labelRootDir.Size = new System.Drawing.Size(149, 12);
+            this.labelRootDir.TabIndex = 143;
+            this.labelRootDir.Text = "存图/统计根目录(双击选):";
+            // 
+            // tbRootDir
+            // 
+            this.tbRootDir.Location = new System.Drawing.Point(240, 174);
+            this.tbRootDir.Name = "tbRootDir";
+            this.tbRootDir.Size = new System.Drawing.Size(200, 21);
+            this.tbRootDir.TabIndex = 144;
+            this.tbRootDir.Leave += new System.EventHandler(this.tbRootDir_Leave);
+            this.tbRootDir.MouseDoubleClick += new System.Windows.Forms.MouseEventHandler(this.tbRootDir_MouseDoubleClick);
             // 
             // button3
             // 
@@ -2816,7 +2918,7 @@ namespace WindowsFormsApplication1
             // 
             this.comboBoxLayoutMode.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.comboBoxLayoutMode.FormattingEnabled = true;
-            this.comboBoxLayoutMode.Location = new System.Drawing.Point(463, 6);
+            this.comboBoxLayoutMode.Location = new System.Drawing.Point(310, 60);
             this.comboBoxLayoutMode.Margin = new System.Windows.Forms.Padding(2);
             this.comboBoxLayoutMode.Name = "comboBoxLayoutMode";
             this.comboBoxLayoutMode.Size = new System.Drawing.Size(100, 20);
@@ -2962,7 +3064,7 @@ namespace WindowsFormsApplication1
             this.tabPage6.Controls.Add(this.panel1);
             this.tabPage6.Location = new System.Drawing.Point(4, 22);
             this.tabPage6.Name = "tabPage6";
-            this.tabPage6.Size = new System.Drawing.Size(599, 148);
+            this.tabPage6.Size = new System.Drawing.Size(599, 194);
             this.tabPage6.TabIndex = 3;
             this.tabPage6.Text = "监控画面";
             this.tabPage6.UseVisualStyleBackColor = true;
@@ -2986,7 +3088,7 @@ namespace WindowsFormsApplication1
             this.panel1.Dock = System.Windows.Forms.DockStyle.Fill;
             this.panel1.Location = new System.Drawing.Point(0, 0);
             this.panel1.Name = "panel1";
-            this.panel1.Size = new System.Drawing.Size(595, 144);
+            this.panel1.Size = new System.Drawing.Size(595, 190);
             this.panel1.TabIndex = 0;
             // 
             // groupBox20
@@ -3584,7 +3686,7 @@ namespace WindowsFormsApplication1
             this.tabPage1.Margin = new System.Windows.Forms.Padding(2);
             this.tabPage1.Name = "tabPage1";
             this.tabPage1.Padding = new System.Windows.Forms.Padding(2);
-            this.tabPage1.Size = new System.Drawing.Size(599, 148);
+            this.tabPage1.Size = new System.Drawing.Size(599, 194);
             this.tabPage1.TabIndex = 0;
             this.tabPage1.Text = "相机1";
             this.tabPage1.UseVisualStyleBackColor = true;
@@ -4100,7 +4202,7 @@ namespace WindowsFormsApplication1
             this.tabPage2.Location = new System.Drawing.Point(4, 22);
             this.tabPage2.Margin = new System.Windows.Forms.Padding(2);
             this.tabPage2.Name = "tabPage2";
-            this.tabPage2.Size = new System.Drawing.Size(599, 148);
+            this.tabPage2.Size = new System.Drawing.Size(599, 194);
             this.tabPage2.TabIndex = 1;
             this.tabPage2.Text = "相机2";
             this.tabPage2.UseVisualStyleBackColor = true;
@@ -4782,7 +4884,7 @@ namespace WindowsFormsApplication1
             this.tabPage3.Location = new System.Drawing.Point(4, 22);
             this.tabPage3.Margin = new System.Windows.Forms.Padding(2);
             this.tabPage3.Name = "tabPage3";
-            this.tabPage3.Size = new System.Drawing.Size(599, 148);
+            this.tabPage3.Size = new System.Drawing.Size(599, 194);
             this.tabPage3.TabIndex = 0;
             this.tabPage3.Text = "相机3";
             // 
@@ -5461,7 +5563,7 @@ namespace WindowsFormsApplication1
             this.tabPage4.Location = new System.Drawing.Point(4, 22);
             this.tabPage4.Margin = new System.Windows.Forms.Padding(2);
             this.tabPage4.Name = "tabPage4";
-            this.tabPage4.Size = new System.Drawing.Size(599, 148);
+            this.tabPage4.Size = new System.Drawing.Size(599, 194);
             this.tabPage4.TabIndex = 0;
             this.tabPage4.Text = "相机4";
             // 
@@ -6141,7 +6243,7 @@ namespace WindowsFormsApplication1
             this.tabPage7.Controls.Add(this.groupBox14);
             this.tabPage7.Location = new System.Drawing.Point(4, 22);
             this.tabPage7.Name = "tabPage7";
-            this.tabPage7.Size = new System.Drawing.Size(599, 148);
+            this.tabPage7.Size = new System.Drawing.Size(599, 194);
             this.tabPage7.TabIndex = 4;
             this.tabPage7.Text = "相机5";
             this.tabPage7.UseVisualStyleBackColor = true;
@@ -6838,7 +6940,7 @@ namespace WindowsFormsApplication1
             this.tabPage8.Controls.Add(this.groupBox15);
             this.tabPage8.Location = new System.Drawing.Point(4, 22);
             this.tabPage8.Name = "tabPage8";
-            this.tabPage8.Size = new System.Drawing.Size(599, 148);
+            this.tabPage8.Size = new System.Drawing.Size(599, 194);
             this.tabPage8.TabIndex = 5;
             this.tabPage8.Text = "相机6";
             this.tabPage8.UseVisualStyleBackColor = true;
@@ -7535,7 +7637,7 @@ namespace WindowsFormsApplication1
             this.tabPage9.Controls.Add(this.groupBox16);
             this.tabPage9.Location = new System.Drawing.Point(4, 22);
             this.tabPage9.Name = "tabPage9";
-            this.tabPage9.Size = new System.Drawing.Size(599, 148);
+            this.tabPage9.Size = new System.Drawing.Size(599, 194);
             this.tabPage9.TabIndex = 6;
             this.tabPage9.Text = "相机7";
             this.tabPage9.UseVisualStyleBackColor = true;
@@ -8232,7 +8334,7 @@ namespace WindowsFormsApplication1
             this.tabPage10.Controls.Add(this.groupBox17);
             this.tabPage10.Location = new System.Drawing.Point(4, 22);
             this.tabPage10.Name = "tabPage10";
-            this.tabPage10.Size = new System.Drawing.Size(599, 148);
+            this.tabPage10.Size = new System.Drawing.Size(599, 194);
             this.tabPage10.TabIndex = 7;
             this.tabPage10.Text = "相机8";
             this.tabPage10.UseVisualStyleBackColor = true;
@@ -8930,7 +9032,7 @@ namespace WindowsFormsApplication1
             this.tabPage11.Controls.Add(this.groupBox23);
             this.tabPage11.Location = new System.Drawing.Point(4, 22);
             this.tabPage11.Name = "tabPage11";
-            this.tabPage11.Size = new System.Drawing.Size(599, 148);
+            this.tabPage11.Size = new System.Drawing.Size(599, 194);
             this.tabPage11.TabIndex = 8;
             this.tabPage11.Text = "相机9";
             this.tabPage11.UseVisualStyleBackColor = true;
@@ -9628,7 +9730,7 @@ namespace WindowsFormsApplication1
             this.tabPage12.Controls.Add(this.groupBox24);
             this.tabPage12.Location = new System.Drawing.Point(4, 22);
             this.tabPage12.Name = "tabPage12";
-            this.tabPage12.Size = new System.Drawing.Size(599, 148);
+            this.tabPage12.Size = new System.Drawing.Size(599, 194);
             this.tabPage12.TabIndex = 9;
             this.tabPage12.Text = "相机10";
             this.tabPage12.UseVisualStyleBackColor = true;
@@ -10327,7 +10429,7 @@ namespace WindowsFormsApplication1
             this.tabPage13.Controls.Add(this.groupBox25);
             this.tabPage13.Location = new System.Drawing.Point(4, 22);
             this.tabPage13.Name = "tabPage13";
-            this.tabPage13.Size = new System.Drawing.Size(599, 148);
+            this.tabPage13.Size = new System.Drawing.Size(599, 194);
             this.tabPage13.TabIndex = 10;
             this.tabPage13.Text = "相机11";
             this.tabPage13.UseVisualStyleBackColor = true;
@@ -11026,7 +11128,7 @@ namespace WindowsFormsApplication1
             this.tabPage14.Controls.Add(this.groupBox26);
             this.tabPage14.Location = new System.Drawing.Point(4, 22);
             this.tabPage14.Name = "tabPage14";
-            this.tabPage14.Size = new System.Drawing.Size(599, 148);
+            this.tabPage14.Size = new System.Drawing.Size(599, 194);
             this.tabPage14.TabIndex = 11;
             this.tabPage14.Text = "相机12";
             this.tabPage14.UseVisualStyleBackColor = true;
@@ -11780,52 +11882,17 @@ namespace WindowsFormsApplication1
             // 
             this.groupBox13.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
             | System.Windows.Forms.AnchorStyles.Right)));
-            this.groupBox13.Controls.Add(this.label48);
-            this.groupBox13.Controls.Add(this.numericUpDown5);
-            this.groupBox13.Controls.Add(this.label111);
             this.groupBox13.Controls.Add(this.button4);
-            this.groupBox13.Controls.Add(this.numericUpDown22);
             this.groupBox13.Controls.Add(this.checkedListBox1);
             this.groupBox13.Controls.Add(this.checkBox2);
             this.groupBox13.Controls.Add(this.groupBox2);
             this.groupBox13.Controls.Add(this.checkBox1);
-            this.groupBox13.Controls.Add(this.textBox3);
-            this.groupBox13.Controls.Add(this.label5);
             this.groupBox13.Location = new System.Drawing.Point(861, 30);
             this.groupBox13.Name = "groupBox13";
             this.groupBox13.Size = new System.Drawing.Size(140, 364);
             this.groupBox13.TabIndex = 86;
             this.groupBox13.TabStop = false;
             this.groupBox13.Text = "  ";
-            // 
-            // label48
-            // 
-            this.label48.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
-            this.label48.AutoSize = true;
-            this.label48.Location = new System.Drawing.Point(3, 275);
-            this.label48.Name = "label48";
-            this.label48.Size = new System.Drawing.Size(53, 12);
-            this.label48.TabIndex = 131;
-            this.label48.Text = "输出延时";
-            // 
-            // numericUpDown5
-            // 
-            this.numericUpDown5.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
-            this.numericUpDown5.Increment = new decimal(new int[] {
-            5,
-            0,
-            0,
-            0});
-            this.numericUpDown5.Location = new System.Drawing.Point(73, 271);
-            this.numericUpDown5.Maximum = new decimal(new int[] {
-            5000,
-            0,
-            0,
-            0});
-            this.numericUpDown5.Name = "numericUpDown5";
-            this.numericUpDown5.Size = new System.Drawing.Size(64, 21);
-            this.numericUpDown5.TabIndex = 130;
-            this.numericUpDown5.ValueChanged += new System.EventHandler(this.numericUpDown5_ValueChanged);
             // 
             // numericUpDown3
             // 
@@ -13841,12 +13908,15 @@ namespace WindowsFormsApplication1
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).EndInit();
             this.menuStrip1.ResumeLayout(false);
             this.menuStrip1.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.nudContOut)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudOutTime)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown22)).EndInit();
             this.groupBox4.ResumeLayout(false);
             this.groupBox4.PerformLayout();
             this.tabControl1.ResumeLayout(false);
             this.tabPage5.ResumeLayout(false);
             this.tabPage5.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.numericUpDown5)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown4)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown_saveDays)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown2)).EndInit();
@@ -13955,7 +14025,6 @@ namespace WindowsFormsApplication1
             this.groupBox26.PerformLayout();
             this.groupBox13.ResumeLayout(false);
             this.groupBox13.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.numericUpDown5)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown3)).EndInit();
             this.tableLayoutPanel1.ResumeLayout(false);
             this.tableLayoutPanel18.ResumeLayout(false);
@@ -14039,7 +14108,7 @@ namespace WindowsFormsApplication1
         private System.Windows.Forms.MenuStrip menuStrip1;
         private System.Windows.Forms.ToolStripMenuItem 设置ToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem 保存ToolStripMenuItem;
-        private System.Windows.Forms.TextBox textBox3;
+        private System.Windows.Forms.NumericUpDown nudOutTime;
         private System.Windows.Forms.Label label5;
         private System.Windows.Forms.Button button11;
         private System.Windows.Forms.ToolStripMenuItem 触发设置ToolStripMenuItem;
@@ -14243,6 +14312,12 @@ namespace WindowsFormsApplication1
         // ★ 2026-09-11：存图保留天数可编辑控件（配置窗 存图限制 旁）
         private System.Windows.Forms.NumericUpDown numericUpDown_saveDays;
         private System.Windows.Forms.Label label_saveDays;
+        // ★存图/统计根目录（单一设置，配置窗内双击可选目录）
+        private System.Windows.Forms.Label labelRootDir;
+        private System.Windows.Forms.TextBox tbRootDir;
+        // ★连续运行模式的 IO 输出总时长（可编辑；触发拍照/通讯触发仍用"输出时间"）
+        private System.Windows.Forms.Label labelContOut;
+        private System.Windows.Forms.NumericUpDown nudContOut;
         private System.Windows.Forms.Label label61;
         private System.Windows.Forms.Label label60;
         private System.Windows.Forms.Button button3;

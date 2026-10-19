@@ -40,6 +40,9 @@ public class Myjob
         public Bitmap img;
         public int master;
         public int timespace;
+        // ★连续运行模式的"单次拍照出结果后 IO 输出总时长"(ms)：与触发拍照/通讯触发分开设置。
+        //   触发拍照与通讯触发仍共用 timespace；只有"连续运行"用本字段。默认与 timespace 同值 100。
+        public int timespaceContinuous = 100;
         public string path_number;
         public bool cunok;
         public bool cunng;

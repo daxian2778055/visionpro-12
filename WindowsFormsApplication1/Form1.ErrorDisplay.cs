@@ -134,6 +134,21 @@ namespace WindowsFormsApplication1
         /// </summary>
         private static string NormalizeTriggerMode(string mode) => FrameAccounting.NormalizeMode(mode);
 
+        /// <summary>★单次拍照出结果后的 IO 输出总时长(ms)：连续运行走单独设置(timespaceContinuous)，
+        /// 触发拍照与通讯触发共用同一个(timespace)；两值都非法时兜底 100ms。</summary>
+        private static int IOOutputMs(Myjob job)
+        {
+            if (job == null) return 100;
+            int shared = job.timespace >= 1 ? job.timespace : 100;
+            try
+            {
+                if (FrameAccounting.IsContinuousMode(NormalizeTriggerMode(job.triggerMode)))
+                    return job.timespaceContinuous >= 1 ? job.timespaceContinuous : shared;
+            }
+            catch { }
+            return shared;
+        }
+
         private bool IsCommTriggerMode(string mode)
         {
             return NormalizeTriggerMode(mode) == "通讯触发";

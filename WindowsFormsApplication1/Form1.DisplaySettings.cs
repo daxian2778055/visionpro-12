@@ -1672,5 +1672,59 @@ namespace WindowsFormsApplication1
             }
         }
         #endregion
+
+        #region 存图/统计根目录（单一设置，配置窗 tbRootDir）
+        /// <summary>存图/统计根目录文本框：双击弹出目录选择（与"可保存(天)"同属配置窗的存图设置）。</summary>
+        private void tbRootDir_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            try
+            {
+                using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+                {
+                    dlg.Description = "选择存图/统计的根目录：图片与统计 CSV 都放在它下面";
+                    dlg.ShowNewFolderButton = true;
+                    string cur = PathLayout.NormalizeRoot(tbRootDir.Text, PathLayout.DefaultImageRoot);
+                    try { if (Directory.Exists(cur)) dlg.SelectedPath = cur; } catch { }
+                    if (dlg.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(dlg.SelectedPath))
+                    {
+                        tbRootDir.Text = PathLayout.NormalizeRoot(dlg.SelectedPath, PathLayout.DefaultImageRoot);
+                        PersistRootDir();
+                        MessageBox.Show(this,
+                            "已保存：" + tbRootDir.Text + "\r\n\r\n存图与统计 CSV 都改用这个根目录，重启软件后生效。",
+                            "存图/统计根目录", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                }
+            }
+            catch (Exception ex) { _logger.WriteLog("选择存图根目录失败: " + ex.Message); }
+        }
+
+        /// <summary>文本框失去焦点时落盘（与"可保存(天)"在值变化时写 ini 同口径；不弹窗）。</summary>
+        private void tbRootDir_Leave(object sender, EventArgs e)
+        {
+            PersistRootDir();
+        }
+
+        /// <summary>把文本框的根目录写回 ini：pathhead_root 与 statistics_root 写**同一值**——
+        /// 现场只要一个根目录（设置越少越不易错），显式同值也避免 statistics_root 残留在旧路径。
+        /// 生效值在启动期一次性读取，故改后需重启。</summary>
+        private void PersistRootDir()
+        {
+            try
+            {
+                string raw = (tbRootDir.Text ?? "").Trim();
+                if (raw.Length == 0)
+                {
+                    // 清空视为"改回默认"，避免写出空值让下次启动落到不可预期处
+                    raw = PathLayout.DefaultImageRoot;
+                    tbRootDir.Text = raw;
+                }
+                string norm = PathLayout.NormalizeRoot(raw, PathLayout.DefaultImageRoot);
+                _config.WriteString("camera", "pathhead_root", norm);
+                _config.WriteString("camera", "statistics_root", norm);
+                _logger.WriteLog("配置窗：存图/统计根目录已写为 " + norm + "（重启后生效）");
+            }
+            catch (Exception ex) { _logger.WriteLog("写回存图根目录失败: " + ex.Message); }
+        }
+        #endregion
     }
 }
