@@ -4736,7 +4736,7 @@
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_123AB3B157E942D6AEFD3C3645DAB6D2"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Debug\\code.ini"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\code.ini"
             "TargetName" = "8:code.ini"
             "Tag" = "8:"
             "Folder" = "8:_1E6996D46C7F49BE8DAEFF81ECFC3279"
@@ -8290,7 +8290,7 @@
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_BA3A56AF198648C1A9453576DE0456A8"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Debug\\Menu.ini"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\Menu.ini"
             "TargetName" = "8:Menu.ini"
             "Tag" = "8:"
             "Folder" = "8:_1E6996D46C7F49BE8DAEFF81ECFC3279"
@@ -8961,7 +8961,7 @@
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_E52776DCD8EC4C29ABBF859CDE31BAE9"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Debug\\test.ini"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\test.ini"
             "TargetName" = "8:test.ini"
             "Tag" = "8:"
             "Folder" = "8:_1E6996D46C7F49BE8DAEFF81ECFC3279"
@@ -9477,7 +9477,7 @@
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_FEDABBB227B84286B9BA59ED5513C39F"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Debug\\biao.ico"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\biao.ico"
             "TargetName" = "8:biao.ico"
             "Tag" = "8:"
             "Folder" = "8:_1E6996D46C7F49BE8DAEFF81ECFC3279"
@@ -10129,7 +10129,7 @@
         {
             "{5259A561-127C-4D43-A0A1-72F10C7B3BF8}:_81B62EBB4CCC4D918A1B379A8A472E3C"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\obj\\Debug\\WindowsFormsApplication1.exe"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\obj\\Release\\WindowsFormsApplication1.exe"
             "TargetName" = "8:"
             "Tag" = "8:"
             "Folder" = "8:_1E6996D46C7F49BE8DAEFF81ECFC3279"

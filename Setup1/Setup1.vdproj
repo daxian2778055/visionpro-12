@@ -4477,7 +4477,7 @@
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_4765120A27F34E208B77D1AD63B2133C"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Debug\\test.ini"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\test.ini"
             "TargetName" = "8:test.ini"
             "Tag" = "8:"
             "Folder" = "8:_80B2D2903BBE443A895550D801617898"
@@ -4652,7 +4652,7 @@
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_4E92F9A148074AFFA09858E8F929FF11"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Debug\\biao.ico"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\biao.ico"
             "TargetName" = "8:biao.ico"
             "Tag" = "8:"
             "Folder" = "8:_80B2D2903BBE443A895550D801617898"
@@ -6025,7 +6025,7 @@
             }
             "{1FB2D0AE-D3B9-43D4-B9DD-F88EC61E35DE}:_C2FDF820BAC24998AA4CCD4767F84A13"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Debug\\code.ini"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\code.ini"
             "TargetName" = "8:code.ini"
             "Tag" = "8:"
             "Folder" = "8:_80B2D2903BBE443A895550D801617898"
