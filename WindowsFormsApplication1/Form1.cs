@@ -14301,6 +14301,11 @@ namespace WindowsFormsApplication1
             //   原实现把"停用重连"放在所有关闭动作 + ResetMember 之后：在途 Task 可能拿旧 device1 缓存
             //   把刚关掉的槽重新打开（幽灵相机继续进帧），且 ResetMember 重赋 cbImage 后旧委托失去
             //   字段 root，GC 回收 thunk → 原生回调打空指针的崩溃窗口。
+            // ★修复（回审）：快照进入前状态——超时中止本次拆除时要原样复原，否则界面会停在
+            //   "关闭按钮灰着、自动重连与 timer2 都关着"的半状态，弹窗那句"请稍后重试"落不了地。
+            bool prevReconnectEnabled = _cameraReconnectEnabled;
+            bool prevTimer2Enabled = false;
+            try { prevTimer2Enabled = timer2.Enabled; } catch { }
             _cameraReconnectEnabled = false;
             try { timer2.Enabled = false; } catch { }
             // ★R2 修复（2026-09-23 第24轮）：原 `for(w<40 && chonglianzhong) Thread.Sleep(50)` 完全不泵 UI 消息，
@@ -14343,6 +14348,12 @@ namespace WindowsFormsApplication1
                     //   回调访问已销毁句柄即崩；改为中止本次拆除（不关相机、不释放缓冲），
                     //   恢复入口让现场稍后重试。return 会走 finally 的 Resume + 按钮恢复。
                     _logger.WriteLog("bnClose：拆除前等待回调静止超时(2s)，已中止本次拆除（未关相机、未释放缓冲），请稍后重试或重启软件");
+                    // ★修复（回审）：中止 = 什么都没关，必须把进入时禁用的项原样复原——
+                    //   否则 bnClose 一直灰着点不了、自动重连与 timer2 也一直关着。
+                    //   （bnOpen 与各菜单由下方 finally 统一恢复。）
+                    _cameraReconnectEnabled = prevReconnectEnabled;
+                    try { timer2.Enabled = prevTimer2Enabled; } catch { }
+                    try { bnClose.Enabled = true; } catch { }
                     MessageBox.Show("关相机未完成：仍有检测回调在执行（等待 2 秒未静止）。\r\n已中止本次关闭、未断开相机，请稍后重试；若反复出现请重启软件。",
                         "关相机未完成", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
