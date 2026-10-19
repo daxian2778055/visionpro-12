@@ -8341,12 +8341,11 @@ namespace WindowsFormsApplication1
                 }
                 // ★ F14: 退出时释放各相机持有的 VisionPro COM 对象
                 ReleaseAllMyjobVisionObjects();
-                // 1. 释放全部相机（停止抓流 → 关闭设备 → 销毁句柄），释放所有权收口到 CameraController。
-                //    此处不逐路等待，由后面的统一 Sleep 等待 SDK 回调线程退出。
-                _cameraCtrl.ReleaseAllCameras(0, 0);
-
-                // ★ 关键：给足够时间让相机 SDK 的回调线程完全退出（至少500ms）
-                Thread.Sleep(500);
+                // 1. 释放全部相机（停止抓流 → 等回调退场 → 关闭设备 → 等 → 销毁句柄）。
+                //    ★修复（回审）：改用 ReleaseAllCameras 内建的三阶段等待，替代原先"一次性销毁完
+                //    再盲等 500ms"——原顺序里等待发生在销毁**之后**，恰恰保护不了最危险的销毁时刻；
+                //    现在的等待发生在停流/关设备之后、销毁之前（总等待 600ms，不比原 500ms 短）。
+                _cameraCtrl.ReleaseAllCameras(500, 100);
 
                 // 2. 清空 bmp 引用（防止 ImageCallBack 残留引用）
                 for (int i = 0; i < 12; i++)
@@ -14346,6 +14345,10 @@ namespace WindowsFormsApplication1
                         if (_cameraCtrl.Cameras[i] != null)
                         {
                             // ★ 关键修复：先停止抓流，再关闭设备（防止回调线程冲突）
+                            // ★修复（回审）：原 Thread.Sleep(30) 在 lock(_cameraLock) 内，等于把锁按住 30ms/路。
+                            //   改为"停流(持锁) → 30ms 等 SDK 回调线程退场(锁外) → 关设备/销毁(持锁)"，
+                            //   睡眠不再占锁；拆除期间本方法已 StopAccepting+WaitForIdle，重连/开相机入口均被禁，窗口安全。
+                            bool needSettle = false;
                             lock (_cameraLock)
                             {
                             bool[] isGrabbing = new bool[] { m_bGrabbing1, m_bGrabbing2, m_bGrabbing3, m_bGrabbing4,
@@ -14353,9 +14356,13 @@ namespace WindowsFormsApplication1
                             if (i < isGrabbing.Length && isGrabbing[i])
                             {
                                 _cameraCtrl.Cameras[i].MV_CC_StopGrabbing_NET();
-                                Thread.Sleep(30);
+                                needSettle = true;
                             }
+                            }
+                            if (needSettle) Thread.Sleep(30);
 
+                            lock (_cameraLock)
+                            {
                             nRet = _cameraCtrl.Cameras[i].MV_CC_CloseDevice_NET();
                             nRet = _cameraCtrl.Cameras[i].MV_CC_DestroyDevice_NET();
                             }
