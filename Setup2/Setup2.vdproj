@@ -10129,7 +10129,7 @@
         {
             "{5259A561-127C-4D43-A0A1-72F10C7B3BF8}:_81B62EBB4CCC4D918A1B379A8A472E3C"
             {
-            "SourcePath" = "8:..\\WindowsFormsApplication1\\obj\\Release\\WindowsFormsApplication1.exe"
+            "SourcePath" = "8:..\\WindowsFormsApplication1\\bin\\Release\\WindowsFormsApplication1.exe"
             "TargetName" = "8:"
             "Tag" = "8:"
             "Folder" = "8:_1E6996D46C7F49BE8DAEFF81ECFC3279"

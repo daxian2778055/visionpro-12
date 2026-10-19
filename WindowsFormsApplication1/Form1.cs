@@ -8341,10 +8341,13 @@ namespace WindowsFormsApplication1
                 }
                 // ★ F14: 退出时释放各相机持有的 VisionPro COM 对象
                 ReleaseAllMyjobVisionObjects();
-                // 1. 释放全部相机（停止抓流 → 等回调退场 → 关闭设备 → 等 → 销毁句柄）。
-                //    ★修复（回审）：改用 ReleaseAllCameras 内建的三阶段等待，替代原先"一次性销毁完
-                //    再盲等 500ms"——原顺序里等待发生在销毁**之后**，恰恰保护不了最危险的销毁时刻；
-                //    现在的等待发生在停流/关设备之后、销毁之前（总等待 600ms，不比原 500ms 短）。
+                // 1. 释放全部相机（停止抓流 → 等回调归零 → 关闭设备 → 等 → 销毁句柄）。
+                //    ★修复（回审）：收成「停流 → 等回调归零 → 再销毁」——先关门并等回调静止，再走
+                //    ReleaseAllCameras 的三阶段等待（等待都发生在销毁之前，替代原先"销毁后盲等 500ms"）。
+                //    本路径是退出路径，超时仍继续释放，进程即将结束。
+                _inspectionLifecycle.StopAccepting();
+                if (!_inspectionLifecycle.WaitForIdle(2000))
+                    _logger.WriteLog("SafeCleanupBeforeDispose：等待回调静止超时(2s)，仍继续释放（退出路径，进程即将结束）");
                 _cameraCtrl.ReleaseAllCameras(500, 100);
 
                 // 2. 清空 bmp 引用（防止 ImageCallBack 残留引用）
@@ -8508,12 +8511,16 @@ namespace WindowsFormsApplication1
             // ★ F24：先设置释放标志，让 ImageCallBack 入口立即返回，避免回调进入正在释放的 SDK
             _disposingFlag = true;
 
-            // ★ S4：释放所有权收口到 CameraController —— 停止抓流(等100ms) → 关闭设备(等50ms) → 销毁句柄。
-            //    逐路逐操作容错；已为空的槽位自动跳过（可重复调用）。
-            _cameraCtrl.ReleaseAllCameras(100, 50);
+            // ★修复（回审）：收成「停流 → 等回调归零 → 再销毁」。原先只有"释放完再盲等 300ms"，
+            //   等待发生在销毁之后，保护不了最危险的销毁时刻；现先关门并等回调静止，再走三阶段释放。
+            //   本路径是退出路径（随后 Application.Exit），超时仍继续释放，进程即将结束。
+            _inspectionLifecycle.StopAccepting();
+            if (!_inspectionLifecycle.WaitForIdle(2000))
+                _logger.WriteLog("ReleaseAllCameras：等待回调静止超时(2s)，仍继续释放（退出路径，进程即将结束）");
 
-            // ★ F24：所有相机释放后，等待足够长时间让 SDK 内部回调线程完全退出
-            Thread.Sleep(300);
+            // ★ S4：释放所有权收口到 CameraController —— 停止抓流(等500ms) → 关闭设备(等100ms) → 销毁句柄。
+            //    逐路逐操作容错；已为空的槽位自动跳过（可重复调用）。
+            _cameraCtrl.ReleaseAllCameras(500, 100);
 
             // ★ F24：注销回调委托引用，断开 SDK 与托管回调的连接，防止 GC 延迟回收委托导致回调进入已释放资源
             cbImage = null;
@@ -14331,7 +14338,15 @@ namespace WindowsFormsApplication1
             try
             {
                 if (!_inspectionLifecycle.WaitForIdle(2000))
-                    _logger.WriteLog("bnClose：拆除前等待回调静止超时(2s)，仍继续拆除设备（在途回调访问已销毁句柄的窗口，极窄）");
+                {
+                    // ★修复（回审）：超时不再继续销毁。在途回调尚未退场时关设备/销毁句柄，
+                    //   回调访问已销毁句柄即崩；改为中止本次拆除（不关相机、不释放缓冲），
+                    //   恢复入口让现场稍后重试。return 会走 finally 的 Resume + 按钮恢复。
+                    _logger.WriteLog("bnClose：拆除前等待回调静止超时(2s)，已中止本次拆除（未关相机、未释放缓冲），请稍后重试或重启软件");
+                    MessageBox.Show("关相机未完成：仍有检测回调在执行（等待 2 秒未静止）。\r\n已中止本次关闭、未断开相机，请稍后重试；若反复出现请重启软件。",
+                        "关相机未完成", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
                 for (int i = 0; i < 12; ++i)
                 {
                     int nRet;
