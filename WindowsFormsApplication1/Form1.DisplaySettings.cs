@@ -1674,6 +1674,9 @@ namespace WindowsFormsApplication1
         #endregion
 
         #region 存图/统计根目录（单一设置，配置窗 tbRootDir）
+        // ★上次写回 ini 的根目录：值没变就不重复写——防"失焦即无条件落盘"把现场曾经单独配过的
+        //   statistics_root 一并改写成存图根（只点一下别处就可能静默覆盖）。
+        private string _rootDirPersisted = null;
         /// <summary>存图/统计根目录文本框：双击弹出目录选择（与"可保存(天)"同属配置窗的存图设置）。</summary>
         private void tbRootDir_MouseDoubleClick(object sender, MouseEventArgs e)
         {
@@ -1684,7 +1687,12 @@ namespace WindowsFormsApplication1
                     dlg.Description = "选择存图/统计的根目录：图片与统计 CSV 都放在它下面";
                     dlg.ShowNewFolderButton = true;
                     string cur = PathLayout.NormalizeRoot(tbRootDir.Text, PathLayout.DefaultImageRoot);
-                    try { if (Directory.Exists(cur)) dlg.SelectedPath = cur; } catch { }
+                    // ★修复（回审）：仅"本机盘符"路径才探测/预选——对已死的网络盘或 UNC，Directory.Exists
+                    //   本身会长时间阻塞 UI 线程，以死链作浏览起点也会让对话框长时间无响应。非本机路径直接开默认位置。
+                    if (IsLocalDrivePath(cur))
+                    {
+                        try { if (Directory.Exists(cur)) dlg.SelectedPath = cur; } catch { }
+                    }
                     if (dlg.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(dlg.SelectedPath))
                     {
                         tbRootDir.Text = PathLayout.NormalizeRoot(dlg.SelectedPath, PathLayout.DefaultImageRoot);
@@ -1705,7 +1713,9 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>把文本框的根目录写回 ini：pathhead_root 与 statistics_root 写**同一值**——
-        /// 现场只要一个根目录（设置越少越不易错），显式同值也避免 statistics_root 残留在旧路径。
+        /// 现场只要一个根目录（设置越少越不易错）。
+        /// ★修复（回审）：加"值没变就不写"守卫——原先失焦即无条件落盘，会把现场**曾经单独配过**的
+        ///   statistics_root 一并改写成存图根；只点一下别处就可能被静默覆盖，故只在真正改了根目录时才写。
         /// 生效值在启动期一次性读取，故改后需重启。</summary>
         private void PersistRootDir()
         {
@@ -1719,11 +1729,27 @@ namespace WindowsFormsApplication1
                     tbRootDir.Text = raw;
                 }
                 string norm = PathLayout.NormalizeRoot(raw, PathLayout.DefaultImageRoot);
+                if (norm == _rootDirPersisted) return;   // ★值没变：不写，避免失焦即覆盖原有统计根
                 _config.WriteString("camera", "pathhead_root", norm);
                 _config.WriteString("camera", "statistics_root", norm);
+                _rootDirPersisted = norm;
                 _logger.WriteLog("配置窗：存图/统计根目录已写为 " + norm + "（重启后生效）");
             }
             catch (Exception ex) { _logger.WriteLog("写回存图根目录失败: " + ex.Message); }
+        }
+
+        /// <summary>当前值是否"本机盘符"路径。用于避免对已死网络盘/UNC 做探测——Directory.Exists 对
+        /// 死链会长时间阻塞 UI，浏览对话框以死链为起点同样会长时间无响应。</summary>
+        private static bool IsLocalDrivePath(string p)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(p)) return false;
+                if (p.StartsWith("\\\\")) return false;   // UNC
+                string root = Path.GetPathRoot(p);
+                return !string.IsNullOrEmpty(root) && root.Length >= 2 && root[1] == ':' && char.IsLetter(root[0]);
+            }
+            catch { return false; }
         }
         #endregion
     }

@@ -1812,6 +1812,7 @@ namespace WindowsFormsApplication1
             // 
             // nudContOut
             // 
+            this.nudContOut.Enabled = false;
             this.nudContOut.Location = new System.Drawing.Point(511, 27);
             this.nudContOut.Maximum = new decimal(new int[] {
             65535,
