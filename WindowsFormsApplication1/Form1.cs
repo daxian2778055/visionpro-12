@@ -14355,11 +14355,13 @@ namespace WindowsFormsApplication1
                     //   bnOpen 与各菜单由下方 finally 恢复；但中止时相机仍开着，"打开设备"须保持不可点
                     //   （点它会先拆现有句柄再创建），故置标记让 finally 跳过 bnOpen 的恢复。
                     abortTearDown = true;
+                    // ★修复（回审）：先弹窗、后复原重连与 timer2——若先复原，对话框还开着时
+                    //   已报断线的相机就可能开始重连（WinForms Timer 在模态消息泵里仍会 tick）。
+                    MessageBox.Show("关相机未完成：仍有检测回调在执行（等待 2 秒未静止）。\r\n已中止本次关闭、未断开相机，请稍后重试；若反复出现请重启软件。",
+                        "关相机未完成", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     _cameraReconnectEnabled = prevReconnectEnabled;
                     try { timer2.Enabled = prevTimer2Enabled; } catch { }
                     try { bnClose.Enabled = true; } catch { }
-                    MessageBox.Show("关相机未完成：仍有检测回调在执行（等待 2 秒未静止）。\r\n已中止本次关闭、未断开相机，请稍后重试；若反复出现请重启软件。",
-                        "关相机未完成", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
                 for (int i = 0; i < 12; ++i)
