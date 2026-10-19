@@ -650,7 +650,7 @@ namespace WindowsFormsApplication1
                         + "｜统计=" + statRoot
                         + RootSourceNote("statistics_root", statRootRaw, statUsedFallback, "跟随存图根")
                         + (statRoot == imgRoot ? "" : RootReachNote(statRoot))
-                        + "｜两键本软件只读不写回，改 ini 后需重启");
+                        + "｜两键可在配置窗「存图/统计根目录」修改（双击选目录），改后需重启生效");
                     _jobs.myjob1.pathhead_ok = imgRoot + "fu1ok\\";
                     _jobs.myjob2.pathhead_ok = imgRoot + "fu2ok\\";
                     _jobs.myjob3.pathhead_ok = imgRoot + "fu3ok\\";
@@ -2613,10 +2613,31 @@ namespace WindowsFormsApplication1
                 //    checkBox70.CheckState = CheckState.Unchecked;
                 //    checkBox70_CheckedChanged(null, null);
                 //}
-                textBox3.Text = _config.ReadString("camera1", "outtime", "100");
-                // ★第33轮：ini 里若存着历史非法值，TextChanged 已不再回填（避免逐字编辑被顶回），
-                //   故在启动读回处显式把显示值对齐到生效值。
-                EnforceOutputTimeDisplay("启动读回");
+                // ★输出时间（触发拍照/通讯触发共用）：控件已改 NumericUpDown，读回即应用到各路（无非法值可校验）。
+                try
+                {
+                    int outT;
+                    if (int.TryParse(_config.ReadString("camera1", "outtime", "100"), out outT) && outT >= 1
+                        && nudOutTime != null && !nudOutTime.IsDisposed)
+                    {
+                        if (outT > nudOutTime.Maximum) outT = (int)nudOutTime.Maximum;
+                        nudOutTime.Value = outT;
+                    }
+                }
+                catch { }
+                // ★连续运行模式的 IO 输出总时长（配置窗可编辑）：读回 ini 并应用到各路；
+                //   控件为 NumericUpDown，赋值即触发 ValueChanged → 写回 12 路 timespaceContinuous。
+                try
+                {
+                    int contOut;
+                    if (int.TryParse(_config.ReadString("camera1", "outtime_cont", "100"), out contOut) && contOut >= 1
+                        && nudContOut != null && !nudContOut.IsDisposed)
+                    {
+                        if (contOut > nudContOut.Maximum) contOut = (int)nudContOut.Maximum;
+                        nudContOut.Value = contOut;
+                    }
+                }
+                catch { }
                 if (_config.ReadString("camera1", "serial", "true") == "true")
                     checkBox27.CheckState = CheckState.Checked;
                 else
@@ -3743,6 +3764,16 @@ namespace WindowsFormsApplication1
                     if (numericUpDown_saveDays != null && !numericUpDown_saveDays.IsDisposed)
                         numericUpDown_saveDays.Value = keep;
                 }
+            }
+            catch { }
+
+            // ★存图/统计根目录（单一设置）：把当前生效值回显到配置窗文本框；
+            //   实际生效值在 InitializeJobManager（后台线程）一次性读取，故改后需重启才生效。
+            try
+            {
+                string rootShow = PathLayout.NormalizeRoot(_config.ReadString("camera", "pathhead_root", ""), PathLayout.DefaultImageRoot);
+                if (tbRootDir != null && !tbRootDir.IsDisposed)
+                    tbRootDir.Text = rootShow;
             }
             catch { }
 
@@ -5845,7 +5876,7 @@ namespace WindowsFormsApplication1
                                         try
                                         {
                                             _jobs.SetOk(io, 1);
-                                            try { Thread.Sleep(myjob.timespace); } catch { Thread.Sleep(100); }
+                                            try { Thread.Sleep(IOOutputMs(myjob)); } catch { Thread.Sleep(100); }
                                             _jobs.SetOk(io, -1);
                                         }
                                         catch { }
@@ -5859,7 +5890,7 @@ namespace WindowsFormsApplication1
                                         try
                                         {
                                             _jobs.SetNg(io, 1);
-                                            try { Thread.Sleep(myjob.timespace); } catch { Thread.Sleep(100); }
+                                            try { Thread.Sleep(IOOutputMs(myjob)); } catch { Thread.Sleep(100); }
                                             _jobs.SetNg(io, -1);
                                         }
                                         catch { }
@@ -6786,7 +6817,7 @@ namespace WindowsFormsApplication1
                             设置ToolStripMenuItem.Enabled = false;
                             numericUpDown22.Enabled = false;
                             button31.Enabled = false;
-                            textBox3.Enabled = false;
+                            nudOutTime.Enabled = false;
                             comboBox1.Enabled = false;
                             comboBox4.Enabled = false;
                             comboBox5.Enabled = false;
@@ -8344,7 +8375,8 @@ namespace WindowsFormsApplication1
                 // 1. 释放全部相机（停止抓流 → 等回调归零 → 关闭设备 → 等 → 销毁句柄）。
                 //    ★修复（回审）：收成「停流 → 等回调归零 → 再销毁」——先关门并等回调静止，再走
                 //    ReleaseAllCameras 的三阶段等待（等待都发生在销毁之前，替代原先"销毁后盲等 500ms"）。
-                //    本路径是退出路径，超时仍继续释放，进程即将结束。
+                //    ★有意为之——超时仍继续释放，请勿改成"超时中止"：退出路径无"重试"可言，中止等于没关；
+                //    而 GigE 句柄未优雅 Destroy 会残留占用，下次开机可能连不上相机（0x80000007 资源占用）。
                 _inspectionLifecycle.StopAccepting();
                 if (!_inspectionLifecycle.WaitForIdle(2000))
                     _logger.WriteLog("SafeCleanupBeforeDispose：等待回调静止超时(2s)，仍继续释放（退出路径，进程即将结束）");
@@ -8513,7 +8545,11 @@ namespace WindowsFormsApplication1
 
             // ★修复（回审）：收成「停流 → 等回调归零 → 再销毁」。原先只有"释放完再盲等 300ms"，
             //   等待发生在销毁之后，保护不了最危险的销毁时刻；现先关门并等回调静止，再走三阶段释放。
-            //   本路径是退出路径（随后 Application.Exit），超时仍继续释放，进程即将结束。
+            //   ★有意为之——超时仍继续释放，请勿改成"超时中止"：本路径是退出路径（随后 Application.Exit），
+            //   没有"重试"可言；中止只会把"关相机"推迟到进程结束时由系统兜底（等于没关），而海康 GigE
+            //   句柄未被优雅 Destroy 时资源仍被 SDK 占用，下次开机可能出现 0x80000007(资源占用)、相机绑不回
+            //   （见 Form1.ErrorDisplay.cs 重连路径的同类记载）。对产线而言"重启后连不上相机"比"退出时
+            //   极偶发异常"更难收拾。按钮关相机是会话内操作、可重试，那里才是"超时中止"（见 bnClose_Click）。
             _inspectionLifecycle.StopAccepting();
             if (!_inspectionLifecycle.WaitForIdle(2000))
                 _logger.WriteLog("ReleaseAllCameras：等待回调静止超时(2s)，仍继续释放（退出路径，进程即将结束）");
@@ -11339,12 +11375,12 @@ namespace WindowsFormsApplication1
         {
             if (输出时间ToolStripMenuItem.CheckState == CheckState.Checked)
             {
-                textBox3.Enabled = false;
+                nudOutTime.Enabled = false;
                 输出时间ToolStripMenuItem.Checked = false;
             }
             else
             {
-                textBox3.Enabled = true;
+                nudOutTime.Enabled = true;
                 输出时间ToolStripMenuItem.Checked = true;
 
             }
@@ -11590,7 +11626,7 @@ namespace WindowsFormsApplication1
                 设置ToolStripMenuItem.Enabled = false;
                 numericUpDown22.Enabled = false;
                 button31.Enabled = false;
-                textBox3.Enabled = false;
+                nudOutTime.Enabled = false;
                 comboBox1.Enabled = false;
                 comboBox4.Enabled = false;
                 comboBox5.Enabled = false;
