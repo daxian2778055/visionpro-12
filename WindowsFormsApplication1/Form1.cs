@@ -3772,6 +3772,7 @@ namespace WindowsFormsApplication1
             try
             {
                 string rootShow = PathLayout.NormalizeRoot(_config.ReadString("camera", "pathhead_root", ""), PathLayout.DefaultImageRoot);
+                _rootDirPersisted = rootShow;   // ★记下当前生效根：文本框值没变就不重复写 ini（防失焦覆盖统计根）
                 if (tbRootDir != null && !tbRootDir.IsDisposed)
                     tbRootDir.Text = rootShow;
             }
@@ -6818,6 +6819,7 @@ namespace WindowsFormsApplication1
                             numericUpDown22.Enabled = false;
                             button31.Enabled = false;
                             nudOutTime.Enabled = false;
+                            nudContOut.Enabled = false;
                             comboBox1.Enabled = false;
                             comboBox4.Enabled = false;
                             comboBox5.Enabled = false;
@@ -11376,11 +11378,13 @@ namespace WindowsFormsApplication1
             if (输出时间ToolStripMenuItem.CheckState == CheckState.Checked)
             {
                 nudOutTime.Enabled = false;
+                nudContOut.Enabled = false;
                 输出时间ToolStripMenuItem.Checked = false;
             }
             else
             {
                 nudOutTime.Enabled = true;
+                nudContOut.Enabled = true;
                 输出时间ToolStripMenuItem.Checked = true;
 
             }
@@ -11627,6 +11631,7 @@ namespace WindowsFormsApplication1
                 numericUpDown22.Enabled = false;
                 button31.Enabled = false;
                 nudOutTime.Enabled = false;
+                nudContOut.Enabled = false;
                 comboBox1.Enabled = false;
                 comboBox4.Enabled = false;
                 comboBox5.Enabled = false;
