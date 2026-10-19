@@ -14337,6 +14337,8 @@ namespace WindowsFormsApplication1
             //   没保护设备销毁本身）。现先 StopAccepting 关门（新回调直接拒收）→ WaitForIdle 排空在途回调，
             //   再执行设备拆除；清理完毕在方法尾 Resume 放门（bnOpen 重开相机后需恢复进帧）。
             _inspectionLifecycle.StopAccepting();
+            // ★修复（回审）：中止标记——超时中止时相机仍开着，"打开设备"须保持不可点；正常拆除才恢复。
+            bool abortTearDown = false;
             // ★W1 修复（2026-09-23 第23轮）：原实现 StopAccepting 与尾段 Resume 是裸直线代码——
             //   中间拆除段（等待静止/关设备/释缓冲/重置成员）任何一步抛异常，门就永久关闭：
             //   之后 bnOpen 重开相机，回调全部被拒收，"能连不能检"直到重启。现拆除段包 try，Resume 进 finally。
@@ -14350,7 +14352,9 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog("bnClose：拆除前等待回调静止超时(2s)，已中止本次拆除（未关相机、未释放缓冲），请稍后重试或重启软件");
                     // ★修复（回审）：中止 = 什么都没关，必须把进入时禁用的项原样复原——
                     //   否则 bnClose 一直灰着点不了、自动重连与 timer2 也一直关着。
-                    //   （bnOpen 与各菜单由下方 finally 统一恢复。）
+                    //   bnOpen 与各菜单由下方 finally 恢复；但中止时相机仍开着，"打开设备"须保持不可点
+                    //   （点它会先拆现有句柄再创建），故置标记让 finally 跳过 bnOpen 的恢复。
+                    abortTearDown = true;
                     _cameraReconnectEnabled = prevReconnectEnabled;
                     try { timer2.Enabled = prevTimer2Enabled; } catch { }
                     try { bnClose.Enabled = true; } catch { }
@@ -14439,12 +14443,14 @@ namespace WindowsFormsApplication1
                 // ★G2 修复配套 + ★W1：无论拆除段是否抛异常，finally 统一放门——bnOpen 重开相机后回调需能进帧；
                 //   若正在退出（_disposingFlag）回调/检测入口自有判断，放门无副作用。
                 _inspectionLifecycle.Resume();
-                // ★R2 修复②：恢复 bnClose 等待泵窗口期间禁用的入口（与拆除结果无关，finally 必恢复）。
-                //   bnOpen 也必须在 finally——原恢复只在外层正常路径（12580 一带），拆除段抛异常
-                //   （W1 认定的可幸存场景）时该块不执行，bnOpen 永久禁用而菜单已恢复=不一致。
+                // ★R2 修复②：恢复 bnClose 等待泵窗口期间禁用的入口。原恢复只在外层正常路径（12580 一带），
+                //   拆除段抛异常（W1 认定的可幸存场景）时该块不执行，bnOpen 永久禁用而菜单已恢复=不一致，
+                //   故 bnOpen 也放到 finally；但"中止拆除"（abortTearDown）时相机仍开着，bnOpen 须保持不可点。
                 try
                 {
-                    bnOpen.Enabled = true;
+                    // ★修复（回审）：正常拆除才恢复"打开设备"；中止（超时未拆）时相机仍开着，保持不可点——
+                    //   弹窗让人重试的是"关闭"，点"打开"会先拆现有句柄再创建。菜单等非相机入口照常恢复。
+                    if (!abortTearDown) bnOpen.Enabled = true;
                     打开ToolStripMenuItem.Enabled = true;
                     保存ToolStripMenuItem.Enabled = true;
                     另存为ToolStripMenuItem.Enabled = true;
