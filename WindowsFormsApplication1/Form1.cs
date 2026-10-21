@@ -8532,6 +8532,10 @@ namespace WindowsFormsApplication1
                     try
                     {
                         bnOpen.Enabled = false;
+                        // ★修复（低项复审）：泵消息 2 秒内 timer10（切方案）与"关闭相机"仍可能触发，
+                        //   与随后的拆除叠加——一并禁用（本路径即将退出，不再恢复）。
+                        try { bnClose.Enabled = false; } catch { }
+                        try { timer10.Enabled = false; } catch { }
                         打开ToolStripMenuItem.Enabled = false;
                         保存ToolStripMenuItem.Enabled = false;
                         另存为ToolStripMenuItem.Enabled = false;
@@ -14166,10 +14170,10 @@ namespace WindowsFormsApplication1
                 return;
             }
 
-            Interlocked.Increment(ref m_nFrames[nIndex]);
-            // ★修复（低项复审）：触发记录的消费移到"转换段专用锁"内，与 _slotClosing 复查同锁——
-            //   否则拆除标志在这两步之间置上时，记录会被吃掉而本帧又被丢弃，PLC 只能等超时。
+            // ★修复（低项复审）：接收计数已挪到"确定要收这一帧"之后（见锁内），
+            //   此处仅声明；counted 标志同时阻止"未收帧"的早退在 finally 里补账/补空帧。
             CameraTriggerRecord trigger = null;
+            bool counted = false;
             bool frameQueued = false;
             Bitmap owned = null;
             try
@@ -14195,6 +14199,10 @@ namespace WindowsFormsApplication1
                         "通讯触发模式的在途触发记录已被取走（重复帧/超时清理），本帧在进入接收计数之前被丢弃，不计入「漏帧」");
                     return;
                 }
+                // ★修复（低项复审）：确定要收这一帧后才计入接收数——原实现把计数放在触发检查之前，
+                //   没有在途触发的多余帧会先加"接收"再记"接收前丢弃"，界面漏帧(接收−已检)被抬高。
+                Interlocked.Increment(ref m_nFrames[nIndex]);
+                counted = true;
                 if (srcFmt == CameraPixelFormat.Unknown)
                 {
                     if (pFrameInfo.nFrameLen == 0)
@@ -14262,11 +14270,18 @@ namespace WindowsFormsApplication1
             {
                 if (!frameQueued)
                 {
-                    // 空帧入队按失败交易处理（判 NG），检测数照加——所以这是"备注"不是"丢帧"，
-                    // 不能进接收后对账组，否则漏帧差额会被重复扣一次。
-                    _frameAcct.Note(nIndex, FrameAccounting.Reason.AcquireFailed);
-                    owned?.Dispose();
-                    EnqueueInspectFrame(nIndex, null, trigger);
+                    // ★修复（低项复审）：只有"已确定为收帧"的失败才补一条空帧（判 NG / 记取图失败）；
+                    //   "拆除中/无在途触发"这类未收帧早退不得补账，否则会凭空多出一条 NG。
+                    if (counted)
+                    {
+                        _frameAcct.Note(nIndex, FrameAccounting.Reason.AcquireFailed);
+                        owned?.Dispose();
+                        EnqueueInspectFrame(nIndex, null, trigger);
+                    }
+                    else
+                    {
+                        owned?.Dispose();
+                    }
                 }
             }
         }
