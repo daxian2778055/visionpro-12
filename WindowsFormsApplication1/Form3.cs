@@ -902,14 +902,12 @@ namespace WindowsFormsApplication1
             if (string.IsNullOrWhiteSpace(hitPath))
             {
                 // ★修复（低项复审）：命中切型但方案路径为空——不能降级成"拍照"（会误检/误报 IO），
-                //   也不该静默吞帧。清空残留的 zifu/lujing 并按"已消费"返回，调用方丢弃本帧；
-                //   同时 5 秒限流告警，"请求到过、被有意忽略"可追溯。
-                zifu = "";
-                lujing = "";
+                //   也不该静默吞帧。返回 2 表示"已消费但不处理"：调用方据此丢弃本帧；
+                //   ★注意：不清 zifu/lujing——timer10 可能还没取走上一条有效路径，清掉会把它吞了。
                 WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
                     "[无协议-连接" + _linkId + "-切型路径为空]", m => MsgErroeLog.WriteLog(m),
                     "切型字符串 \"" + aa + "\" 命中但对应方案路径为空，本帧已丢弃（不拍照、不切型），请补全方案路径", 5000);
-                return 1;
+                return 2;
             }
             zifu = aa;
             lujing = hitPath;
@@ -1696,7 +1694,10 @@ namespace WindowsFormsApplication1
         {
             try
             {
-                if (qiehuan(frame) == 0)
+                // ★修复（低项复审）：qiehuan 返回 0=未命中(触发) / 1=有效切型 / 2=命中但路径为空(丢弃)。
+                //   仅 1 才上报切型——否则返回 2 时会把 timer10 尚未取走的上一条旧路径再切一次。
+                int q = qiehuan(frame);
+                if (q == 0)
                 {
                     if (IsMainWindow || HostMain == null)
                     {
@@ -1709,7 +1710,7 @@ namespace WindowsFormsApplication1
                         HostMain.RaiseCameraTrigger(frame, _linkId);
                     }
                 }
-                else if (!IsMainWindow && HostMain != null && !string.IsNullOrEmpty(lujing))
+                else if (q == 1 && !IsMainWindow && HostMain != null && !string.IsNullOrEmpty(lujing))
                 {
                     // ★修复（回审缺陷3）：原实现直接改写连接 1 主窗的 HostMain.lujing/HostMain.zifu，
                     //   多条无协议连接同刻命中不同方案时会互相覆盖、且丢失来源连接号。
