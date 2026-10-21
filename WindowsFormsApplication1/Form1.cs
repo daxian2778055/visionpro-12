@@ -8542,15 +8542,20 @@ namespace WindowsFormsApplication1
                         设置ToolStripMenuItem.Enabled = false;
                     }
                     catch { }
+
+                    // ★修复（低项复审）：通讯轮询必须在泵消息之前停——否则这 2 秒 DoEvents 里
+                    //   FINS/Modbus 轮询仍会照常收帧、经事件桥接排 Task，Task 的 Invoke 恰好在泵消息时
+                    //   在界面线程执行 xinghao_qiehuan（切方案会把已停的检测/相机再拉起来）。
+                    //   原实现把这一步放在泵之后，后台轮询要到泵排空才看到"正在关闭"。
+                    //   Stop() 只 Join 轮询线程（每实例最多 1 秒），轮询侧 UI 投递均为 BeginInvoke，不会阻塞本线程。
+                    StopAllCommPolling();
+
                     for (int w = 0; w < 40 && !_reconnectSettled.Wait(50); w++)
                     {
                         try { Application.DoEvents(); } catch { }
                     }
                     if (chonglianzhong)
                         _logger.WriteLog("FormClosing：等待在途重连 2 秒超时仍未落地，继续关闭（窗口已极小）");
-
-                    // 停止通讯轮询线程，释放HslCommunication连接
-                    StopAllCommPolling();
 
                     // 重置IO输出
                     try { button11_Click_1(null, null); } catch { }
@@ -12235,6 +12240,15 @@ namespace WindowsFormsApplication1
         /// <param name="manualOldPath">同上入口改写字段前抓的旧 path_1 快照，回滚目标。</param>
         private void xinghao_qiehuan(string a, int ackProto = 0, int ackLinkId = 1, string manualTarget = null, string manualOldPath = null)
         {
+            // ★修复（低项复审）：关闭流程中拒绝新的切方案——FormClosing 置 _disposingFlag 后，可能有
+            //   轮询线程在"停轮询"之前就排好的 Task，其 Invoke 恰好在这 2 秒泵消息期间落到界面线程。
+            //   若不拦住，SchemeSwitchPreface 会先停检测/弹进度窗，再与随后的相机拆除叠加。
+            //   本判断放在切换锁 CAS 之前：不占用 qiehuanzhong、也不改写 path_1/label，无副作用。
+            if (_disposingFlag)
+            {
+                _logger.WriteLog("切方案请求被忽略：软件正在关闭（目标：" + (string.IsNullOrEmpty(a) ? path_1 : a) + "）");
+                return;
+            }
             if (Interlocked.CompareExchange(ref qiehuanzhong, 1, 0) == 0)
             {
                 qiehuanzhong = 1;
