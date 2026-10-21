@@ -646,6 +646,10 @@ namespace WindowsFormsApplication1
             t37.Text = wdini.ReadString(pthSec, "11", "");
             t38.Text = wdini.ReadString(pthSec, "12", "");
 
+            // ★修复（低项复审）：切型匹配改读缓存——qiehuan 在轮询线程被调用，原实现同步 Invoke 回 UI
+            //   读这些 TextBox；关窗时 UI 正在 Join 轮询线程，双方互等满 1 秒（三协议叠加关闭最多空等约 3 秒）。
+            //   现由 UI 线程在载入与文本变化时刷新缓存，后台线程不再触达控件。
+            AttachSchemeCache();
 
             var cboModes = new ComboBox[] { cboTrigMode1, cboTrigMode2, cboTrigMode3, cboTrigMode4, cboTrigMode5, cboTrigMode6, cboTrigMode7, cboTrigMode8, cboTrigMode9, cboTrigMode10, cboTrigMode11, cboTrigMode12 };
             var txtVals = new TextBox[] { txtTrigVal1, txtTrigVal2, txtTrigVal3, txtTrigVal4, txtTrigVal5, txtTrigVal6, txtTrigVal7, txtTrigVal8, txtTrigVal9, txtTrigVal10, txtTrigVal11, txtTrigVal12 };
@@ -3910,97 +3914,55 @@ namespace WindowsFormsApplication1
             }
             }
         }
+        // ★修复（低项复审）：切型字符串/方案路径缓存——后台轮询线程读、UI 线程写。
+        //   数组整体替换，后台读到的一定是某一时刻的完整快照，不会出现半新半旧。
+        private volatile string[] _schemeTrigCache = new string[12];
+        private volatile string[] _schemePathCache = new string[12];
+
+        /// <summary>由 UI 线程调用：把当前 12 组切型字符串与方案路径同步到缓存。</summary>
+        private void SyncSchemeCache()
+        {
+            _schemeTrigCache = new[]
+            {
+                t12.Text, t13.Text, t14.Text, t15.Text,
+                t16.Text, t17.Text, t18.Text, t19.Text,
+                t31.Text, t32.Text, t33.Text, t34.Text
+            };
+            _schemePathCache = new[]
+            {
+                t20.Text, t21.Text, t22.Text, t23.Text,
+                t24.Text, t25.Text, t26.Text, t27.Text,
+                t35.Text, t36.Text, t37.Text, t38.Text
+            };
+        }
+
+        /// <summary>载入后同步一次并挂 TextChanged（均在 UI 线程），之后缓存随输入实时更新。</summary>
+        private void AttachSchemeCache()
+        {
+            SyncSchemeCache();
+            foreach (TextBox tb in new[]
+            {
+                t12, t13, t14, t15, t16, t17, t18, t19, t31, t32, t33, t34,
+                t20, t21, t22, t23, t24, t25, t26, t27, t35, t36, t37, t38
+            })
+            {
+                if (tb != null) tb.TextChanged += (s, ev) => SyncSchemeCache();
+            }
+        }
+
         private int qiehuan(string aa)
         {
-            // ★ 后台轮询线程判型 → 迁回 UI 线程读取控件文本，避免轮询线程与 UI 线程并发访问控件
-            if (InvokeRequired)
+            // ★修复（低项复审）：只读缓存，不再同步 Invoke 回 UI 读控件。
+            string[] trig = _schemeTrigCache;
+            string[] path = _schemePathCache;
+            for (int i = 0; i < trig.Length && i < path.Length; i++)
             {
-                try
-                {
-                    if (IsDisposed || !IsHandleCreated) return 0;
-                    return (int)Invoke(new Func<string, int>(qiehuan), aa);
-                }
-                catch
-                {
-                    return 0;
-                }
-            }
-            if (t12.Text == aa)
-            {
+                if (trig[i] != aa) continue;
                 zifu = aa;
-                lujing = t20.Text;
+                lujing = path[i];
                 return 1;
             }
-            else if (t13.Text == aa)
-            {
-                zifu = aa;
-                lujing = t21.Text;
-                return 1;
-            }
-            else if (t14.Text == aa)
-            {
-                zifu = aa;
-                lujing = t22.Text;
-                return 1;
-            }
-            else if (t15.Text == aa)
-            {
-                zifu = aa;
-                lujing = t23.Text;
-                return 1;
-            }
-            else if (t16.Text == aa)
-            {
-                zifu = aa;
-                lujing = t24.Text;
-                return 1;
-            }
-            else if (t17.Text == aa)
-            {
-                zifu = aa;
-                lujing = t25.Text;
-                return 1;
-            }
-            else if (t18.Text == aa)
-            {
-                zifu = aa;
-                lujing = t26.Text;
-                return 1;
-            }
-            else if (t19.Text == aa)
-            {
-                zifu = aa;
-                lujing = t27.Text;
-                return 1;
-            }
-            else if (t31.Text == aa)
-            {
-                zifu = aa;
-                lujing = t35.Text;
-                return 1;
-            }
-            else if (t32.Text == aa)
-            {
-                zifu = aa;
-                lujing = t36.Text;
-                return 1;
-            }
-            else if (t33.Text == aa)
-            {
-                zifu = aa;
-                lujing = t37.Text;
-                return 1;
-            }
-            else if (t34.Text == aa)
-            {
-                zifu = aa;
-                lujing = t38.Text;
-                return 1;
-            }
-            else
-            {
-                return 0;
-            }
+            return 0;
         }
 
         private void comboBox2_SelectedIndexChanged_1(object sender, EventArgs e)
