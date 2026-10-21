@@ -522,23 +522,32 @@ namespace WindowsFormsApplication1
             // ★B1 修复：入口复查中止标志——重连 Task 可能在关闭/切型/停机开始后才执行到这里，
             //   原实现不复查，会拿旧 device1 缓存把刚关掉的槽重新打开（幽灵相机）。
             if (!_cameraReconnectEnabled || _disposingFlag || _switchingScheme || dakaizhong) return false;
+            MyCamera camRef;
             lock (_cameraLock)
             {
                 if (_cameraCtrl.Cameras[slot] == null)
                     _cameraCtrl.Cameras[slot] = new MyCamera();
+                camRef = _cameraCtrl.Cameras[slot];
                 // ★修复（全代码复审）：置"拆除中"标志后再停流/销毁，回调入口与转换段均复查，
                 //   避免 Destroy 与在途像素转换并发（用已销毁句柄）。
                 Interlocked.Exchange(ref _slotClosing[slot], 1);
+                try { camRef.MV_CC_StopGrabbing_NET(); } catch { }
+                SetCameraGrabbing(slot, false);
+            }
+            // ★修复（低项复审）：30ms 等待移出 _cameraLock——原实现持全局相机锁睡眠，
+            //   其它相机的建链/拆除都被迫排队。锁外期间由下方"对象引用 + 是否在取流"双重校验兜底。
+            Thread.Sleep(30);
+            lock (_cameraLock)
+            {
                 try
                 {
-                try { _cameraCtrl.Cameras[slot].MV_CC_StopGrabbing_NET(); } catch { }
-                SetCameraGrabbing(slot, false);
-                // 与 bnClose 同口径：先让 SDK 回调线程退场，再在"转换段专用锁"内拆设备。
-                Thread.Sleep(30);
+                // 等待期间该槽可能已被别的路径关闭/重开/重新取流；一旦变化，放弃本次重连。
+                if (!ReferenceEquals(_cameraCtrl.Cameras[slot], camRef) || IsCameraGrabbing(slot))
+                    return false;
                 lock (m_BufForSaveImageLock[slot])
                 {
-                    try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
-                    try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                    try { camRef.MV_CC_CloseDevice_NET(); } catch { }
+                    try { camRef.MV_CC_DestroyDevice_NET(); } catch { }
                 }
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_CreateDevice_NET(ref device1[deviceArrayIndex]);
                 if (nRet != MyCamera.MV_OK)

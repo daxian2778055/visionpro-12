@@ -8526,6 +8526,18 @@ namespace WindowsFormsApplication1
                     //   （_disposingFlag 置位之前）的 Task 会拿旧 device1 缓存把刚拆的槽重新打开（幽灵相机）。
                     //   与 bnClose 同口径：泵消息让 Task 的 Invoke 能执行，最多等 2 秒。
                     _cameraReconnectEnabled = false;
+                    // ★修复（低项复审）：泵消息期间禁用与 bnClose 同批入口——否则 DoEvents 允许
+                    //   用户点"打开设备/打开/保存/另存为/设置"，与随后的拆除交错。
+                    //   （本路径不会再恢复：窗口即将关闭。）
+                    try
+                    {
+                        bnOpen.Enabled = false;
+                        打开ToolStripMenuItem.Enabled = false;
+                        保存ToolStripMenuItem.Enabled = false;
+                        另存为ToolStripMenuItem.Enabled = false;
+                        设置ToolStripMenuItem.Enabled = false;
+                    }
+                    catch { }
                     for (int w = 0; w < 40 && !_reconnectSettled.Wait(50); w++)
                     {
                         try { Application.DoEvents(); } catch { }
@@ -14154,16 +14166,10 @@ namespace WindowsFormsApplication1
                 return;
             }
 
-            // Consume the trigger even when conversion fails, so its metadata cannot shift to the next frame.
-            CameraTriggerRecord trigger = _jobs.TakeTrigger(nIndex);
-            if (IsCommTriggerMode(_jobs.Myjobs[nIndex].triggerMode) && trigger == null)
-            {
-                NoteBeforeReceiveDrop(nIndex, FrameAccounting.Reason.CommNoTrigger,
-                    "通讯触发模式的在途触发记录已被取走（重复帧/超时清理），本帧在进入接收计数之前被丢弃，不计入「漏帧」");
-                return;
-            }
             Interlocked.Increment(ref m_nFrames[nIndex]);
-
+            // ★修复（低项复审）：触发记录的消费移到"转换段专用锁"内，与 _slotClosing 复查同锁——
+            //   否则拆除标志在这两步之间置上时，记录会被吃掉而本帧又被丢弃，PLC 只能等超时。
+            CameraTriggerRecord trigger = null;
             bool frameQueued = false;
             Bitmap owned = null;
             try
@@ -14181,6 +14187,14 @@ namespace WindowsFormsApplication1
                 // ★修复（全代码复审）：已在等锁的回调在拿到锁后再复查一次——拆除方可能在这段等待期间
                 //   已置位并完成 Destroy，此时绝不能再碰 Cameras[nIndex]。
                 if (Volatile.Read(ref _slotClosing[nIndex]) != 0) return;
+                // Consume the trigger even when conversion fails, so its metadata cannot shift to the next frame.
+                trigger = _jobs.TakeTrigger(nIndex);
+                if (IsCommTriggerMode(_jobs.Myjobs[nIndex].triggerMode) && trigger == null)
+                {
+                    NoteBeforeReceiveDrop(nIndex, FrameAccounting.Reason.CommNoTrigger,
+                        "通讯触发模式的在途触发记录已被取走（重复帧/超时清理），本帧在进入接收计数之前被丢弃，不计入「漏帧」");
+                    return;
+                }
                 if (srcFmt == CameraPixelFormat.Unknown)
                 {
                     if (pFrameInfo.nFrameLen == 0)

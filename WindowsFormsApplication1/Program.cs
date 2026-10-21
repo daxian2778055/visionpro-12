@@ -54,6 +54,9 @@ namespace WindowsFormsApplication1
             catch
             {
                 appMutex = new System.Threading.Mutex(true, "VisionPro12-Lianxu-Haikang", out newMutexCreated);
+                // ★修复（低项复审）：Global 建不起来时只剩会话级互斥——RDP/控制台仍可能各开一份。
+                //   至少把回退事实写进日志，避免"明明配了单实例却双开"无迹可查。
+                try { GetErrorLog().WriteLog("Global\\ 单实例互斥创建失败，已回退到会话级互斥：远程桌面多会话可能各运行一份"); } catch { }
             }
             using (appMutex)
             {
