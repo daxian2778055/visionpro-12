@@ -585,6 +585,11 @@ namespace WindowsFormsApplication1
             textBox51.Text = wdini.ReadString(FinsIniStore.PathSection(_linkId), "11", "");
             textBox52.Text = wdini.ReadString(FinsIniStore.PathSection(_linkId), "12", "");
 
+            // ★修复（低项复审）：切型匹配改读缓存——qiehuan 在轮询线程被调用，原实现同步 Invoke 回 UI
+            //   读这些 TextBox；关窗时 UI 正在 Join 轮询线程，双方互等满 1 秒（三协议叠加关闭最多空等约 3 秒）。
+            //   现由 UI 线程在载入与文本变化时刷新缓存，后台线程不再触达控件。
+            AttachSchemeCache();
+
             // camera_dic[13] → 心跳（反馈通道/心跳值/心跳使能）
             // ★心跳独立存储：读独立键 xintiao/xintiaoen；旧版本两者与“切换”共用 fanhuizhi/fanhuien。
             //   ★N3 修复（2026-09-20）：读到旧值后立即幂等落盘固化——此后彻底脱钩，避免
@@ -3271,97 +3276,57 @@ namespace WindowsFormsApplication1
             wdini.WriteString(FinsIniStore.PathSection(_linkId), "11", textBox51.Text);
             wdini.WriteString(FinsIniStore.PathSection(_linkId), "12", textBox52.Text);
         }
+        // ★修复（低项复审）：切型字符串/方案路径缓存——后台轮询线程读、UI 线程写。
+        //   数组整体替换，后台读到的一定是某一时刻的完整快照，不会出现半新半旧。
+        private volatile string[] _schemeTrigCache = new string[12];
+        private volatile string[] _schemePathCache = new string[12];
+
+        /// <summary>由 UI 线程调用：把当前 12 组切型字符串与方案路径同步到缓存。</summary>
+        private void SyncSchemeCache()
+        {
+            _schemeTrigCache = new[]
+            {
+                textBox40.Text, textBox39.Text, textBox38.Text, textBox37.Text,
+                textBox36.Text, textBox35.Text, textBox34.Text, textBox33.Text,
+                textBox45.Text, textBox46.Text, textBox47.Text, textBox48.Text
+            };
+            _schemePathCache = new[]
+            {
+                textBox25.Text, textBox26.Text, textBox28.Text, textBox27.Text,
+                textBox32.Text, textBox31.Text, textBox30.Text, textBox29.Text,
+                textBox49.Text, textBox50.Text, textBox51.Text, textBox52.Text
+            };
+        }
+
+        /// <summary>载入后同步一次并挂 TextChanged（均在 UI 线程），之后缓存随输入实时更新。</summary>
+        private void AttachSchemeCache()
+        {
+            SyncSchemeCache();
+            foreach (TextBox tb in new[]
+            {
+                textBox40, textBox39, textBox38, textBox37, textBox36, textBox35, textBox34, textBox33,
+                textBox45, textBox46, textBox47, textBox48,
+                textBox25, textBox26, textBox28, textBox27, textBox32, textBox31, textBox30, textBox29,
+                textBox49, textBox50, textBox51, textBox52
+            })
+            {
+                if (tb != null) tb.TextChanged += (s, ev) => SyncSchemeCache();
+            }
+        }
+
         private int qiehuan(string aa)
         {
-            // ★ 后台轮询线程判型 → 迁回 UI 线程读取控件文本，避免轮询线程与 UI 线程并发访问控件
-            if (InvokeRequired)
+            // ★修复（低项复审）：只读缓存，不再同步 Invoke 回 UI 读控件。
+            string[] trig = _schemeTrigCache;
+            string[] path = _schemePathCache;
+            for (int i = 0; i < trig.Length && i < path.Length; i++)
             {
-                try
-                {
-                    if (IsDisposed || !IsHandleCreated) return 0;
-                    return (int)Invoke(new Func<string, int>(qiehuan), aa);
-                }
-                catch
-                {
-                    return 0;
-                }
-            }
-            if (textBox40.Text == aa)
-            {
+                if (trig[i] != aa) continue;
                 zifu = aa;
-                lujing = textBox25.Text;
+                lujing = path[i];
                 return 1;
             }
-            else if (textBox39.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox26.Text;
-                return 1;
-            }
-            else if (textBox38.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox28.Text;
-                return 1;
-            }
-            else if (textBox37.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox27.Text;
-                return 1;
-            }
-            else if (textBox36.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox32.Text;
-                return 1;
-            }
-            else if (textBox35.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox31.Text;
-                return 1;
-            }
-            else if (textBox34.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox30.Text;
-                return 1;
-            }
-            else if (textBox33.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox29.Text;
-                return 1;
-            }
-            else if (textBox45.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox49.Text;
-                return 1;
-            }
-            else if (textBox46.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox50.Text;
-                return 1;
-            }
-            else if (textBox47.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox51.Text;
-                return 1;
-            }
-            else if (textBox48.Text == aa)
-            {
-                zifu = aa;
-                lujing = textBox52.Text;
-                return 1;
-            }
-            else
-            {
-                return 0;
-            }
+            return 0;
         }
 
         private void textBox41_TextChanged(object sender, EventArgs e)
