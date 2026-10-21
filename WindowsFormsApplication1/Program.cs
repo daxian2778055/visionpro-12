@@ -43,7 +43,19 @@ namespace WindowsFormsApplication1
         static void Main()
         {
             bool newMutexCreated = true;
-            using (new Mutex(true, Assembly.GetExecutingAssembly().FullName, out newMutexCreated))
+            // ★修复（全代码复审）：原互斥名用 Assembly.FullName —— ①无 Global\ 前缀，仅本会话有效，
+            //   RDP 与控制台可各跑一份同时写同一批统计 CSV/抢相机串口；②含版本号，升级后新旧版本互斥名
+            //   不同仍可双开。改为固定产品名 + Global 命名空间（个别环境无权限时回退到本地会话名）。
+            System.Threading.Mutex appMutex;
+            try
+            {
+                appMutex = new System.Threading.Mutex(true, @"Global\VisionPro12-Lianxu-Haikang", out newMutexCreated);
+            }
+            catch
+            {
+                appMutex = new System.Threading.Mutex(true, "VisionPro12-Lianxu-Haikang", out newMutexCreated);
+            }
+            using (appMutex)
             {
                 if (!newMutexCreated)
                 {

@@ -200,10 +200,10 @@ namespace WindowsFormsApplication1.Tests
             StringAssert.StartsWith(tail, Today() + ",2,1,1,mode,", "新行应为今日行");
         }
 
-        // ---------- 功能⑧上限语义：≥35 非空行且非今日 → 清空末行（旧滚动语义保持） ----------
+        // ---------- 功能⑧上限语义：≥35 非空行且非今日 → 滚掉最旧数据行 + 写入当日首条 ----------
 
         [TestMethod]
-        public void 功能8_超过35行且非今日_清空末行保持滚动语义()
+        public void 功能8_超过35行且非今日_滚掉最旧行并写入当日首条()
         {
             var rows = new List<string>();
             rows.Add("日期,总量,OK,NG,型号,合格率");
@@ -215,8 +215,12 @@ namespace WindowsFormsApplication1.Tests
             _log.WriteDate(1, 1, _p22);
 
             string[] lines = File.ReadAllLines(_monthCsv, Encoding.Default);
-            Assert.AreEqual(35, lines.Length, "行数不变（整体原子重写）");
-            Assert.AreEqual("", lines[lines.Length - 1], "≥35 非空行且非今日 → 保持旧滚动语义：末行清空");
+            Assert.AreEqual(35, lines.Length, "行数不变（整体原子重写、滚动淘汰）");
+            // ★修复（全代码复审）：原实现把末行清空、当日首条从未写入（每日首个 OK/NG 永久丢失）。
+            //   现应为"滚掉最旧一条数据行 + 末尾写入今日首条"。
+            StringAssert.StartsWith(lines[lines.Length - 1], Today() + ",2,1,1,mode,",
+                "≥35 非空行且非今日 → 当日首条必须写入，不得丢弃");
+            StringAssert.StartsWith(lines[1], "2日,", "最旧一条数据行被滚动淘汰");
         }
 
         // ---------- 性能#3：序号单槽缓存命中连续，外部追加后正确失效回退全量 ----------
