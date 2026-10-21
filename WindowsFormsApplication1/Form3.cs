@@ -901,12 +901,15 @@ namespace WindowsFormsApplication1
             });
             if (string.IsNullOrWhiteSpace(hitPath))
             {
-                // ★修复（全代码复审）：命中切型但方案路径为空——原实现照样 return 1，调用方据此
-                //   把整帧丢弃（既不触发也不切型、且无任何日志）。现降级为普通触发帧并限流告警。
+                // ★修复（低项复审）：命中切型但方案路径为空——不能降级成"拍照"（会误检/误报 IO），
+                //   也不该静默吞帧。清空残留的 zifu/lujing 并按"已消费"返回，调用方丢弃本帧；
+                //   同时 5 秒限流告警，"请求到过、被有意忽略"可追溯。
+                zifu = "";
+                lujing = "";
                 WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
                     "[无协议-连接" + _linkId + "-切型路径为空]", m => MsgErroeLog.WriteLog(m),
-                    "切型字符串 \"" + aa + "\" 命中但对应方案路径为空，已按普通触发帧处理，请补全方案路径", 5000);
-                return 0;
+                    "切型字符串 \"" + aa + "\" 命中但对应方案路径为空，本帧已丢弃（不拍照、不切型），请补全方案路径", 5000);
+                return 1;
             }
             zifu = aa;
             lujing = hitPath;

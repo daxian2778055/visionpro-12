@@ -296,22 +296,19 @@ namespace WindowsFormsApplication1
                         // 无法解析时不写入（与旧实现抛异常被吞的结果一致）。
                         if (lastIdx >= 0)
                         {
-                            string[] strs = lines[lastIdx].Split(',');
-                            string first = (strs.Length > 0) ? strs[0] : null;
-                            if (first == "次序" || first == "序号")
+                            // ★修复（低项复审）：向上找最后一条**数据行**——连续追加多个表头时，
+                            //   只跳一行仍会落到另一个表头并把序号重排为 1。现连续跳过所有表头/空行。
+                            string first = null;
+                            for (int k = lastIdx; k >= 0; k--)
                             {
-                                // ★修复（全代码复审）：当天切方案会在文件末尾追加新表头，
-                                //   表头成为最后一行——原实现把它当序号 0，导致后续序号从 1 重排、
-                                //   同一文件出现重复序号。现跳过表头继续向上找最后一条数据行。
-                                int k = lastIdx - 1;
-                                while (k >= 0 && string.IsNullOrEmpty(lines[k])) k--;
-                                if (k >= 0)
-                                {
-                                    strs = lines[k].Split(',');
-                                    first = (strs.Length > 0) ? strs[0] : null;
-                                }
-                                if (first == "次序" || first == "序号") first = "0";
+                                if (string.IsNullOrEmpty(lines[k])) continue;
+                                string[] row = lines[k].Split(',');
+                                string head = (row.Length > 0) ? row[0] : null;
+                                if (head == "次序" || head == "序号") continue;
+                                first = head;
+                                break;
                             }
+                            if (string.IsNullOrEmpty(first)) first = "0";
                             int parsed;
                             if (!string.IsNullOrEmpty(first) && int.TryParse(first, out parsed))
                                 seqValue = parsed + 1;
