@@ -2780,26 +2780,28 @@ namespace WindowsFormsApplication1
 
         #endregion
 
-        // ★修复（低项复审）：切型字符串/方案路径缓存——后台轮询线程读、UI 线程写。
-        //   数组整体替换，后台读到的一定是某一时刻的完整快照，不会出现半新半旧。
-        private volatile string[] _schemeTrigCache = new string[12];
-        private volatile string[] _schemePathCache = new string[12];
+        // ★修复（低项复审）：切型串与方案路径必须作为一个整体发布——原实现分两次赋值两个 volatile 数组，
+        //   轮询线程可能读到「新切型串 + 旧路径」（生产期改路径后紧接的一圈会用到改之前的路径）。
+        //   现把两组串装进同一个不可变快照，构造完成后一次发布，后台只读这个快照引用。
+        private volatile Tuple<string[], string[]> _schemeSnapshot =
+            Tuple.Create(new string[12], new string[12]);
 
-        /// <summary>由 UI 线程调用：把当前 12 组切型字符串与方案路径同步到缓存。</summary>
+        /// <summary>由 UI 线程调用：把当前 12 组切型字符串与方案路径作为一个快照整体发布。</summary>
         private void SyncSchemeCache()
         {
-            _schemeTrigCache = new[]
+            var trig = new[]
             {
                 textBox40.Text, textBox39.Text, textBox38.Text, textBox37.Text,
                 textBox36.Text, textBox35.Text, textBox34.Text, textBox33.Text,
                 textBox46.Text, textBox47.Text, textBox48.Text, textBox49.Text
             };
-            _schemePathCache = new[]
+            var path = new[]
             {
                 textBox25.Text, textBox26.Text, textBox28.Text, textBox27.Text,
                 textBox32.Text, textBox31.Text, textBox30.Text, textBox29.Text,
                 textBox50.Text, textBox51.Text, textBox52.Text, textBox53.Text
             };
+            _schemeSnapshot = Tuple.Create(trig, path);
         }
 
         /// <summary>载入后同步一次并挂 TextChanged（均在 UI 线程），之后缓存随输入实时更新。</summary>
@@ -2820,9 +2822,10 @@ namespace WindowsFormsApplication1
 
         private int qiehuan(string aa)
         {
-            // ★修复（低项复审）：只读缓存，不再同步 Invoke 回 UI 读控件。
-            string[] trig = _schemeTrigCache;
-            string[] path = _schemePathCache;
+            // ★修复（低项复审）：只读整份快照——切型串与路径必然来自同一时刻，不再同步 Invoke 回 UI。
+            var snap = _schemeSnapshot;
+            string[] trig = snap.Item1;
+            string[] path = snap.Item2;
             for (int i = 0; i < trig.Length && i < path.Length; i++)
             {
                 if (trig[i] != aa) continue;
