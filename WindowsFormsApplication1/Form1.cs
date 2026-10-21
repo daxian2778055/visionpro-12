@@ -109,6 +109,13 @@ namespace WindowsFormsApplication1
         // ★第26轮#22：每路像素转换缓冲的专用锁。随字段初始化一次填满并 readonly——
         //   锁对象终身稳定（原实现靠启动流程循环填充，理论上存在"未填即 lock(null)"与整体重赋值的风险）。
         private readonly object[] m_BufForSaveImageLock = CreateBufLocks();
+        // ★修复（全代码复审）：每路"设备正在拆除/重建"标志（0=正常，1=拆除中）。
+        //   重连/清槽路径会 Destroy 句柄，而 SDK 回调线程可能仍在该路做像素转换；
+        //   置位后回调入口与"转换段（持 m_BufForSaveImageLock）内"各复查一次：
+        //   前者拦住新回调，后者拦住已在等锁的回调，避免用已销毁句柄。（built-in）
+        private readonly int[] _slotClosing = new int[12];
+        // ★修复（全代码复审）：退出清理幂等标志（FormClosed 与 Dispose 可能各调一次）。
+        private int _cleanupDone = 0;
         private static object[] CreateBufLocks()
         {
             var a = new object[12];
@@ -8302,6 +8309,9 @@ namespace WindowsFormsApplication1
         #region 资源清理与程序退出
         private void SafeCleanupBeforeDispose()
         {
+            // ★修复（全代码复审）：幂等守卫——FormClosing 之后 FormClosed 会再调一次本方法，
+            //   原实现无守卫，重复 StopInspectWorkers/GC.Collect 代价大且可能二次 Dispose。
+            if (Interlocked.Exchange(ref _cleanupDone, 1) != 0) return;
             // ★第32轮 W1 配套：存图清理定时器改为字段持有后不会再被 GC"顺带"回收，
             //   退出时必须显式停掉，否则线程池回调会在 _jobs/日志资源收尾后继续访问它们。
             try
@@ -8419,7 +8429,9 @@ namespace WindowsFormsApplication1
 
         /// <summary>
         /// FormClosed 事件处理 - 由 Designer 绑定
-        /// SafeCleanupBeforeDispose 已在 Dispose 中执行
+        /// ★修复（全代码复审）：原注释称"SafeCleanupBeforeDispose 已在 Dispose 中执行"，但本方法末尾
+        ///   直接 Environment.Exit(0)；而 WinForms 的 Dispose 在 FormClosed 之后才调用 → 清理整段被跳过
+        ///   （存图清理定时器、VisionPro COM、队列、子管理器）。现先显式收口一次（幂等），再退出进程。
         /// </summary>
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
         {
@@ -8430,6 +8442,8 @@ namespace WindowsFormsApplication1
                 CrashMonitor.MarkExitedCleanly();
             }
             catch { }
+            // ★修复（全代码复审）：退出前显式做一次完整收口（内部有幂等守卫，重复调用无副作用）。
+            try { SafeCleanupBeforeDispose(); } catch (Exception ex) { try { _logger.WriteLog("FormClosed 收口异常: " + ex.Message); } catch { } }
             // 子窗体（Form3/Form5/通讯窗）会 Cancel 关闭只隐藏，前台线程也会拖住进程。
             // 主窗已关，直接结束进程，否则 VS 会一直停在“正在调试”。
             Environment.Exit(0);
@@ -8508,6 +8522,17 @@ namespace WindowsFormsApplication1
                     try { timer2.Enabled = false; } catch { }
                     try { timer17.Enabled = false; } catch { }
 
+                    // ★修复（全代码复审）：等在途自动重连 Task 落地后再拆设备——否则已通过入口检查
+                    //   （_disposingFlag 置位之前）的 Task 会拿旧 device1 缓存把刚拆的槽重新打开（幽灵相机）。
+                    //   与 bnClose 同口径：泵消息让 Task 的 Invoke 能执行，最多等 2 秒。
+                    _cameraReconnectEnabled = false;
+                    for (int w = 0; w < 40 && !_reconnectSettled.Wait(50); w++)
+                    {
+                        try { Application.DoEvents(); } catch { }
+                    }
+                    if (chonglianzhong)
+                        _logger.WriteLog("FormClosing：等待在途重连 2 秒超时仍未落地，继续关闭（窗口已极小）");
+
                     // 停止通讯轮询线程，释放HslCommunication连接
                     StopAllCommPolling();
 
@@ -8515,6 +8540,9 @@ namespace WindowsFormsApplication1
                     try { button11_Click_1(null, null); } catch { }
                     Thread.Sleep(100);
                     ResetMyJobOutputs();
+
+                    // ★修复（全代码复审）：清空在途通讯触发记录，避免跨会话粘滞到下次启动（同 bnClose）。
+                    try { _jobs.ClearAllCommTriggerPending(); } catch { }
 
                     // ★ 核心修复：按正确顺序释放相机资源（只做这一件事）
                     ReleaseAllCameras();
@@ -13515,12 +13543,14 @@ namespace WindowsFormsApplication1
         {
             try
             {
-                if (frm3.lujing.Length >= 3)
+                // ★修复（全代码复审）：先原子取走并清空，再切型——原实现是"读→切→无条件清空"，
+                //   切型耗时期间串口线程写入的新路径会被随后的清空静默吞掉（换型不执行且无日志）。
+                string pendingScheme = Interlocked.Exchange(ref frm3.lujing, "");
+                if (!string.IsNullOrEmpty(pendingScheme) && pendingScheme.Length >= 3)
                 {
-                    // ★M4：Form3（无协议串口/TCP）切换不产生通讯回执（来源参数默认 0）
-                    xinghao_qiehuan(frm3.lujing);
-                    frm3.lujing = "";
                     frm3.zifu = "";
+                    // ★M4：Form3（无协议串口/TCP）切换不产生通讯回执（来源参数默认 0）
+                    xinghao_qiehuan(pendingScheme);
                 }
             }
             catch { }
@@ -14103,6 +14133,14 @@ namespace WindowsFormsApplication1
                 return;
             }
 
+            // ★修复（全代码复审）：该路正在拆除/重建设备——在途回调不得再使用即将销毁的句柄。
+            if (Volatile.Read(ref _slotClosing[nIndex]) != 0)
+            {
+                NoteBeforeReceiveDrop(nIndex, FrameAccounting.Reason.CallbackStopping,
+                    "该路相机正在拆除/重连，本帧在进入接收计数之前被丢弃，不计入「漏帧」");
+                return;
+            }
+
             if (!ShouldProcessImageCallback(nIndex))
             {
                 // 模式门按触发模式分两类记账：通讯触发是"没有在途触发/未布防"，
@@ -14140,6 +14178,9 @@ namespace WindowsFormsApplication1
                 //   持该槽位的 m_BufForSaveImageLock，释放路径同持此锁。
                 lock (m_BufForSaveImageLock[nIndex])
                 {
+                // ★修复（全代码复审）：已在等锁的回调在拿到锁后再复查一次——拆除方可能在这段等待期间
+                //   已置位并完成 Destroy，此时绝不能再碰 Cameras[nIndex]。
+                if (Volatile.Read(ref _slotClosing[nIndex]) != 0) return;
                 if (srcFmt == CameraPixelFormat.Unknown)
                 {
                     if (pFrameInfo.nFrameLen == 0)
@@ -14405,6 +14446,9 @@ namespace WindowsFormsApplication1
                     try { bnClose.Enabled = true; } catch { }
                     return;
                 }
+                // ★修复（全代码复审）：拆除已确定执行 → 清空 12 路在途通讯触发记录。原实现关/开相机都不清，
+                //   关闭前"命令成功但不回帧"的记录会活到重开后第一帧，配旧 payload/旧来源连接回写。
+                try { _jobs.ClearAllCommTriggerPending(); } catch { }
                 for (int i = 0; i < 12; ++i)
                 {
                     int nRet;
@@ -14437,11 +14481,16 @@ namespace WindowsFormsApplication1
                             lock (_cameraLock)
                             {
                             nRet = _cameraCtrl.Cameras[i].MV_CC_CloseDevice_NET();
-                            nRet = _cameraCtrl.Cameras[i].MV_CC_DestroyDevice_NET();
+                            int nRetDestroy = _cameraCtrl.Cameras[i].MV_CC_DestroyDevice_NET();
+                            // ★修复（全代码复审）：原实现丢弃返回码 + catch{} 空吞 → 关设备失败无痕、
+                            //   句柄又被无条件置空，设备未优雅释放（下次开机 0x80000007 绑不回）。
+                            if (nRet != MyCamera.MV_OK || nRetDestroy != MyCamera.MV_OK)
+                                _logger.WriteLog("相机" + (i + 1) + " 关闭/销毁返回异常: Close=" + nRet
+                                    + " Destroy=" + nRetDestroy + "（设备可能未优雅释放；下次开机若绑不回请断电重启相机）");
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { _logger.WriteLog("相机" + (i + 1) + " 拆除异常: " + ex.Message); }
                     // 关闭后立即置空，防止后续对无效句柄调用 SDK
                     _cameraCtrl.Cameras[i] = null;
                 }

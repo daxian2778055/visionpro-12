@@ -1603,30 +1603,54 @@ namespace WindowsFormsApplication1
             //   配置成 "Int"/"INT"/带空格时全部不命中（静默不写）而调用方仍记"回执成功"；
             //   xie() 早已用 ToLowerInvariant() 归一化，此处对齐同一标准。
             string _fmt = (parValue[4] ?? "").Trim().ToLowerInvariant();
-            for (int j = 0; j < int.Parse(parValue[2]); j++)
+            // ★修复（全代码复审）：原实现对地址/长度/返回值直接 Parse——配置写"无"/"OK"、小数配 int 格式
+            //   时会每轮抛异常并被外层 catch 吞掉（该连接本轮后续数据块全部不执行，回执永久失效且刷日志）。
+            //   改为先整体 TryParse；非法配置只限流告警并跳过本次写回。
+            int baseAddr, blockLen;
+            if (!int.TryParse(parValue[1], out baseAddr) || !int.TryParse(parValue[2], out blockLen) || blockLen <= 0)
+            {
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[FINS-回执配置非法]", m => Log(m),
+                    "触发回执配置非法（地址=\"" + parValue[1] + "\" 长度=\"" + parValue[2] + "\"），已跳过本次写回", 5000);
+                return;
+            }
+            short valShort = 0;
+            int valInt = 0;
+            float valFloat = 0f;
+            if ((_fmt == "int" && !short.TryParse(fanhuizhi, out valShort))
+                || (_fmt == "long" && !int.TryParse(fanhuizhi, out valInt))
+                || (_fmt == "float" && !float.TryParse(fanhuizhi, out valFloat)))
+            {
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[FINS-回执值非法]", m => Log(m),
+                    "触发回执值无法按 " + _fmt + " 解析（值=\"" + fanhuizhi + "\"），已跳过本次写回", 5000);
+                return;
+            }
+            int addrBase = (int)address_qishi;
+            for (int j = 0; j < blockLen; j++)
             {
                 if (_fmt == "int")
                 {
-                    xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
-                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (int.Parse(parValue[1]) + j).ToString(), short.Parse(fanhuizhi)), "D" + (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
+                    xuanzhong_temp = baseAddr - addrBase + j;
+                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (baseAddr + j).ToString(), valShort), "D" + (baseAddr + j).ToString(), out fins_temp);
                     CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                 }
                 else if (_fmt == "string")
                 {
-                    xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
-                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (int.Parse(parValue[1]) + j).ToString(), fanhuizhi), "D" + (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
+                    xuanzhong_temp = baseAddr - addrBase + j;
+                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (baseAddr + j).ToString(), fanhuizhi), "D" + (baseAddr + j).ToString(), out fins_temp);
                     CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                 }
                 else if (_fmt == "long" && j % 2 == 0)
                 {
-                    xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
-                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (int.Parse(parValue[1]) + j).ToString(), int.Parse(fanhuizhi)), "D" + (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
+                    xuanzhong_temp = baseAddr - addrBase + j;
+                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (baseAddr + j).ToString(), valInt), "D" + (baseAddr + j).ToString(), out fins_temp);
                     CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                 }
                 else if (_fmt == "float" && j % 2 == 0)
                 {
-                    xuanzhong_temp = int.Parse(parValue[1]) - int.Parse(address_qishi.ToString()) + j;
-                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (int.Parse(parValue[1]) + j).ToString(), float.Parse(fanhuizhi)), "D" + (int.Parse(parValue[1]) + j).ToString(), out fins_temp);
+                    xuanzhong_temp = baseAddr - addrBase + j;
+                    DemoUtils.WriteResultRender1(() => omronFinsNet.Write("D" + (baseAddr + j).ToString(), valFloat), "D" + (baseAddr + j).ToString(), out fins_temp);
                     CommGridHelper.SetPollCell(_gridUi, fins_data, xuanzhong_temp, fins_temp);
                 }
             }

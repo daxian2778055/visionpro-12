@@ -1696,10 +1696,20 @@ namespace WindowsFormsApplication1
                     if (dlg.ShowDialog(this) == DialogResult.OK && !string.IsNullOrEmpty(dlg.SelectedPath))
                     {
                         tbRootDir.Text = PathLayout.NormalizeRoot(dlg.SelectedPath, PathLayout.DefaultImageRoot);
-                        PersistRootDir();
-                        MessageBox.Show(this,
-                            "已保存：" + tbRootDir.Text + "\r\n\r\n存图与统计 CSV 都改用这个根目录，重启软件后生效。",
-                            "存图/统计根目录", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        // ★修复（全代码复审）：写回失败不再谎报"已保存"——原实现只记日志，
+                        //   界面仍提示成功，现场重启后回落到旧值却以为生效。
+                        if (PersistRootDir())
+                        {
+                            MessageBox.Show(this,
+                                "已保存：" + tbRootDir.Text + "\r\n\r\n存图与统计 CSV 都改用这个根目录，重启软件后生效。",
+                                "存图/统计根目录", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+                        else
+                        {
+                            MessageBox.Show(this,
+                                "保存失败：配置文件无法写入（可能只读/被占用/磁盘满）。\r\n本次修改未生效，请检查后重试。",
+                                "存图/统计根目录", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        }
                     }
                 }
             }
@@ -1717,7 +1727,7 @@ namespace WindowsFormsApplication1
         /// ★修复（回审）：加"值没变就不写"守卫——原先失焦即无条件落盘，会把现场**曾经单独配过**的
         ///   statistics_root 一并改写成存图根；只点一下别处就可能被静默覆盖，故只在真正改了根目录时才写。
         /// 生效值在启动期一次性读取，故改后需重启。</summary>
-        private void PersistRootDir()
+        private bool PersistRootDir()
         {
             try
             {
@@ -1729,13 +1739,18 @@ namespace WindowsFormsApplication1
                     tbRootDir.Text = raw;
                 }
                 string norm = PathLayout.NormalizeRoot(raw, PathLayout.DefaultImageRoot);
-                if (norm == _rootDirPersisted) return;   // ★值没变：不写，避免失焦即覆盖原有统计根
+                if (norm == _rootDirPersisted) return true;   // ★值没变：不写，避免失焦即覆盖原有统计根
                 _config.WriteString("camera", "pathhead_root", norm);
                 _config.WriteString("camera", "statistics_root", norm);
                 _rootDirPersisted = norm;
                 _logger.WriteLog("配置窗：存图/统计根目录已写为 " + norm + "（重启后生效）");
+                return true;
             }
-            catch (Exception ex) { _logger.WriteLog("写回存图根目录失败: " + ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.WriteLog("写回存图根目录失败: " + ex.Message);
+                return false;
+            }
         }
 
         /// <summary>当前值是否"本机盘符"路径。用于避免对已死网络盘/UNC 做探测——Directory.Exists 对

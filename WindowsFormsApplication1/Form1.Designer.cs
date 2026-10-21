@@ -1003,8 +1003,8 @@ namespace WindowsFormsApplication1
             this.groupBox2.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).BeginInit();
             this.menuStrip1.SuspendLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.nudContOut)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudOutTime)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudContOut)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown22)).BeginInit();
             this.groupBox4.SuspendLayout();
             this.tabControl1.SuspendLayout();
@@ -1777,10 +1777,10 @@ namespace WindowsFormsApplication1
             this.数据库管理ToolStripMenuItem.Name = "数据库管理ToolStripMenuItem";
             this.数据库管理ToolStripMenuItem.Size = new System.Drawing.Size(32, 19);
             // 
-            // textBox3
+            // nudOutTime
             // 
             this.nudOutTime.Enabled = false;
-            this.nudOutTime.Location = new System.Drawing.Point(509, 2);
+            this.nudOutTime.Location = new System.Drawing.Point(511, 2);
             this.nudOutTime.Maximum = new decimal(new int[] {
             65535,
             0,
@@ -1837,7 +1837,7 @@ namespace WindowsFormsApplication1
             // label5
             // 
             this.label5.AutoSize = true;
-            this.label5.Location = new System.Drawing.Point(438, 6);
+            this.label5.Location = new System.Drawing.Point(442, 6);
             this.label5.Name = "label5";
             this.label5.Size = new System.Drawing.Size(53, 12);
             this.label5.TabIndex = 55;
@@ -1903,7 +1903,7 @@ namespace WindowsFormsApplication1
             // label111
             // 
             this.label111.AutoSize = true;
-            this.label111.Location = new System.Drawing.Point(297, 7);
+            this.label111.Location = new System.Drawing.Point(438, 57);
             this.label111.Name = "label111";
             this.label111.Size = new System.Drawing.Size(65, 12);
             this.label111.TabIndex = 129;
@@ -1917,7 +1917,7 @@ namespace WindowsFormsApplication1
             0,
             0,
             0});
-            this.numericUpDown22.Location = new System.Drawing.Point(364, 3);
+            this.numericUpDown22.Location = new System.Drawing.Point(510, 53);
             this.numericUpDown22.Maximum = new decimal(new int[] {
             9999,
             0,
@@ -1992,7 +1992,7 @@ namespace WindowsFormsApplication1
             // label14
             // 
             this.label14.AutoSize = true;
-            this.label14.Location = new System.Drawing.Point(336, 120);
+            this.label14.Location = new System.Drawing.Point(147, 88);
             this.label14.Margin = new System.Windows.Forms.Padding(2, 0, 2, 0);
             this.label14.Name = "label14";
             this.label14.Size = new System.Drawing.Size(47, 12);
@@ -2321,7 +2321,7 @@ namespace WindowsFormsApplication1
             // label48
             // 
             this.label48.AutoSize = true;
-            this.label48.Location = new System.Drawing.Point(297, 30);
+            this.label48.Location = new System.Drawing.Point(443, 80);
             this.label48.Name = "label48";
             this.label48.Size = new System.Drawing.Size(53, 12);
             this.label48.TabIndex = 131;
@@ -2344,7 +2344,7 @@ namespace WindowsFormsApplication1
             0,
             0,
             0});
-            this.numericUpDown5.Location = new System.Drawing.Point(364, 26);
+            this.numericUpDown5.Location = new System.Drawing.Point(510, 78);
             this.numericUpDown5.Maximum = new decimal(new int[] {
             5000,
             0,
@@ -2531,7 +2531,7 @@ namespace WindowsFormsApplication1
             this.button31.FlatAppearance.MouseDownBackColor = System.Drawing.Color.Red;
             this.button31.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(((int)(((byte)(255)))), ((int)(((byte)(128)))), ((int)(((byte)(0)))));
             this.button31.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.button31.Location = new System.Drawing.Point(257, 88);
+            this.button31.Location = new System.Drawing.Point(310, 32);
             this.button31.Name = "button31";
             this.button31.Size = new System.Drawing.Size(104, 26);
             this.button31.TabIndex = 132;
@@ -2542,7 +2542,7 @@ namespace WindowsFormsApplication1
             // label133
             // 
             this.label133.AutoSize = true;
-            this.label133.Location = new System.Drawing.Point(483, 120);
+            this.label133.Location = new System.Drawing.Point(274, 170);
             this.label133.Margin = new System.Windows.Forms.Padding(2, 0, 2, 0);
             this.label133.Name = "label133";
             this.label133.Size = new System.Drawing.Size(23, 12);
@@ -2564,7 +2564,7 @@ namespace WindowsFormsApplication1
             // numericUpDown4
             // 
             this.numericUpDown4.ForeColor = System.Drawing.SystemColors.MenuHighlight;
-            this.numericUpDown4.Location = new System.Drawing.Point(495, 94);
+            this.numericUpDown4.Location = new System.Drawing.Point(362, 137);
             this.numericUpDown4.Maximum = new decimal(new int[] {
             5000,
             0,
@@ -2608,7 +2608,7 @@ namespace WindowsFormsApplication1
             // 
             this.label72.AutoSize = true;
             this.label72.ForeColor = System.Drawing.Color.Lime;
-            this.label72.Location = new System.Drawing.Point(318, 203);
+            this.label72.Location = new System.Drawing.Point(318, 231);
             this.label72.Name = "label72";
             this.label72.Size = new System.Drawing.Size(83, 12);
             this.label72.TabIndex = 118;
@@ -2658,7 +2658,7 @@ namespace WindowsFormsApplication1
             // 
             this.label64.AutoSize = true;
             this.label64.ForeColor = System.Drawing.Color.Lime;
-            this.label64.Location = new System.Drawing.Point(318, 139);
+            this.label64.Location = new System.Drawing.Point(319, 210);
             this.label64.Name = "label64";
             this.label64.Size = new System.Drawing.Size(89, 12);
             this.label64.TabIndex = 110;
@@ -2670,7 +2670,7 @@ namespace WindowsFormsApplication1
             this.comboBox21.Items.AddRange(new object[] {
             "存图限制",
             "存图释放"});
-            this.comboBox21.Location = new System.Drawing.Point(367, 94);
+            this.comboBox21.Location = new System.Drawing.Point(235, 138);
             this.comboBox21.Name = "comboBox21";
             this.comboBox21.Size = new System.Drawing.Size(121, 20);
             this.comboBox21.TabIndex = 109;
@@ -2679,7 +2679,7 @@ namespace WindowsFormsApplication1
             // label_saveDays
             // 
             this.label_saveDays.AutoSize = true;
-            this.label_saveDays.Location = new System.Drawing.Point(496, 64);
+            this.label_saveDays.Location = new System.Drawing.Point(441, 107);
             this.label_saveDays.Name = "label_saveDays";
             this.label_saveDays.Size = new System.Drawing.Size(65, 12);
             this.label_saveDays.TabIndex = 142;
@@ -2687,7 +2687,7 @@ namespace WindowsFormsApplication1
             // 
             // numericUpDown_saveDays
             // 
-            this.numericUpDown_saveDays.Location = new System.Drawing.Point(431, 60);
+            this.numericUpDown_saveDays.Location = new System.Drawing.Point(511, 103);
             this.numericUpDown_saveDays.Maximum = new decimal(new int[] {
             365,
             0,
@@ -2699,7 +2699,7 @@ namespace WindowsFormsApplication1
             0,
             0});
             this.numericUpDown_saveDays.Name = "numericUpDown_saveDays";
-            this.numericUpDown_saveDays.Size = new System.Drawing.Size(60, 21);
+            this.numericUpDown_saveDays.Size = new System.Drawing.Size(64, 21);
             this.numericUpDown_saveDays.TabIndex = 141;
             this.numericUpDown_saveDays.Value = new decimal(new int[] {
             7,
@@ -2711,7 +2711,7 @@ namespace WindowsFormsApplication1
             // labelRootDir
             // 
             this.labelRootDir.AutoSize = true;
-            this.labelRootDir.Location = new System.Drawing.Point(240, 158);
+            this.labelRootDir.Location = new System.Drawing.Point(270, 90);
             this.labelRootDir.Name = "labelRootDir";
             this.labelRootDir.Size = new System.Drawing.Size(149, 12);
             this.labelRootDir.TabIndex = 143;
@@ -2719,7 +2719,7 @@ namespace WindowsFormsApplication1
             // 
             // tbRootDir
             // 
-            this.tbRootDir.Location = new System.Drawing.Point(240, 174);
+            this.tbRootDir.Location = new System.Drawing.Point(234, 111);
             this.tbRootDir.Name = "tbRootDir";
             this.tbRootDir.Size = new System.Drawing.Size(200, 21);
             this.tbRootDir.TabIndex = 144;
@@ -2919,7 +2919,7 @@ namespace WindowsFormsApplication1
             // 
             this.comboBoxLayoutMode.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.comboBoxLayoutMode.FormattingEnabled = true;
-            this.comboBoxLayoutMode.Location = new System.Drawing.Point(310, 60);
+            this.comboBoxLayoutMode.Location = new System.Drawing.Point(310, 63);
             this.comboBoxLayoutMode.Margin = new System.Windows.Forms.Padding(2);
             this.comboBoxLayoutMode.Name = "comboBoxLayoutMode";
             this.comboBoxLayoutMode.Size = new System.Drawing.Size(100, 20);
@@ -13764,7 +13764,7 @@ namespace WindowsFormsApplication1
             this.label148.Name = "label148";
             this.label148.Size = new System.Drawing.Size(82, 21);
             this.label148.TabIndex = 125;
-            this.label148.Text = "YA1018";
+            this.label148.Text = "YA1021";
             // 
             // timer17
             // 
@@ -13909,8 +13909,8 @@ namespace WindowsFormsApplication1
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).EndInit();
             this.menuStrip1.ResumeLayout(false);
             this.menuStrip1.PerformLayout();
-            ((System.ComponentModel.ISupportInitialize)(this.nudContOut)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudOutTime)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.nudContOut)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDown22)).EndInit();
             this.groupBox4.ResumeLayout(false);
             this.groupBox4.PerformLayout();

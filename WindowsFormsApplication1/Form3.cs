@@ -372,6 +372,14 @@ namespace WindowsFormsApplication1
                     //获得要连接的远程IP和端口号（带超时）
                     if (!ConnectWithTimeout(socketClient, point, 3000))
                         throw new Exception("连接超时");
+                    // ★修复（全代码复审）：连接期间窗可能已被删除/关闭——成功后必须复查 stop，
+                    //   否则会留下孤儿 socket 与接收线程（管理器已释放实例）。
+                    if (stop)
+                    {
+                        try { socketClient.Close(); } catch { }
+                        socketClient = null;
+                        return;
+                    }
                     ShowMsgClient(socketClient.RemoteEndPoint + "连接成功,我是客户机");
                     //开启一个线程，不断的接收服务端发来的消息
                     Thread th = new Thread(receiveClient);
@@ -866,15 +874,43 @@ namespace WindowsFormsApplication1
             string[] p;
             lock (_trigSync) p = _trigPath;
             // 命中才读对应方案路径框（低频）；后台线程读控件经 SafeRead 走 Invoke，未命中则不产生任何 Invoke。
-            if (p[0] == aa) { zifu = aa; lujing = SafeRead(() => textBox10.Text); return 1; }
-            if (p[1] == aa) { zifu = aa; lujing = SafeRead(() => textBox11.Text); return 1; }
-            if (p[2] == aa) { zifu = aa; lujing = SafeRead(() => textBox12.Text); return 1; }
-            if (p[3] == aa) { zifu = aa; lujing = SafeRead(() => textBox13.Text); return 1; }
-            if (p[4] == aa) { zifu = aa; lujing = SafeRead(() => textBox14.Text); return 1; }
-            if (p[5] == aa) { zifu = aa; lujing = SafeRead(() => textBox15.Text); return 1; }
-            if (p[6] == aa) { zifu = aa; lujing = SafeRead(() => textBox16.Text); return 1; }
-            if (p[7] == aa) { zifu = aa; lujing = SafeRead(() => textBox17.Text); return 1; }
-            return 0;
+            int hit = -1;
+            if (p[0] == aa) hit = 0;
+            else if (p[1] == aa) hit = 1;
+            else if (p[2] == aa) hit = 2;
+            else if (p[3] == aa) hit = 3;
+            else if (p[4] == aa) hit = 4;
+            else if (p[5] == aa) hit = 5;
+            else if (p[6] == aa) hit = 6;
+            else if (p[7] == aa) hit = 7;
+            if (hit < 0) return 0;
+
+            string hitPath = SafeRead(() =>
+            {
+                switch (hit)
+                {
+                    case 0: return textBox10.Text;
+                    case 1: return textBox11.Text;
+                    case 2: return textBox12.Text;
+                    case 3: return textBox13.Text;
+                    case 4: return textBox14.Text;
+                    case 5: return textBox15.Text;
+                    case 6: return textBox16.Text;
+                    default: return textBox17.Text;
+                }
+            });
+            if (string.IsNullOrWhiteSpace(hitPath))
+            {
+                // ★修复（全代码复审）：命中切型但方案路径为空——原实现照样 return 1，调用方据此
+                //   把整帧丢弃（既不触发也不切型、且无任何日志）。现降级为普通触发帧并限流告警。
+                WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                    "[无协议-连接" + _linkId + "-切型路径为空]", m => MsgErroeLog.WriteLog(m),
+                    "切型字符串 \"" + aa + "\" 命中但对应方案路径为空，已按普通触发帧处理，请补全方案路径", 5000);
+                return 0;
+            }
+            zifu = aa;
+            lujing = hitPath;
+            return 1;
         }
         private void button3_Click(object sender, EventArgs e)
         {

@@ -225,9 +225,19 @@ namespace WindowsFormsApplication1
                         }
                         else if (!encodingMismatch)
                         {
-                            // 超过 35 行且最后一行不是今天：保持旧实现"清空最后一行"的语义（该文件按行数滚动）
-                            lines[lastIdx] = string.Empty;
-                            WriteAllLinesAtomic(strCsvPath, lines);
+                            // ★修复（全代码复审）：原实现只把最后一行清空、本条的 OK/NG 从未写入——
+                            //   该分支正是"文件已满 35 行 + 当天第一条"的必经路径，当日首个结果永久丢失。
+                            //   改为滚动：保留表头（第 0 行），丢掉最旧一条数据行，再把当日新行写回末尾。
+                            string todayRow = str + "," + (okss + ng1) + "," + okss + "," + ng1 + "," + sOrg + "," + okss * 1.0f / (okss + ng1);
+                            int firstData = 1;
+                            while (firstData < lines.Length && string.IsNullOrEmpty(lines[firstData])) firstData++;
+                            string[] rolled = new string[lines.Length];
+                            int n = 0;
+                            rolled[n++] = lines[0];
+                            for (int k = firstData + 1; k <= lastIdx; k++) rolled[n++] = lines[k];
+                            rolled[n++] = todayRow;
+                            Array.Resize(ref rolled, n);
+                            WriteAllLinesAtomic(strCsvPath, rolled);
                         }
                     }
                     catch (Exception ex)
@@ -288,7 +298,20 @@ namespace WindowsFormsApplication1
                         {
                             string[] strs = lines[lastIdx].Split(',');
                             string first = (strs.Length > 0) ? strs[0] : null;
-                            if (first == "次序" || first == "序号") first = "0";
+                            if (first == "次序" || first == "序号")
+                            {
+                                // ★修复（全代码复审）：当天切方案会在文件末尾追加新表头，
+                                //   表头成为最后一行——原实现把它当序号 0，导致后续序号从 1 重排、
+                                //   同一文件出现重复序号。现跳过表头继续向上找最后一条数据行。
+                                int k = lastIdx - 1;
+                                while (k >= 0 && string.IsNullOrEmpty(lines[k])) k--;
+                                if (k >= 0)
+                                {
+                                    strs = lines[k].Split(',');
+                                    first = (strs.Length > 0) ? strs[0] : null;
+                                }
+                                if (first == "次序" || first == "序号") first = "0";
+                            }
                             int parsed;
                             if (!string.IsNullOrEmpty(first) && int.TryParse(first, out parsed))
                                 seqValue = parsed + 1;

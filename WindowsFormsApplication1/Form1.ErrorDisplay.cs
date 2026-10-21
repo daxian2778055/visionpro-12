@@ -459,11 +459,27 @@ namespace WindowsFormsApplication1
             int slot = int.Parse(nnn);
             if (_cameraCtrl.Cameras[slot] != null)
             {
-                try { _cameraCtrl.Cameras[slot].MV_CC_StopGrabbing_NET(); } catch { }
-                SetCameraGrabbing(slot, false);
-                try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
-                try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
-                _cameraCtrl.Cameras[slot] = null;
+                // ★修复（全代码复审）：置"拆除中"标志后再停流/销毁，回调入口与转换段均复查，
+                //   避免 Destroy 与在途像素转换并发（用已销毁句柄）。
+                Interlocked.Exchange(ref _slotClosing[slot], 1);
+                try
+                {
+                    try { _cameraCtrl.Cameras[slot].MV_CC_StopGrabbing_NET(); } catch { }
+                    SetCameraGrabbing(slot, false);
+                    // 与 bnClose 同口径：先让 SDK 回调线程退场，再在"转换段专用锁"内拆设备。
+                    Thread.Sleep(30);
+                    lock (m_BufForSaveImageLock[slot])
+                    {
+                        try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
+                        try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                        _cameraCtrl.Cameras[slot] = null;
+                    }
+                }
+                finally
+                {
+                    // 槽位已置 null：此后的残留回调会走 null 检查，标志可以复位。
+                    Interlocked.Exchange(ref _slotClosing[slot], 0);
+                }
                 m_slotTLayerType[slot] = 0;   // ★第26轮建议1：句柄已销毁 → 槽位传输层与丢帧缓存一并复位
                 _lostFrameCache[slot] = "0";
             }
@@ -510,10 +526,20 @@ namespace WindowsFormsApplication1
             {
                 if (_cameraCtrl.Cameras[slot] == null)
                     _cameraCtrl.Cameras[slot] = new MyCamera();
+                // ★修复（全代码复审）：置"拆除中"标志后再停流/销毁，回调入口与转换段均复查，
+                //   避免 Destroy 与在途像素转换并发（用已销毁句柄）。
+                Interlocked.Exchange(ref _slotClosing[slot], 1);
+                try
+                {
                 try { _cameraCtrl.Cameras[slot].MV_CC_StopGrabbing_NET(); } catch { }
                 SetCameraGrabbing(slot, false);
-                try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
-                try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                // 与 bnClose 同口径：先让 SDK 回调线程退场，再在"转换段专用锁"内拆设备。
+                Thread.Sleep(30);
+                lock (m_BufForSaveImageLock[slot])
+                {
+                    try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
+                    try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                }
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_CreateDevice_NET(ref device1[deviceArrayIndex]);
                 if (nRet != MyCamera.MV_OK)
                 {
@@ -548,6 +574,13 @@ namespace WindowsFormsApplication1
                 //   （cbException 为常驻字段，已防 GC）。
                 try { _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(cbException, (IntPtr)slot); } catch { }
                 return true;
+                }
+                finally
+                {
+                    // 成功：新设备已建/已开/回调已注册，可放行回调；
+                    // 失败：对应分支已把槽位置 null，残留回调会走 null 检查，同样可复位。
+                    Interlocked.Exchange(ref _slotClosing[slot], 0);
+                }
             }
         }
 
