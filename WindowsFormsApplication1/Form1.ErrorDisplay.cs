@@ -654,6 +654,7 @@ namespace WindowsFormsApplication1
             bool clearCommPending = false;
             // ★修复（回归复审）：若已在采集，先停流；50ms 等待移出 _cameraLock（原持全局相机锁睡眠）。
             bool needSettle = false;
+            MyCamera camRef = null;
             lock (_cameraLock)
             {
                 var cam = _cameraCtrl.Cameras[camIndex];
@@ -662,6 +663,7 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog("相机" + (camIndex + 1) + "未连接，无法启动取流");
                     return false;
                 }
+                camRef = cam;   // ★出锁复查用：必须是停流前那一台，不能只看槽位非空
                 try
                 {
                     if (!cam.MV_CC_IsDeviceConnected_NET())
@@ -688,10 +690,11 @@ namespace WindowsFormsApplication1
             }
             lock (_cameraLock)
             {
-                // 等待期间该槽可能被关闭/重连/其它路径重新取流：任一变化放弃本次启动，避免对半状态设备 Start。
-                if (_cameraCtrl.Cameras[camIndex] == null)
+                // 等待期间该槽可能被关闭/重连/替换成另一台相机：必须比对"停流前那一台"的对象引用
+                // （与 ReconnectCameraSlot 同口径）。只查空/取流会让本次 StartGrabbing 作用到 50ms 内换上的新对象。
+                if (!ReferenceEquals(_cameraCtrl.Cameras[camIndex], camRef))
                 {
-                    _logger.WriteLog("相机" + (camIndex + 1) + "启动取流前槽位已释放，放弃本次启动");
+                    _logger.WriteLog("相机" + (camIndex + 1) + "启动取流前相机对象已被替换/释放，放弃本次启动");
                     return false;
                 }
                 if (IsCameraGrabbing(camIndex))
@@ -700,7 +703,7 @@ namespace WindowsFormsApplication1
                     return false;
                 }
                 MyCamera.MVCC_INTVALUE stParam = new MyCamera.MVCC_INTVALUE();
-                nRet = _cameraCtrl.Cameras[camIndex].MV_CC_GetIntValue_NET("PayloadSize", ref stParam);
+                nRet = camRef.MV_CC_GetIntValue_NET("PayloadSize", ref stParam);
                 if (MyCamera.MV_OK != nRet)
                 {
                     _logger.WriteLog("相机" + (camIndex + 1) + " Get PayloadSize failed:" + nRet);
@@ -710,7 +713,7 @@ namespace WindowsFormsApplication1
                 m_stFrameInfo[camIndex].nFrameLen = 0;
                 m_stFrameInfo[camIndex].enPixelType = MyCamera.MvGvspPixelType.PixelType_Gvsp_Undefined;
                 SetCameraGrabbing(camIndex, true);
-                nRet = _cameraCtrl.Cameras[camIndex].MV_CC_StartGrabbing_NET();
+                nRet = camRef.MV_CC_StartGrabbing_NET();
                 if (MyCamera.MV_OK != nRet)
                 {
                     SetCameraGrabbing(camIndex, false);
