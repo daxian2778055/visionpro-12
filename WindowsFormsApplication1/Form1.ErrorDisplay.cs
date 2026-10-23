@@ -652,50 +652,76 @@ namespace WindowsFormsApplication1
             }
             // ★修复（回归分析 #3）：清待处理记录要取 _sendLock，不能在 _cameraLock 内做（见方法尾部）。
             bool clearCommPending = false;
+            // ★修复（回归复审）：若已在采集，先停流；50ms 等待移出 _cameraLock（原持全局相机锁睡眠）。
+            bool needSettle = false;
             lock (_cameraLock)
             {
-            try
-            {
-                if (!_cameraCtrl.Cameras[camIndex].MV_CC_IsDeviceConnected_NET())
+                var cam = _cameraCtrl.Cameras[camIndex];
+                if (cam == null)
                 {
-                    _logger.WriteLog("相机" + (camIndex + 1) + "设备未连接(IsDeviceConnected=false)");
+                    _logger.WriteLog("相机" + (camIndex + 1) + "未连接，无法启动取流");
                     return false;
                 }
+                try
+                {
+                    if (!cam.MV_CC_IsDeviceConnected_NET())
+                    {
+                        _logger.WriteLog("相机" + (camIndex + 1) + "设备未连接(IsDeviceConnected=false)");
+                        return false;
+                    }
+                }
+                catch
+                {
+                    _logger.WriteLog("相机" + (camIndex + 1) + "连接状态检查失败");
+                    return false;
+                }
+                if (IsCameraGrabbing(camIndex))
+                {
+                    cam.MV_CC_StopGrabbing_NET();
+                    SetCameraGrabbing(camIndex, false);
+                    needSettle = true;
+                }
             }
-            catch
+            if (needSettle)
             {
-                _logger.WriteLog("相机" + (camIndex + 1) + "连接状态检查失败");
-                return false;
+                try { Thread.Sleep(50); } catch { }
             }
-            if (IsCameraGrabbing(camIndex))
+            lock (_cameraLock)
             {
-                _cameraCtrl.Cameras[camIndex].MV_CC_StopGrabbing_NET();
-                SetCameraGrabbing(camIndex, false);
-                Thread.Sleep(50);
-            }
-            MyCamera.MVCC_INTVALUE stParam = new MyCamera.MVCC_INTVALUE();
-            nRet = _cameraCtrl.Cameras[camIndex].MV_CC_GetIntValue_NET("PayloadSize", ref stParam);
-            if (MyCamera.MV_OK != nRet)
-            {
-                _logger.WriteLog("相机" + (camIndex + 1) + " Get PayloadSize failed:" + nRet);
-                return false;
-            }
-            NoteDriverPayloadSize(camIndex, stParam.nCurValue);   // ★#23：仅记录 PayloadSize，不再分配非托管缓冲
-            m_stFrameInfo[camIndex].nFrameLen = 0;
-            m_stFrameInfo[camIndex].enPixelType = MyCamera.MvGvspPixelType.PixelType_Gvsp_Undefined;
-            SetCameraGrabbing(camIndex, true);
-            nRet = _cameraCtrl.Cameras[camIndex].MV_CC_StartGrabbing_NET();
-            if (MyCamera.MV_OK != nRet)
-            {
-                SetCameraGrabbing(camIndex, false);
-                _logger.WriteLog("相机" + (camIndex + 1) + " Start Grabbing Fail:" + nRet);
-                return false;
-            }
-            // ★修复（回归分析 #3）：只记标记，实际清理由 _cameraLock 之外执行（避免锁内再取 _sendLock）。
-            clearCommPending = IsCommTriggerMode(_jobs.Myjobs[camIndex].triggerMode);
-            // ★ 2026-09-13：只要采集成功启动（设备重连恢复、或本恢复流程最终成功），就清除"恢复未完成"标志，
-            //   避免下一轮定时器再按旧标志停采、清掉刚接收的触发。
-            System.Threading.Volatile.Write(ref _grabRecoveryPending[camIndex], 0);
+                // 等待期间该槽可能被关闭/重连/其它路径重新取流：任一变化放弃本次启动，避免对半状态设备 Start。
+                if (_cameraCtrl.Cameras[camIndex] == null)
+                {
+                    _logger.WriteLog("相机" + (camIndex + 1) + "启动取流前槽位已释放，放弃本次启动");
+                    return false;
+                }
+                if (IsCameraGrabbing(camIndex))
+                {
+                    _logger.WriteLog("相机" + (camIndex + 1) + "启动取流前已被其它路径开启，放弃本次重复启动");
+                    return false;
+                }
+                MyCamera.MVCC_INTVALUE stParam = new MyCamera.MVCC_INTVALUE();
+                nRet = _cameraCtrl.Cameras[camIndex].MV_CC_GetIntValue_NET("PayloadSize", ref stParam);
+                if (MyCamera.MV_OK != nRet)
+                {
+                    _logger.WriteLog("相机" + (camIndex + 1) + " Get PayloadSize failed:" + nRet);
+                    return false;
+                }
+                NoteDriverPayloadSize(camIndex, stParam.nCurValue);   // ★#23：仅记录 PayloadSize，不再分配非托管缓冲
+                m_stFrameInfo[camIndex].nFrameLen = 0;
+                m_stFrameInfo[camIndex].enPixelType = MyCamera.MvGvspPixelType.PixelType_Gvsp_Undefined;
+                SetCameraGrabbing(camIndex, true);
+                nRet = _cameraCtrl.Cameras[camIndex].MV_CC_StartGrabbing_NET();
+                if (MyCamera.MV_OK != nRet)
+                {
+                    SetCameraGrabbing(camIndex, false);
+                    _logger.WriteLog("相机" + (camIndex + 1) + " Start Grabbing Fail:" + nRet);
+                    return false;
+                }
+                // ★修复（回归分析 #3）：只记标记，实际清理由 _cameraLock 之外执行（避免锁内再取 _sendLock）。
+                clearCommPending = IsCommTriggerMode(_jobs.Myjobs[camIndex].triggerMode);
+                // ★ 2026-09-13：只要采集成功启动（设备重连恢复、或本恢复流程最终成功），就清除"恢复未完成"标志，
+                //   避免下一轮定时器再按旧标志停采、清掉刚接收的触发。
+                System.Threading.Volatile.Write(ref _grabRecoveryPending[camIndex], 0);
             }
             if (clearCommPending)
             {
