@@ -28,6 +28,10 @@ namespace WindowsFormsApplication1
         private const string SerialMainOwner = "无协议主串口";
         private string _lastMainSerialLog = "";
         private TextBox[] _photoBoxes;
+        // ★无协议反馈语义（现场确认）：无协议没有反馈寄存器，反馈就是沿该连接的串口/TCP 原路返回，
+        //   因此"配置了某相机的拍照触发"即视为"配置了该相机的反馈"。
+        //   这里缓存 12 路拍照触发字符，供 Form1 结果输出线程判断"该连接是否应收到这台相机的结果"。
+        private volatile string[] _photoTrigCache = new string[12];
         public string aa;
         public string monitor;
         public delegate void GetSeletionData(object Sender, SelectionChangedEventArgs e);
@@ -60,19 +64,31 @@ namespace WindowsFormsApplication1
         private readonly byte[] _tcpRecvBuffer = new byte[64 * 1024];   // TCP 接收缓冲（复用，避免每帧分配 3MB）
         private volatile bool _tcpClientNeedReconnect = false;           // TCP 客户机断线重连标志（独立，不依赖 monitor 字符串）
         private string _serialBuf = "";                                  // 串口无协议组帧缓冲
-        // ★ P3.1：切型匹配串缓存。qiehuan() 由 TCP 客户机/服务器接收线程（后台）高频调用，
-        // 直接读 textBox18~25.Text 在后台线程访问控件（Debug 开跨线程校验会抛异常）。
-        // 改为后台读这份缓存；UI 线程在 InitializeForm 载入与 8 个框 TextChanged 时同步它（线程安全）。
-        private volatile string[] _trigPath = new string[8];
-        private readonly object _trigSync = new object();
-        private void SyncTrigCache(TextBox b1, TextBox b2, TextBox b3, TextBox b4, TextBox b5, TextBox b6, TextBox b7, TextBox b8)
+        // ★ P3.1 + 回归分析修复：切型串与方案路径必须来自同一时刻，且后台接收线程不得碰控件。
+        //   原实现触发串读缓存、方案路径用 SafeRead 同步 Invoke 回 UI——两者不同源（编辑路径瞬间可能
+        //   "旧串+新路径"），且 UI 忙时接收线程会被 Invoke 拖住。现两组串装进同一份不可变快照，
+        //   UI 线程在载入与 16 个框 TextChanged 时整体发布，qiehuan 只取一次快照引用。
+        private volatile Tuple<string[], string[]> _schemeSnapshot =
+            Tuple.Create(new string[8], new string[8]);
+        private readonly object _schemeSync = new object();
+
+        /// <summary>由 UI 线程调用：把 8 组切型串与 8 个方案路径作为一份快照整体发布。</summary>
+        private void SyncSchemeCache()
         {
-            lock (_trigSync)
-                _trigPath = new[]
+            lock (_schemeSync)
+            {
+                var trig = new[]
                 {
-                    b1?.Text ?? "", b2?.Text ?? "", b3?.Text ?? "", b4?.Text ?? "",
-                    b5?.Text ?? "", b6?.Text ?? "", b7?.Text ?? "", b8?.Text ?? ""
+                    textBox18.Text ?? "", textBox19.Text ?? "", textBox21.Text ?? "", textBox20.Text ?? "",
+                    textBox23.Text ?? "", textBox22.Text ?? "", textBox25.Text ?? "", textBox24.Text ?? ""
                 };
+                var path = new[]
+                {
+                    textBox10.Text ?? "", textBox11.Text ?? "", textBox12.Text ?? "", textBox13.Text ?? "",
+                    textBox14.Text ?? "", textBox15.Text ?? "", textBox16.Text ?? "", textBox17.Text ?? ""
+                };
+                _schemeSnapshot = Tuple.Create(trig, path);
+            }
         }
         private StreamReader sRead;
         public string gongnengma="06";
@@ -148,15 +164,6 @@ namespace WindowsFormsApplication1
                 textBox22.Text = wdini.ReadString("change", "6", "");
                 textBox25.Text = wdini.ReadString("change", "7", "");
                 textBox24.Text = wdini.ReadString("change", "8", "");
-                // ★ P3.1：切型匹配串缓存——载入后同步一次，并挂 8 个框的 TextChanged 实时同步，
-                // 供 qiehuan() 在后台接收线程安全读取（替代直接读 .Text，避免跨线程访问控件）。
-                SyncTrigCache(textBox18, textBox19, textBox21, textBox20, textBox23, textBox22, textBox25, textBox24);
-                foreach (TextBox tb in new[] { textBox18, textBox19, textBox21, textBox20, textBox23, textBox22, textBox25, textBox24 })
-                {
-                    if (tb == null) continue;
-                    tb.TextChanged += (s, ev) =>
-                        SyncTrigCache(textBox18, textBox19, textBox21, textBox20, textBox23, textBox22, textBox25, textBox24);
-                }
                 // 拍照触发字符：从 ini 读取，并实时同步到各相机 triggerZifu（不依赖 VP 方案）
                 textBox26.Text = wdini.ReadString("change", "triggerzifu", "");
                 textBox26.TextChanged += textBox26_TextChanged;
@@ -178,7 +185,23 @@ namespace WindowsFormsApplication1
                 textBox15.Text = wdini.ReadString("path", "6", "");
                 textBox16.Text = wdini.ReadString("path", "7", "");
                 textBox17.Text = wdini.ReadString("path", "8", "");
-            
+
+                // ★无协议反馈语义：拍照触发字符载入后发布一次快照（配置触发即配置反馈）。
+                SyncPhotoTriggerCache();
+
+                // ★回归分析修复：8 个切型串 + 8 个方案路径作为一份快照整体发布（载入后再同步，
+                //   避免首次命中读到尚未赋值的空路径）；TextChanged 实时刷新，后台接收线程只读快照。
+                SyncSchemeCache();
+                foreach (TextBox tb in new[]
+                {
+                    textBox18, textBox19, textBox21, textBox20, textBox23, textBox22, textBox25, textBox24,
+                    textBox10, textBox11, textBox12, textBox13, textBox14, textBox15, textBox16, textBox17
+                })
+                {
+                    if (tb == null) continue;
+                    tb.TextChanged += (s, ev) => SyncSchemeCache();
+                }
+
                 comboBox2.Text = wdini.ReadString("change", "all", "");
                 // 显式同步一次：ini 缺 [change]all 时给 Text 赋值不触发 SelectedIndexChanged，qiehuan_fangshi 会恒空
                 SyncQiehuanFangshi();
@@ -869,11 +892,11 @@ namespace WindowsFormsApplication1
         /// </summary>
         private int qiehuan(string aa)
         {
-            // ★ P3.1：后台接收线程高频调用本方法，改读同步缓存（UI 线程 Initialize/TextChanged 写入），
-            // 避免后台线程直接访问 8 个 TextBox 控件（Debug 开跨线程校验会抛异常）。行为与逐框比较一致。
-            string[] p;
-            lock (_trigSync) p = _trigPath;
-            // 命中才读对应方案路径框（低频）；后台线程读控件经 SafeRead 走 Invoke，未命中则不产生任何 Invoke。
+            // ★回归分析修复：切型串与方案路径来自同一份快照（UI 线程载入/TextChanged 整体发布），
+            //   后台接收线程不再读控件、也不再 SafeRead 同步 Invoke；命中时不会出现"旧串+新路径"。
+            var snap = _schemeSnapshot;
+            string[] p = snap.Item1;
+            string[] paths = snap.Item2;
             int hit = -1;
             if (p[0] == aa) hit = 0;
             else if (p[1] == aa) hit = 1;
@@ -885,20 +908,7 @@ namespace WindowsFormsApplication1
             else if (p[7] == aa) hit = 7;
             if (hit < 0) return 0;
 
-            string hitPath = SafeRead(() =>
-            {
-                switch (hit)
-                {
-                    case 0: return textBox10.Text;
-                    case 1: return textBox11.Text;
-                    case 2: return textBox12.Text;
-                    case 3: return textBox13.Text;
-                    case 4: return textBox14.Text;
-                    case 5: return textBox15.Text;
-                    case 6: return textBox16.Text;
-                    default: return textBox17.Text;
-                }
-            });
+            string hitPath = (hit < paths.Length) ? (paths[hit] ?? "") : "";
             if (string.IsNullOrWhiteSpace(hitPath))
             {
                 // ★修复（低项复审）：命中切型但方案路径为空——不能降级成"拍照"（会误检/误报 IO），
@@ -1548,6 +1558,7 @@ namespace WindowsFormsApplication1
                 for (int _pi = 0; _pi < 12; _pi++)
                     _photoBoxes[_pi].Text = textBox26.Text;
             }
+            SyncPhotoTriggerCache();   // ★配置触发即配置反馈：批量变化后刷新
         }
 
         private void photoTrigger_TextChanged(object sender, EventArgs e)
@@ -1562,6 +1573,25 @@ namespace WindowsFormsApplication1
                 if (_idx >= 0 && _idx < 12 && f1 != null && IsMainWindow)
                     f1.SetTriggerZifu(_idx, _tb.Text);
             }
+            SyncPhotoTriggerCache();   // ★配置触发即配置反馈：单路变化后刷新
+        }
+
+        /// <summary>由 UI 线程调用：把 12 路拍照触发字符发布为快照（后台结果线程只读）。</summary>
+        private void SyncPhotoTriggerCache()
+        {
+            if (_photoBoxes == null) return;
+            var arr = new string[12];
+            for (int i = 0; i < 12; i++)
+                arr[i] = (_photoBoxes[i] != null) ? (_photoBoxes[i].Text ?? "") : "";
+            _photoTrigCache = arr;
+        }
+
+        /// <summary>该无协议连接是否为这台相机配置了拍照触发（无协议下"配置触发即配置反馈"）。</summary>
+        public bool HasPhotoTriggerFor(int camIndex)
+        {
+            if (camIndex < 0 || camIndex >= 12) return false;
+            string[] snap = _photoTrigCache;
+            return snap != null && camIndex < snap.Length && !string.IsNullOrWhiteSpace(snap[camIndex]);
         }
 
         private void button5_Click(object sender, EventArgs e)

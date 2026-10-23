@@ -1247,6 +1247,18 @@ namespace WindowsFormsApplication1
             _finsEditors.Remove(link);
         }
 
+        /// <summary>
+        /// 主程序关窗：只置各连接轮询线程的停止标志，不 Join——避免 UI 线程为每个实例空等 1 秒。
+        /// 连接 1 的三协议由 Form1.StopAllCommPolling 负责；这里覆盖连接 2~4 的整窗实例。
+        /// 无协议连接 2~4 是 Form3 接收线程（无轮询定时器），不在此停；其切方案由 xinghao_qiehuan 关闭闸门拦截。
+        /// </summary>
+        internal void RequestStopAllLinkPolling()
+        {
+            try { foreach (var host in new List<FormOmron>(_finsEditors.Values)) if (host != null) host.RequestStopPolling(); } catch { }
+            try { foreach (var host in new List<FormModbus>(_modbusTcpEditors.Values)) if (host != null) host.RequestStopPolling(); } catch { }
+            try { foreach (var host in new List<FormModbusRtu>(_modbusRtuEditors.Values)) if (host != null) host.RequestStopPolling(); } catch { }
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             // ★G3 修复：本类设计即"连接 2~4 实例常驻池，删除设备/程序关闭时才释放"（见类头注释），

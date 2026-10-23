@@ -239,62 +239,100 @@ namespace WindowsFormsApplication1
             return false;
         }
 
+        // ★修复（回归分析 #2）：软触发勾选快照——Arm 链在后台线程（button1_Click 的 Task.Run）调用
+        //   本组方法，原实现直读 cbSoftTriggerN.Checked、直写 .Enabled：Debug 版
+        //   （CheckForIllegalCrossThreadCalls=true）必抛"线程间操作无效"，整段 Arm 被外层 catch 吞掉
+        //   （CommTriggerArmed 永不置 true，通讯触发全哑）；Release 版则是无同步的数据竞争。
+        //   现 UI 线程在启动与勾选变化时刷新快照，后台只读快照；控件写入统一经 TryBeginInvoke 投递。
+        private volatile bool[] _softTriggerSnapshot;
+
+        /// <summary>由 UI 线程调用：把 12 路"软触发"勾选状态发布为快照（可在任意线程调用，内部自动转 UI）。</summary>
+        private void RefreshSoftTriggerSnapshot()
+        {
+            if (InvokeRequired) { TryBeginInvoke(new Action(RefreshSoftTriggerSnapshot)); return; }
+            // 初始化/销毁期不发布（设计器初始化时个别复选框可能尚未创建）。
+            if (!IsHandleCreated || IsDisposed) return;
+            _softTriggerSnapshot = new[]
+            {
+                cbSoftTrigger1.Checked, cbSoftTrigger2.Checked, cbSoftTrigger3.Checked, cbSoftTrigger4.Checked,
+                cbSoftTrigger5.Checked, cbSoftTrigger6.Checked, cbSoftTrigger7.Checked, cbSoftTrigger8.Checked,
+                cbSoftTrigger9.Checked, cbSoftTrigger10.Checked, cbSoftTrigger11.Checked, cbSoftTrigger12.Checked
+            };
+        }
+
         private bool GetSoftTriggerChecked(int slot)
         {
-            switch (slot)
+            if (slot < 0 || slot >= 12) return false;
+            // UI 线程读实时值；后台线程只读快照，绝不跨线程访问控件。
+            if (!InvokeRequired)
             {
-                case 0: return cbSoftTrigger1.Checked;
-                case 1: return cbSoftTrigger2.Checked;
-                case 2: return cbSoftTrigger3.Checked;
-                case 3: return cbSoftTrigger4.Checked;
-                case 4: return cbSoftTrigger5.Checked;
-                case 5: return cbSoftTrigger6.Checked;
-                case 6: return cbSoftTrigger7.Checked;
-                case 7: return cbSoftTrigger8.Checked;
-                case 8: return cbSoftTrigger9.Checked;
-                case 9: return cbSoftTrigger10.Checked;
-                case 10: return cbSoftTrigger11.Checked;
-                case 11: return cbSoftTrigger12.Checked;
-                default: return false;
+                switch (slot)
+                {
+                    case 0: return cbSoftTrigger1.Checked;
+                    case 1: return cbSoftTrigger2.Checked;
+                    case 2: return cbSoftTrigger3.Checked;
+                    case 3: return cbSoftTrigger4.Checked;
+                    case 4: return cbSoftTrigger5.Checked;
+                    case 5: return cbSoftTrigger6.Checked;
+                    case 6: return cbSoftTrigger7.Checked;
+                    case 7: return cbSoftTrigger8.Checked;
+                    case 8: return cbSoftTrigger9.Checked;
+                    case 9: return cbSoftTrigger10.Checked;
+                    case 10: return cbSoftTrigger11.Checked;
+                    case 11: return cbSoftTrigger12.Checked;
+                    default: return false;
+                }
             }
+            bool[] snap = _softTriggerSnapshot;
+            return snap != null && slot < snap.Length && snap[slot];
         }
 
         private void SetSoftTriggerEnabled(int slot, bool enabled)
         {
-            switch (slot)
+            Action apply = () =>
             {
-                case 0: cbSoftTrigger1.Enabled = enabled; break;
-                case 1: cbSoftTrigger2.Enabled = enabled; break;
-                case 2: cbSoftTrigger3.Enabled = enabled; break;
-                case 3: cbSoftTrigger4.Enabled = enabled; break;
-                case 4: cbSoftTrigger5.Enabled = enabled; break;
-                case 5: cbSoftTrigger6.Enabled = enabled; break;
-                case 6: cbSoftTrigger7.Enabled = enabled; break;
-                case 7: cbSoftTrigger8.Enabled = enabled; break;
-                case 8: cbSoftTrigger9.Enabled = enabled; break;
-                case 9: cbSoftTrigger10.Enabled = enabled; break;
-                case 10: cbSoftTrigger11.Enabled = enabled; break;
-                case 11: cbSoftTrigger12.Enabled = enabled; break;
-            }
+                switch (slot)
+                {
+                    case 0: cbSoftTrigger1.Enabled = enabled; break;
+                    case 1: cbSoftTrigger2.Enabled = enabled; break;
+                    case 2: cbSoftTrigger3.Enabled = enabled; break;
+                    case 3: cbSoftTrigger4.Enabled = enabled; break;
+                    case 4: cbSoftTrigger5.Enabled = enabled; break;
+                    case 5: cbSoftTrigger6.Enabled = enabled; break;
+                    case 6: cbSoftTrigger7.Enabled = enabled; break;
+                    case 7: cbSoftTrigger8.Enabled = enabled; break;
+                    case 8: cbSoftTrigger9.Enabled = enabled; break;
+                    case 9: cbSoftTrigger10.Enabled = enabled; break;
+                    case 10: cbSoftTrigger11.Enabled = enabled; break;
+                    case 11: cbSoftTrigger12.Enabled = enabled; break;
+                }
+            };
+            if (InvokeRequired) { TryBeginInvoke(apply); return; }
+            apply();
         }
 
         private void SetTriggerExecEnabled(int slot, bool enabled)
         {
-            switch (slot)
+            Action apply = () =>
             {
-                case 0: bnTriggerExec1.Enabled = enabled; break;
-                case 1: bnTriggerExec2.Enabled = enabled; break;
-                case 2: bnTriggerExec3.Enabled = enabled; break;
-                case 3: bnTriggerExec4.Enabled = enabled; break;
-                case 4: bnTriggerExec5.Enabled = enabled; break;
-                case 5: bnTriggerExec6.Enabled = enabled; break;
-                case 6: bnTriggerExec7.Enabled = enabled; break;
-                case 7: bnTriggerExec8.Enabled = enabled; break;
-                case 8: bnTriggerExec9.Enabled = enabled; break;
-                case 9: bnTriggerExec10.Enabled = enabled; break;
-                case 10: bnTriggerExec11.Enabled = enabled; break;
-                case 11: bnTriggerExec12.Enabled = enabled; break;
-            }
+                switch (slot)
+                {
+                    case 0: bnTriggerExec1.Enabled = enabled; break;
+                    case 1: bnTriggerExec2.Enabled = enabled; break;
+                    case 2: bnTriggerExec3.Enabled = enabled; break;
+                    case 3: bnTriggerExec4.Enabled = enabled; break;
+                    case 4: bnTriggerExec5.Enabled = enabled; break;
+                    case 5: bnTriggerExec6.Enabled = enabled; break;
+                    case 6: bnTriggerExec7.Enabled = enabled; break;
+                    case 7: bnTriggerExec8.Enabled = enabled; break;
+                    case 8: bnTriggerExec9.Enabled = enabled; break;
+                    case 9: bnTriggerExec10.Enabled = enabled; break;
+                    case 10: bnTriggerExec11.Enabled = enabled; break;
+                    case 11: bnTriggerExec12.Enabled = enabled; break;
+                }
+            };
+            if (InvokeRequired) { TryBeginInvoke(apply); return; }
+            apply();
         }
 
         /// <summary>
@@ -307,6 +345,8 @@ namespace WindowsFormsApplication1
         {
             if (slot < 0 || slot >= 12 || _cameraCtrl.Cameras[slot] == null) return true;
             Myjob job = _jobs.Myjobs[slot];
+            // ★修复（回归分析 #3）：清待处理记录需取 _sendLock，不能放在 _cameraLock 内（见方法尾部）。
+            bool clearCommPending = false;
             // 与打开/关闭/重连互斥，防止半开半关时写触发参数
             lock (_cameraLock)
             {
@@ -355,8 +395,9 @@ namespace WindowsFormsApplication1
                     SetSoftTriggerEnabled(slot, true);
                     // ★第28轮①(c)：清待处理记录也等本次下发真成功——否则本次失败回滚到旧的通讯触发模式时，
                     //   旧模式下该收的触发回执已被清掉。
+                    // ★修复（回归分析 #3）：这里只记标记，实际清理由锁外执行（避免 _cameraLock → _sendLock 反序）。
                     if (isComm && nRet == MyCamera.MV_OK)
-                        _jobs.ClearCommTriggerPending(slot);
+                        clearCommPending = true;
                 }
                 else
                 {
@@ -371,7 +412,6 @@ namespace WindowsFormsApplication1
                     _logger.WriteLog("相机" + (slot + 1) + "触发模式下发失败 ret=0x" + HkRet(nRet) + "（目标「" + job.triggerMode + "」）");
                     return false;
                 }
-                return true;
             }
             catch (Exception ex)
             {
@@ -379,6 +419,15 @@ namespace WindowsFormsApplication1
                 return false;
             }
             }
+            // ★修复（回归分析 #3）：锁外清理——发送侧持 _sendLock 时最多 TryEnter(_cameraLock, 200ms)，
+            //   若此处仍在锁内清记录（→ _sendLock），会形成"持相机锁等发送锁"的反向等待，
+            //   高负载下把软触发整批拖到 200ms 超时丢弃。
+            if (clearCommPending)
+            {
+                try { _jobs.ClearCommTriggerPending(slot); }
+                catch (Exception exP) { _logger.WriteLog("相机" + (slot + 1) + "清理通讯触发待处理异常：" + exP.Message); }
+            }
+            return true;
         }
 
         // ★第26轮#2/#4：12 路触发模式下拉框的统一入口（原来每个 handler 各自内联一份绕锁硬件写入）。
@@ -601,6 +650,8 @@ namespace WindowsFormsApplication1
                 _logger.WriteLog("相机" + (camIndex + 1) + "未连接，无法启动取流");
                 return false;
             }
+            // ★修复（回归分析 #3）：清待处理记录要取 _sendLock，不能在 _cameraLock 内做（见方法尾部）。
+            bool clearCommPending = false;
             lock (_cameraLock)
             {
             try
@@ -640,13 +691,18 @@ namespace WindowsFormsApplication1
                 _logger.WriteLog("相机" + (camIndex + 1) + " Start Grabbing Fail:" + nRet);
                 return false;
             }
-            if (IsCommTriggerMode(_jobs.Myjobs[camIndex].triggerMode))
-                _jobs.ClearCommTriggerPending(camIndex);
+            // ★修复（回归分析 #3）：只记标记，实际清理由 _cameraLock 之外执行（避免锁内再取 _sendLock）。
+            clearCommPending = IsCommTriggerMode(_jobs.Myjobs[camIndex].triggerMode);
             // ★ 2026-09-13：只要采集成功启动（设备重连恢复、或本恢复流程最终成功），就清除"恢复未完成"标志，
             //   避免下一轮定时器再按旧标志停采、清掉刚接收的触发。
             System.Threading.Volatile.Write(ref _grabRecoveryPending[camIndex], 0);
-            return true;
             }
+            if (clearCommPending)
+            {
+                try { _jobs.ClearCommTriggerPending(camIndex); }
+                catch (Exception exP) { _logger.WriteLog("相机" + (camIndex + 1) + "清理通讯触发待处理异常：" + exP.Message); }
+            }
+            return true;
         }
         #endregion
     }
