@@ -116,6 +116,9 @@ namespace WindowsFormsApplication1
         private readonly int[] _slotClosing = new int[12];
         // ★修复（全代码复审）：退出清理幂等标志（FormClosed 与 Dispose 可能各调一次）。
         private int _cleanupDone = 0;
+        // ★修复（回归复审）：本次 bnClose 是否有 Close/Destroy 返回异常。原实现只记日志仍把槽位置空，
+        //   切方案按"槽位非空"判断看不到这类失败而继续卸载方案；由 bnClose 置位、切方案检查并回滚。
+        private volatile bool _cameraCloseHadFailure;
         private static object[] CreateBufLocks()
         {
             var a = new object[12];
@@ -8785,12 +8788,13 @@ namespace WindowsFormsApplication1
                 if (!configured) continue;
                 if (sendTcp)
                 {
-                    try { target.changeok(tcpVal); }
+                    // ★修复（回归复审）：只走 TCP 通道，避免 tcp/serial 两个值在同一勾选通道上重复发送。
+                    try { target.changeokTcp(tcpVal); }
                     catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 无协议连接" + link + " TCP输出失败: " + ex.Message); }
                 }
                 if (sendSerial)
                 {
-                    try { target.changeok(serialVal); }
+                    try { target.changeokSerial(serialVal); }
                     catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 无协议连接" + link + " 串口输出失败: " + ex.Message); }
                 }
             }
@@ -12385,6 +12389,7 @@ namespace WindowsFormsApplication1
                         RollbackSchemeSwitch();
                         return;
                     }
+                    _cameraCloseHadFailure = false;   // ★本次关闭结果由 bnClose 重新置位
                     try { Invoke(new Action(() => bnClose_Click(null, null))); }
                     catch (Exception exClose)
                     {
@@ -12395,14 +12400,18 @@ namespace WindowsFormsApplication1
                     // ★修复（回归分析 #1）：bnClose 在"等待回调静止超时"时会中止本次拆除并直接返回（相机仍开着）。
                     //   切方案链路不能把"调用返回"当成"已关相机"——仍有槽位未释放就中止本次切换，并在收尾
                     //   把门控/按钮恢复；否则会在相机仍推流时卸载旧方案，随后收尾又拆一次、多一次停检窗口。
+                    // ★修复（回归复审）：Close/Destroy 返回异常时 bnClose 仍会把槽位置空——这里同时检查失败标志，
+                    //   避免"槽位已空但设备未优雅释放"时继续卸载方案。
                     bool cameraStillOpen = false;
                     for (int slot = 0; slot < 12; slot++)
                     {
                         if (_cameraCtrl.Cameras[slot] != null) { cameraStillOpen = true; break; }
                     }
-                    if (cameraStillOpen)
+                    if (cameraStillOpen || _cameraCloseHadFailure)
                     {
-                        _logger.WriteLog("切方案中止：关闭相机未完成（仍有槽位未释放，bnClose 已中止本次拆除），已回滚门控并继续使用原方案");
+                        _logger.WriteLog(cameraStillOpen
+                            ? "切方案中止：关闭相机未完成（仍有槽位未释放，bnClose 已中止本次拆除），已回滚门控并继续使用原方案"
+                            : "切方案中止：关闭相机失败（Close/Destroy 返回异常，设备可能未优雅释放），已回滚门控并继续使用原方案");
                         RollbackSchemeSwitch();
                         try { Frm2.start = 1; } catch { }
                         SafeBeginInvoke(new Action(() =>
@@ -14501,6 +14510,8 @@ namespace WindowsFormsApplication1
             //   字段 root，GC 回收 thunk → 原生回调打空指针的崩溃窗口。
             // ★修复（回审）：快照进入前状态——超时中止本次拆除时要原样复原，否则界面会停在
             //   "关闭按钮灰着、自动重连与 timer2 都关着"的半状态，弹窗那句"请稍后重试"落不了地。
+            // ★修复（回归复审）：每次拆除先清零失败标志，由本轮 Close/Destroy 结果重新置位。
+            _cameraCloseHadFailure = false;
             bool prevReconnectEnabled = _cameraReconnectEnabled;
             bool prevTimer2Enabled = false;
             try { prevTimer2Enabled = timer2.Enabled; } catch { }
@@ -14601,12 +14612,19 @@ namespace WindowsFormsApplication1
                             // ★修复（全代码复审）：原实现丢弃返回码 + catch{} 空吞 → 关设备失败无痕、
                             //   句柄又被无条件置空，设备未优雅释放（下次开机 0x80000007 绑不回）。
                             if (nRet != MyCamera.MV_OK || nRetDestroy != MyCamera.MV_OK)
+                            {
+                                _cameraCloseHadFailure = true;   // ★切方案据此中止，不再"槽位已空就继续卸载"
                                 _logger.WriteLog("相机" + (i + 1) + " 关闭/销毁返回异常: Close=" + nRet
                                     + " Destroy=" + nRetDestroy + "（设备可能未优雅释放；下次开机若绑不回请断电重启相机）");
                             }
+                            }
                         }
                     }
-                    catch (Exception ex) { _logger.WriteLog("相机" + (i + 1) + " 拆除异常: " + ex.Message); }
+                    catch (Exception ex)
+                    {
+                        _cameraCloseHadFailure = true;   // ★同上：拆除异常同样视为本次关相机失败
+                        _logger.WriteLog("相机" + (i + 1) + " 拆除异常: " + ex.Message);
+                    }
                     // 关闭后立即置空，防止后续对无效句柄调用 SDK
                     _cameraCtrl.Cameras[i] = null;
                 }

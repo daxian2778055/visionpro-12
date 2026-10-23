@@ -2019,12 +2019,30 @@ namespace WindowsFormsApplication1
         /// </summary>
         public void changeok(string aa)
         {
+            changeokCore(aa, true, true);
+        }
+
+        /// <summary>只发 TCP 通道（客户机/服务器）——无协议块输出 "tcp" 值走 TCP。</summary>
+        public void changeokTcp(string aa)
+        {
+            changeokCore(aa, true, false);
+        }
+
+        /// <summary>只发串口通道——无协议块输出 "serial" 值走串口。</summary>
+        public void changeokSerial(string aa)
+        {
+            changeokCore(aa, false, true);
+        }
+
+        private void changeokCore(string aa, bool allowTcp, bool allowSerial)
+        {
             // ★ 跨线程快照：本方法由相机输出队列线程调用（Form1 结果输出），不能直读/直写 UI 控件——
             //   Debug 开跨线程校验时直读控件会抛异常被外层 catch 吞掉，导致该路结果不发出；Release 下也无同步保证。
             //   在 lock 外一次性取 UI 线程快照（与文件内 P3.1 的 SafeRead 模式一致），锁内只用局部值。
-            bool ui_client = SafeRead(() => checkBox3.CheckState) == CheckState.Checked;
-            bool ui_server = SafeRead(() => checkBox2.CheckState) == CheckState.Checked;
-            bool ui_serial = SafeRead(() => checkBox4.CheckState) == CheckState.Checked;
+            // ★修复（回归复审）：按调用方指定的介质过滤通道，避免 tcp/serial 两个输出值在同一勾选通道上重复发送。
+            bool ui_client = allowTcp && SafeRead(() => checkBox3.CheckState) == CheckState.Checked;
+            bool ui_server = allowTcp && SafeRead(() => checkBox2.CheckState) == CheckState.Checked;
+            bool ui_serial = allowSerial && SafeRead(() => checkBox4.CheckState) == CheckState.Checked;
             bool ui_hex = SafeRead(() => checkBox1.CheckState) == CheckState.Checked;
             string ui_serverIp = SafeRead(() => comboBox1.SelectedItem == null ? "" : comboBox1.SelectedItem.ToString());
             lock (locker_1)
