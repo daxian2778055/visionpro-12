@@ -1670,6 +1670,13 @@ namespace WindowsFormsApplication1
             _runtime = null;
         }
 
+        /// <summary>只置停止标志、不 Join（主程序关闭时用：UI 线程不能为每个连接空等 1 秒）。</summary>
+        public void RequestStopPolling()
+        {
+            foreach (var rt in _runtimes.Values)
+                if (rt != null) rt.RequestStop();
+        }
+
         /// <summary>
         /// 释放本实例（多实例改造阶段 5：连接 2~4 在管理器中被移除/切换时调用）。
         /// 停止本连接轮询线程、断开底层连接并从 CommLinkManager 注销，避免实例被 Dispose 后线程仍空转轮询。

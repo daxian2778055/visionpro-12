@@ -281,7 +281,10 @@ namespace WindowsFormsApplication1
                     groupBox7.Enabled = true;
                     groupBox8.Enabled = true;
                 }
-                if (Myjob.JobCount == 8)
+                // ★修复（回归分析 #5）：12 路方案 JobCount 可到 9~12，原条件只写 ==8——9 路以上没有任何
+                //   分支命中，8 个分组会停留在上一次（或设计器默认）的使能状态。这里前 8 组一律使能；
+                //   9~12 路暂无对应分组（设计器只有 1~8 组），属已知界面限制，不再让状态漂移。
+                if (Myjob.JobCount >= 8)
                 {
                     groupBox1.Enabled = true;
                     groupBox2.Enabled = true;

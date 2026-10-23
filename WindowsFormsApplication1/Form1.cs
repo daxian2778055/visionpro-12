@@ -3917,6 +3917,8 @@ namespace WindowsFormsApplication1
                 return;
             }
             // ★ 在 UI 线程预缓存 checkedListBox 状态，避免后台线程直接访问 UI 控件
+            // ★修复（回归分析 #2）：Arm 链（Task.Run 内）会读 12 路软触发勾选，先在 UI 线程发布快照。
+            RefreshSoftTriggerSnapshot();
             Task.Run(() =>
             {
                 try
@@ -4775,8 +4777,18 @@ namespace WindowsFormsApplication1
                     //   ReleaseFrameBitmap(slot) / bmp[slot] = frame.Image 写在 getrecord 之前、
                     //   令牌之外——UI 手动回图/触发进来的另一个 getrecord 可能正持令牌读 bmp[camIdx]，
                     //   此刻 Dispose + 覆盖 = use-after-dispose（随机崩溃 / 检测读到半死位图）。
-                    if (job != null)
-                        tokenHeld = System.Threading.Interlocked.CompareExchange(ref job.recordBusy, 1, 0) == 0;
+                    // ★回归分析修复：手动回图占用 recordBusy 时不再立刻丢帧——通讯触发帧一丢就没有回执，
+                    //   PLC 只能等超时。这里最多等 2 秒（20ms 步进）；期间切方案/停检立即放弃，
+                    //   仍拿不到令牌才按原逻辑丢帧。手动回图通常远短于 2 秒，不会造成可感知延迟。
+                    int tokenWaitMs = 0;
+                    while (job != null
+                           && !(tokenHeld = System.Threading.Interlocked.CompareExchange(ref job.recordBusy, 1, 0) == 0)
+                           && tokenWaitMs < 2000
+                           && !_inspectStop && !_disposingFlag && !_switchingScheme)
+                    {
+                        try { Thread.Sleep(20); } catch { break; }
+                        tokenWaitMs += 20;
+                    }
                     if (!tokenHeld)
                     {
                         _frameAcct.Note(slot, FrameAccounting.Reason.WorkerBusy);   // ★第53轮
@@ -4839,10 +4851,16 @@ namespace WindowsFormsApplication1
                 owned?.Dispose();
                 return;
             }
+            // ★回归分析修复：按模式区分队列策略——连续运行只保留最新帧（基线单槽策略是"忙时丢新帧、
+            //   空闲处理最新帧"；当前 FIFO 深度 3 会让连续运行画面/结果固定滞后最多 3 帧）。
+            //   通讯触发/触发拍照仍保持 FIFO：同一相机的触发与结果必须严格按序（PLC 对账语义不变）。
+            bool newestWins = false;
+            try { newestWins = NormalizeTriggerMode(_jobs.Myjobs[slot].triggerMode) == "连续运行"; } catch { }
             lock (_inspectLocks[slot])
             {
                 if (_frameQueue[slot] == null) _frameQueue[slot] = new System.Collections.Generic.Queue<InspectionFrame>();
-                while (_frameQueue[slot].Count >= InspectQueueDepth)
+                int maxDepth = newestWins ? 1 : InspectQueueDepth;
+                while (_frameQueue[slot].Count >= maxDepth)
                 {
                     _frameQueue[slot].Dequeue().Image?.Dispose();
                     _frameAcct.Note(slot, FrameAccounting.Reason.QueueEvicted);   // ★第53轮
@@ -5905,59 +5923,32 @@ namespace WindowsFormsApplication1
                                     });
                                 }
                             }
-                            // 阶段：无协议连接2~4 的结果回写“发出触发的那条无协议连接”的端口，而非固定 connection 1
-                            Form3 nprotoTarget = null;
-                            // BUG A 修复：一次性取出触发来源快照并置 null（引用赋值原子，proto/link 配对永真，防粘滞）
-                            // 用随帧携带的来源（入队时绑定），不再读 Myjob 共享字段：
-                            // 多协议触发同一相机时，后触发不会再覆盖先触发的来源，结果不会回错连接。
-                            var trigSrc = frameSrc;
-                            int trigLink = trigSrc != null ? trigSrc.LinkId : 0;
-                            int trigProto = trigSrc != null ? trigSrc.Proto : 0;
-                            if (trigProto == NoProtoProto && trigLink > 1)
-                                nprotoTarget = frmCommManager.GetNoProtoLink(trigLink);
-                            Form3 noProtoOut = nprotoTarget ?? frm3;
-                            // ★修复（现场确认）：本帧来自无协议连接2~4但目标实例已释放（如该连接被删除）时，
-                            //   不再回落到连接1端口发送（原实现静默错发会污染连接1的数据），
-                            //   本帧的无协议输出整体跳过——PLC 靠超时判 NG（安全侧）。
-                            bool noProtoTargetMissing = (trigProto == NoProtoProto && trigLink > 1 && nprotoTarget == null);
-                            if (noProtoTargetMissing)
-                                _logger.WriteLog("无协议连接" + trigLink + "的实例已释放，本帧无协议结果不再发送（靠 PLC 超时判 NG），请检查该连接是否被删除");
-                            if (myjob.tcp && !noProtoTargetMissing)
+                            // ★修复（无协议反馈语义，现场确认）：无协议没有反馈寄存器，反馈就是沿该连接的
+                            //   串口/TCP 原路返回，所以"该连接配置了这台相机的拍照触发"即视为"配置了反馈"。
+                            //   结果输出遍历无协议连接 1~4，凡 HasPhotoTriggerFor(camIdx) 的连接都在它自己勾选的
+                            //   通道上回传；主界面 TCP使能/串口使能 仍作为总开关，决定发送哪一组输出值。
+                            //   触发来源不再限制反馈范围（跨协议触发/连续运行时，配置了该流程触发的无协议连接也能收到）。
+                            if (myjob.tcp || myjob.serial)
                             {
+                                bool sendTcp = myjob.tcp;
+                                bool sendSerial = myjob.serial;
+                                string tcpVal = null;
+                                string serialVal = null;
                                 // 在检测线程上快照输出值，避免后台任务跨线程读 VisionPro COM(block.Outputs) 引发竞态
-                                string tcpVal;
-                                try { tcpVal = runOk ? myjob.block.Outputs["tcp"].Value.ToString() : "Reject"; }
-                                catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " TCP输出失败: " + ex.Message); tcpVal = "无"; }
-                                // ★ 2026-09-13：同样接入 per-相机 FIFO 队列，保证同一相机结果按帧序发送
-                                //   （Task.Run 逐帧并发不保证获取 changeok 锁的先后，A/B 可能乱序）。
-                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>   // ★低危修复（2026-09-20）：无协议结果输出改走 res(64) 队列，原走 out(4) 队列高峰可能丢帧
+                                if (sendTcp)
                                 {
-                                    try
-                                    {
-                                        noProtoOut.changeok(tcpVal);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.WriteLog("相机" + (camIdx + 1) + " TCP输出失败: " + ex.Message);
-                                    }
-                                });
-                            }
-                            if (myjob.serial && !noProtoTargetMissing)
-                            {
-                                string serialVal;
-                                try { serialVal = runOk ? myjob.block.Outputs["serial"].Value.ToString() : "Reject"; }
-                                catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 串口输出失败: " + ex.Message); serialVal = "无"; }
-                                // ★ 2026-09-13：同 TCP，接入 per-相机 FIFO 队列保证发送顺序。
-                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>   // ★低危修复（2026-09-20）：无协议结果输出改走 res(64) 队列，原走 out(4) 队列高峰可能丢帧
+                                    try { tcpVal = runOk ? myjob.block.Outputs["tcp"].Value.ToString() : "Reject"; }
+                                    catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " TCP输出失败: " + ex.Message); tcpVal = "无"; }
+                                }
+                                if (sendSerial)
                                 {
-                                    try
-                                    {
-                                        noProtoOut.changeok(serialVal);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.WriteLog("相机" + (camIdx + 1) + " 串口输出失败: " + ex.Message);
-                                    }
+                                    try { serialVal = runOk ? myjob.block.Outputs["serial"].Value.ToString() : "Reject"; }
+                                    catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 串口输出失败: " + ex.Message); serialVal = "无"; }
+                                }
+                                // ★ 2026-09-13：接入 per-相机 FIFO 队列，保证同一相机结果按帧序发送。
+                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
+                                {
+                                    WriteNoProtoResultToConfiguredLinks(camIdx, tcpVal, serialVal, sendTcp, sendSerial);
                                 });
                             }
                             if (_comm.Omron.CanWriteResultOutput())
@@ -5993,40 +5984,17 @@ namespace WindowsFormsApplication1
                                     modbusrtus = "无";
                                 }
                             }
-                            // 阶段 5：检测结果只回写给“触发这次检测的那条连接”。
-                            // triggerLinkId：0=非通讯触发（手动/连续采集，保持原广播行为），1=主连接（原逻辑不变），2~4=扩展连接。
-                            // triggerProto：0=非通讯触发，1=FINS，2=ModbusTCP，3=ModbusRTU（与 linkId 配对唯一定位一条连接）。
-                            // ★ 修复跨协议串扰（2026-09-06）：原实现只有 FINS 记录来源，Modbus TCP/RTU 的连接 2~4 触发时
-                            //   triggerLinkId 为 0，结果被广播到所有协议的连接 1；且来源用后不清除会粘滞到下一次检测。
-                            if (trigLink > 1 && trigProto > 0)
+                            // ★修复（反馈语义，现场确认）：结果不是"只回触发连接"——只要拍了照，
+                            //   同协议内配置了该流程反馈的那条连接（1~4 任一）+ 其它协议里配置了该流程反馈的连接，
+                            //   都应收到结果；未配置反馈通道的连接由 WriteCameraOutput→xie 内 [5]=="无" 自动跳过。
+                            //   触发只决定"哪条连接消费自己的触发参数"，不限制反馈范围；
+                            //   同协议内一台相机只归一条连接（CommCameraGuard 防呆），按协议遍历 1~4 不会重复命中。
+                            // ★ 2026-09-13：结果经 per-相机 FIFO 队列，保证同一相机结果按帧序发送。
+                            // ★F9：结果回写走专用队列（不丢）
+                            _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
                             {
-                                // 只回写给触发本次检测的那一条连接（协议 + 连接号），不广播、不串到别的协议。
-                                // ★ 2026-09-13 修复：原来每帧独立 Task.Run 发送，A/B 两帧不保证获得发送锁的先后，
-                                //   可能 B 先写、A 后写覆盖寄存器（结果顺序颠倒）。改为投递到既有 per-相机 FIFO 队列，
-                                //   保证同一相机的结果严格按帧序发送（不涉及"可丢弃"策略）。
-                                // ★F9：结果回写走专用队列（不丢），IO 脉冲仍走 _cameraOutWork（可丢弃语义不变）
-                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
-                                {
-                                    try
-                                    {
-                                        if (trigProto == 1) _comm.Omron.WriteCameraOutputForLink(trigLink, camIdx, fins, !runOk);
-                                        else if (trigProto == 2) _comm.Modbustcp.WriteCameraOutputForLink(trigLink, camIdx, modbustcps, !runOk);
-                                        else if (trigProto == 3) _comm.ModbusRtu.WriteCameraOutputForLink(trigLink, camIdx, modbusrtus, !runOk);
-                                    }
-                                    catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 连接(proto" + trigProto + ",link" + trigLink + ")输出失败: " + ex.Message); }
-                                });
-                            }
-                            else
-                            {
-                                // ★ 三协议输出合并为单个后台任务顺序写（行为等价），减少线程池任务数
-                                // ★F9：结果回写走专用队列（不丢）
-                                _cameraResultWork[camIdx >= 0 && camIdx < 12 ? camIdx : 0].Enqueue(() =>
-                                {
-                                    try { _comm.Omron.WriteCameraOutput(camIdx, fins, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " OMRON输出失败: " + ex.Message); }
-                                    try { _comm.Modbustcp.WriteCameraOutput(camIdx, modbustcps, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusTCP输出失败: " + ex.Message); }
-                                    try { _comm.ModbusRtu.WriteCameraOutput(camIdx, modbusrtus, !runOk); } catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " ModbusRTU输出失败: " + ex.Message); }
-                                });
-                            }
+                                WriteResultToProtocolOwners(camIdx, fins, modbustcps, modbusrtus, !runOk);
+                            });
                             if (runOk && myjob.zidongbaoguang && camIdx >= 0 && camIdx < 12 && _cameraCtrl.Cameras[camIdx] != null)
                             {
                                 // ★ 按需创建（性能优先）：未启用自动曝光的相机不再每帧生成空转任务
@@ -8791,6 +8759,88 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
+        /// 无协议结果"原路反馈"：遍历无协议连接 1~4，凡配置了该相机拍照触发的连接（配置触发即配置反馈），
+        /// 就在该连接自己勾选的 TCP客户机/服务器/串口通道上发送（changeok 内部按各自复选框选通道）。
+        /// 主界面 TCP使能/串口使能 仍作为总开关，决定发送 tcp/serial 哪一组输出值。
+        /// </summary>
+        private void WriteNoProtoResultToConfiguredLinks(int camIdx, string tcpVal, string serialVal, bool sendTcp, bool sendSerial)
+        {
+            if (camIdx < 0 || camIdx >= 12) return;
+            for (int link = 1; link <= 4; link++)
+            {
+                Form3 target;
+                if (link <= 1)
+                {
+                    target = frm3;
+                }
+                else
+                {
+                    try { target = (frmCommManager != null && !frmCommManager.IsDisposed) ? frmCommManager.GetNoProtoLink(link) : null; }
+                    catch { target = null; }
+                }
+                if (target == null || target.IsDisposed) continue;
+                bool configured;
+                try { configured = target.HasPhotoTriggerFor(camIdx); }
+                catch { configured = false; }
+                if (!configured) continue;
+                if (sendTcp)
+                {
+                    try { target.changeok(tcpVal); }
+                    catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 无协议连接" + link + " TCP输出失败: " + ex.Message); }
+                }
+                if (sendSerial)
+                {
+                    try { target.changeok(serialVal); }
+                    catch (Exception ex) { _logger.WriteLog("相机" + (camIdx + 1) + " 无协议连接" + link + " 串口输出失败: " + ex.Message); }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 检测结果按"配置了该流程反馈的连接"广播：对每条协议遍历连接 1~4，谁在该协议的
+        /// camera_dic 里绑定了这台相机就回写给谁；未绑定/未使能/反馈通道为"无"的连接内部自然 no-op。
+        /// 触发来源不参与本方法——同一协议内相机归属唯一，跨协议可各自拥有同一流程的反馈。
+        /// </summary>
+        private void WriteResultToProtocolOwners(int camIdx, string finsVal, string modbustcpVal, string modbusrtuVal, bool isNg)
+        {
+            if (camIdx < 0 || camIdx >= 12) return;
+            int camNo = camIdx + 1;
+            for (int link = 1; link <= 4; link++)
+            {
+                string[] cfg;
+                try
+                {
+                    if (_comm.Omron.TryGetLinkCamera(link, camNo, out cfg))
+                    {
+                        if (link == 1) _comm.Omron.WriteCameraOutput(camIdx, finsVal, isNg);
+                        else _comm.Omron.WriteCameraOutputForLink(link, camIdx, finsVal, isNg);
+                    }
+                }
+                catch (Exception ex) { _logger.WriteLog("相机" + camNo + " FINS连接" + link + "输出失败: " + ex.Message); }
+
+                try
+                {
+                    if (_comm.Modbustcp.TryGetLinkCamera(link, camNo, out cfg))
+                    {
+                        if (link == 1) _comm.Modbustcp.WriteCameraOutput(camIdx, modbustcpVal, isNg);
+                        else _comm.Modbustcp.WriteCameraOutputForLink(link, camIdx, modbustcpVal, isNg);
+                    }
+                }
+                catch (Exception ex) { _logger.WriteLog("相机" + camNo + " ModbusTCP连接" + link + "输出失败: " + ex.Message); }
+
+                try
+                {
+                    if (_comm.ModbusRtu.TryGetLinkCamera(link, camNo, out cfg))
+                    {
+                        if (link == 1) _comm.ModbusRtu.WriteCameraOutput(camIdx, modbusrtuVal, isNg);
+                        else _comm.ModbusRtu.WriteCameraOutputForLink(link, camIdx, modbusrtuVal, isNg);
+                    }
+                }
+                catch (Exception ex) { _logger.WriteLog("相机" + camNo + " ModbusRTU连接" + link + "输出失败: " + ex.Message); }
+            }
+        }
+
+        /// <summary>
         /// 停止所有通讯窗体的轮询线程（程序关闭前调用，避免后台线程在进程退出时操作半释放资源）
         /// </summary>
         private void StopAllCommPolling()
@@ -8798,6 +8848,10 @@ namespace WindowsFormsApplication1
             try { _comm.Modbustcp?.StopPolling(); } catch { }
             try { _comm.ModbusRtu?.StopPolling(); } catch { }
             try { _comm.Omron?.StopPolling(); } catch { }
+            // ★修复（回归分析 #4）：连接 2~4 的整窗实例在 FormCommManager 的常驻池里，不在 _comm 的三个单例中；
+            //   原实现只停连接 1，关窗泵消息这 2 秒里 2~4 的 FINS/Modbus 仍在轮询。
+            //   这里只置停止标志、不 Join（每实例 Join 最多 1 秒，UI 线程不能为 12 条运行时排队空等）。
+            try { if (frmCommManager != null && !frmCommManager.IsDisposed) frmCommManager.RequestStopAllLinkPolling(); } catch { }
         }
 
 
@@ -12338,6 +12392,25 @@ namespace WindowsFormsApplication1
                         RollbackSchemeSwitch();
                         return;
                     }
+                    // ★修复（回归分析 #1）：bnClose 在"等待回调静止超时"时会中止本次拆除并直接返回（相机仍开着）。
+                    //   切方案链路不能把"调用返回"当成"已关相机"——仍有槽位未释放就中止本次切换，并在收尾
+                    //   把门控/按钮恢复；否则会在相机仍推流时卸载旧方案，随后收尾又拆一次、多一次停检窗口。
+                    bool cameraStillOpen = false;
+                    for (int slot = 0; slot < 12; slot++)
+                    {
+                        if (_cameraCtrl.Cameras[slot] != null) { cameraStillOpen = true; break; }
+                    }
+                    if (cameraStillOpen)
+                    {
+                        _logger.WriteLog("切方案中止：关闭相机未完成（仍有槽位未释放，bnClose 已中止本次拆除），已回滚门控并继续使用原方案");
+                        RollbackSchemeSwitch();
+                        try { Frm2.start = 1; } catch { }
+                        SafeBeginInvoke(new Action(() =>
+                        {
+                            try { label133.Text = "切方案中止：关相机未完成，已继续使用原方案"; } catch { }
+                        }));
+                        return;
+                    }
                     UpdateSplashProgress(10, "正在停止检测...");
                     _jobs.myjob1.baoguang = 0;
                     _jobs.myjob2.baoguang = 0;
@@ -14674,6 +14747,8 @@ namespace WindowsFormsApplication1
         // 软触发 CheckBox 切换：设置 TriggerSource 并联动触发执行按钮（取代 12 段 cbSoftTriggerN_CheckedChanged）
         private void SoftTriggerChangedFor(int index)
         {
+            // ★修复（回归分析 #2）：勾选变化时刷新后台 Arm 链使用的快照（本方法在 UI 线程）。
+            RefreshSoftTriggerSnapshot();
             if (_cameraCtrl.Cameras[index] == null) return;
             try
             {

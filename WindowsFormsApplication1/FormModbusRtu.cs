@@ -3133,6 +3133,13 @@ namespace WindowsFormsApplication1
             _runtime = null;
         }
 
+        /// <summary>只置停止标志、不 Join（主程序关闭时用：UI 线程不能为每个连接空等 1 秒）。</summary>
+        public void RequestStopPolling()
+        {
+            foreach (var rt in _runtimes.Values)
+                if (rt != null) rt.RequestStop();
+        }
+
         /// <summary>强制创建窗体句柄并完成整窗初始化（程序启动/管理器恢复后台已启用连接时用，避免外部无法访问 protected CreateHandle）。
         /// 说明：创建句柄不会触发 Load（Load 只在首次 Show 触发），故建句柄后必须显式 InitializeForm，
         /// 否则隐藏的额外实例只有被点开节点才会真正启动运行时。</summary>

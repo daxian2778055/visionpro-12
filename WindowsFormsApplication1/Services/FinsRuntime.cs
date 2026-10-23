@@ -82,6 +82,13 @@ namespace WindowsFormsApplication1
             }
         }
 
+        /// <summary>只置停止标志，不 Join——供关闭流程在 UI 线程上快速停轮询，避免每个实例空等 1 秒。</summary>
+        public void RequestStop()
+        {
+            if (Context == null) _host.StopRequested = true;
+            else _stopPolling = true;
+        }
+
         /// <summary>停止轮询线程：置停止标志并等待退出（最多 1 秒）。按是否配置 Context 分流。</summary>
         public void Stop()
         {
