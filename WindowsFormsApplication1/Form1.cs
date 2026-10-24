@@ -5734,13 +5734,25 @@ namespace WindowsFormsApplication1
                                 #endregion
 
                                 // ★ 2026-09-06（②参数错位修复）：把随帧携带的 payload 写入 block 输入
-                                if (!string.IsNullOrEmpty(payload.Key)
-                                    && !(frameSrc?.Proto == NoProtoProto && !myjob.block.Inputs.Contains(payload.Key)))
+                                // ★修复（通讯输入语义）：流程里没有同名输入端口，只表示该流程不需要这项通讯参数，
+                                //   跳过写入即可继续检测。原实现对 FINS/Modbus 直接抛 InvalidOperationException →
+                                //   inputOk=false → 整帧不检测判失败（"相机N 输入准备失败"），属过度报错。
+                                if (!string.IsNullOrEmpty(payload.Key))
                                 {
-                                    if (!myjob.block.Inputs.Contains(payload.Key))
-                                        throw new InvalidOperationException("触发参数端口不存在: " + payload.Key);
-                                    try { myjob.block.Inputs[payload.Key].Value = payload.Value; }
-                                    catch (Exception exPayload) { inputOk = false; _logger.WriteLog("相机" + myjob.path_number + " payload 写入失败: " + exPayload.Message); }
+                                    if (myjob.block.Inputs.Contains(payload.Key))
+                                    {
+                                        try { myjob.block.Inputs[payload.Key].Value = payload.Value; }
+                                        catch (Exception exPayload) { inputOk = false; _logger.WriteLog("相机" + myjob.path_number + " payload 写入失败: " + exPayload.Message); }
+                                    }
+                                    else
+                                    {
+                                        // 限流提示便于现场核对参数名，但不影响本帧检测。
+                                        WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                                            "[通讯输入-" + (frameSrc == null ? 0 : frameSrc.Proto) + "-" + payload.Key + "-端口不存在]",
+                                            m => _logger.WriteLog(m),
+                                            "流程(" + myjob.path_number + ") 无输入端口 \"" + payload.Key
+                                                + "\"，本帧跳过该通讯参数继续检测（该流程不需要此项通讯信息）", 5000);
+                                    }
                                 }
                             }
                             catch (Exception ex)
@@ -7949,309 +7961,191 @@ namespace WindowsFormsApplication1
 
             }
         }
+        // ★IO 输出模式自愈（现场确认）：客户忘记把 IO2 配置成输出模式时，LineInverter 会返回
+        //   0x80000106（MV_E_GC_ACCESS：节点访问条件错误）。首次失败且相机在线时，自动把 IO2
+        //   切为 Output 并重试一次；每台相机只尝试一次，失败后不再反复写。
+        //   Line0 / Line1 不自动改（现场确认这两根不用管，Line0 多为外部触发输入），Line3/4 也不碰。
+        private readonly int[,] _lineOutputModeState = new int[12, 16]; // 0未试 1已切输出 2尝试失败不再试
+        private readonly int[,] _lineOutputErrTick = new int[12, 16];
+        private readonly object _lineOutputModeSync = new object();
+
+        private void SetCameraLineOutput(int camIndex, uint line, bool value, string tag)
+        {
+            if (_disposingFlag || camIndex < 0 || camIndex >= 12) return;
+            var cam = _cameraCtrl.Cameras[camIndex];
+            if (cam == null) return;
+            // ★现场确认：只有 IO2 需要“忘记设输出模式”的自愈；Line0/Line1 不用管。
+            uint requestedLine = line;
+            if (dahua)
+            {
+                if (line == 0) line = 0; else line = line - 1;
+            }
+            int nRet = cam.MV_CC_SetEnumValue_NET("LineSelector", line);
+            if (nRet != MyCamera.MV_OK)
+            {
+                LogLineOutputError(camIndex, line, tag + ": LineSelector失败", nRet, " line=" + line);
+                return;
+            }
+            nRet = cam.MV_CC_SetBoolValue_NET("LineInverter", value);
+            if (nRet == MyCamera.MV_E_GC_ACCESS && requestedLine == 2 && TrySwitchOutputLine(camIndex, line))
+            {
+                // 已自动把 IO2 切成输出模式：重试一次，成功则不再记异常
+                nRet = cam.MV_CC_SetBoolValue_NET("LineInverter", value);
+            }
+            if (nRet != MyCamera.MV_OK)
+                LogLineOutputError(camIndex, line, tag + ": LineInverter失败", nRet, " val=" + value);
+        }
+
+        /// <summary>首次 LineInverter 因“节点访问条件”失败时，尝试把该线切为输出模式（每线一次）。</summary>
+        private bool TrySwitchOutputLine(int camIndex, uint line)
+        {
+            if (line == 0 || line >= 16) return false;   // Line0 多为触发输入，绝不自动改
+            var cam = _cameraCtrl.Cameras[camIndex];
+            if (cam == null) return false;
+            int idx = (int)line;
+            lock (_lineOutputModeSync)
+            {
+                int state = _lineOutputModeState[camIndex, idx];
+                if (state == 1) return true;
+                if (state == 2) return false;
+                try
+                {
+                    if (!cam.MV_CC_IsDeviceConnected_NET()) return false;   // 断线时不标记，重连后可再试
+                    var st = new MyCamera.MVCC_ENUMVALUE();
+                    int r = cam.MV_CC_GetEnumValue_NET("LineMode", ref st);
+                    if (r != MyCamera.MV_OK)
+                    {
+                        _lineOutputModeState[camIndex, idx] = 2;
+                        _logger.WriteLog("相机" + (camIndex + 1) + " IO输出线" + line + " 读取 LineMode 失败(ret=0x"
+                            + HkRet(r) + ")，无法自动切换为输出模式，请检查相机 IO 配置");
+                        return false;
+                    }
+                    bool supportsOutput = false;
+                    for (int i = 0; i < st.nSupportedNum; i++)
+                        if (st.nSupportValue[i] == 1) { supportsOutput = true; break; }
+                    if (st.nCurValue == 1)
+                    {
+                        _lineOutputModeState[camIndex, idx] = 2;
+                        _logger.WriteLog("相机" + (camIndex + 1) + " IO输出线" + line
+                            + " 已是输出模式但 LineInverter 写入失败，请检查该线是否被占用或相机是否支持取反");
+                        return false;
+                    }
+                    if (!supportsOutput)
+                    {
+                        _lineOutputModeState[camIndex, idx] = 2;
+                        _logger.WriteLog("相机" + (camIndex + 1) + " IO输出线" + line
+                            + " 不支持输出模式，请改用可配置为输出的 IO 线");
+                        return false;
+                    }
+                    r = cam.MV_CC_SetEnumValue_NET("LineMode", 1);   // 1 = Output
+                    if (r != MyCamera.MV_OK)
+                    {
+                        _lineOutputModeState[camIndex, idx] = 2;
+                        _logger.WriteLog("相机" + (camIndex + 1) + " IO输出线" + line
+                            + " 自动切换为输出模式失败(ret=0x" + HkRet(r) + ")，请在 MVS 中手动把该线设为 Output");
+                        return false;
+                    }
+                    _lineOutputModeState[camIndex, idx] = 1;
+                    _logger.WriteLog("相机" + (camIndex + 1) + " IO输出线" + line
+                        + " 原为输入模式，已自动切换为输出模式（后续输出正常）");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    _lineOutputModeState[camIndex, idx] = 2;
+                    _logger.WriteLog("相机" + (camIndex + 1) + " IO输出线" + line + " 自动切换输出模式异常: " + ex.Message);
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>IO 输出失败日志限流：同一相机同一线 5 秒最多一条，避免每帧刷屏。</summary>
+        private void LogLineOutputError(int camIndex, uint line, string what, int nRet, string detail)
+        {
+            if (camIndex < 0 || camIndex >= 12 || line >= 16) return;
+            int idx = (int)line;
+            int now = Environment.TickCount;
+            if (now - _lineOutputErrTick[camIndex, idx] < 5000) return;
+            _lineOutputErrTick[camIndex, idx] = now;
+            _logger.WriteLog(what + " ret=0x" + HkRet(nRet) + detail);
+        }
+
         private void output_camera(uint a, Boolean b)
         {
             // ★ 关键修复：检查是否正在释放或相机对象是否为空
             if (_disposingFlag || _cameraCtrl.Cameras[0] == null) return;
-
-            lock (locker1)
-            {
-                if (dahua)
-                    a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (MyCamera.MV_OK != nRet)
-                    {
-                        _logger.WriteLog("Set Fail1!" + nRet);
-                        return;
-                    }
-                    nRet = _cameraCtrl.Cameras[0].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (MyCamera.MV_OK != nRet)
-                    {
-                        _logger.WriteLog("Set Fail2!" + nRet);
-                        return;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog("IOO1~~~~~~~~~" + b + ex.Message);
-                }
-
-            }
+            lock (locker1) { SetCameraLineOutput(0, a, b, "IO输出1"); }
         }
         private void output_camera1ng(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[0] == null) return;
-
-            lock (locker1)
-            {
-                if (dahua)
-                    a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[0].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出1-NG: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[0].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出1-NG: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出1-NG异常: " + ex.Message); }
-            }
+            lock (locker1) { SetCameraLineOutput(0, a, b, "IO输出1-NG"); }
         }
         private void output_camera2(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[1] == null) return;
             if (manager1 == null || manager1.JobCount <= 1) return;
-
-            lock (locker2)
-            {
-                if (dahua)
-                    a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[1].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出2: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
-                        return;
-                    }
-                    nRet = _cameraCtrl.Cameras[1].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出2: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog("IO输出2异常: " + ex.Message);
-                }
-            }
+            lock (locker2) { SetCameraLineOutput(1, a, b, "IO输出2"); }
         }
         private void output_camera3(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[2] == null) return;
             if (manager1 == null || manager1.JobCount <= 2) return;
-
-            lock (locker3)
-            {
-                if (dahua)
-                    a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[2].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出3: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
-                        return;
-                    }
-                    nRet = _cameraCtrl.Cameras[2].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出3: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog("IO输出3异常: " + ex.Message);
-                }
-            }
+            lock (locker3) { SetCameraLineOutput(2, a, b, "IO输出3"); }
         }
         private void output_camera4(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[3] == null) return;
             if (manager1 == null || manager1.JobCount <= 3) return;
-
-            lock (locker4)
-            {
-                if (dahua)
-                    a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[3].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出4: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
-                        return;
-                    }
-                    nRet = _cameraCtrl.Cameras[3].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出4: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog("IO输出4异常: " + ex.Message);
-                }
-            }
+            lock (locker4) { SetCameraLineOutput(3, a, b, "IO输出4"); }
         }
         private void output_camera5(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[4] == null) return;
             if (manager1 == null || manager1.JobCount <= 4) return;
-
-            lock (locker5)
-            {
-                if (dahua)
-                    a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[4].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出5: LineSelector失败 ret=0x" + HkRet(nRet) + " line=" + a);
-                        return;
-                    }
-                    nRet = _cameraCtrl.Cameras[4].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK)
-                    {
-                        _logger.WriteLog("IO输出5: LineInverter失败 ret=0x" + HkRet(nRet) + " val=" + b);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.WriteLog("IO输出5异常: " + ex.Message);
-                }
-            }
+            lock (locker5) { SetCameraLineOutput(4, a, b, "IO输出5"); }
         }
         private void output_camera6(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[5] == null) return;
             if (manager1 == null || manager1.JobCount <= 5) return;
-
-            lock (locker6)
-            {
-                if (dahua) a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[5].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出6: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[5].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出6: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出6异常: " + ex.Message); }
-            }
+            lock (locker6) { SetCameraLineOutput(5, a, b, "IO输出6"); }
         }
         private void output_camera7(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[6] == null) return;
             if (manager1 == null || manager1.JobCount <= 6) return;
-
-            lock (locker7)
-            {
-                if (dahua) a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[6].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出7: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[6].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出7: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出7异常: " + ex.Message); }
-            }
+            lock (locker7) { SetCameraLineOutput(6, a, b, "IO输出7"); }
         }
         private void output_camera8(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[7] == null) return;
             if (manager1 == null || manager1.JobCount <= 7) return;
-
-            lock (locker8)
-            {
-                if (dahua) a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[7].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出8: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[7].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出8: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出8异常: " + ex.Message); }
-            }
+            lock (locker8) { SetCameraLineOutput(7, a, b, "IO输出8"); }
         }
         private void output_camera9(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[8] == null) return;
             if (manager1 == null || manager1.JobCount <= 8) return;
-
-            lock (locker9)
-            {
-                if (dahua) a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[8].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出9: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[8].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出9: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出9异常: " + ex.Message); }
-            }
+            lock (locker9) { SetCameraLineOutput(8, a, b, "IO输出9"); }
         }
         private void output_camera10(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[9] == null) return;
             if (manager1 == null || manager1.JobCount <= 9) return;
-
-            lock (locker10)
-            {
-                if (dahua) a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[9].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出10: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[9].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出10: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出10异常: " + ex.Message); }
-            }
+            lock (locker10) { SetCameraLineOutput(9, a, b, "IO输出10"); }
         }
         private void output_camera11(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[10] == null) return;
             if (manager1 == null || manager1.JobCount <= 10) return;
-
-            lock (locker11)
-            {
-                if (dahua) a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[10].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出11: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[10].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出11: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出11异常: " + ex.Message); }
-            }
+            lock (locker11) { SetCameraLineOutput(10, a, b, "IO输出11"); }
         }
         private void output_camera12(uint a, Boolean b)
         {
             if (_disposingFlag || _cameraCtrl.Cameras[11] == null) return;
             if (manager1 == null || manager1.JobCount <= 11) return;
-
-            lock (locker12)
-            {
-                if (dahua) a = a - 1;
-                try
-                {
-                    int nRet;
-                    nRet = _cameraCtrl.Cameras[11].MV_CC_SetEnumValue_NET("LineSelector", a);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出12: LineSelector失败 ret=0x" + HkRet(nRet)); return; }
-                    nRet = _cameraCtrl.Cameras[11].MV_CC_SetBoolValue_NET("LineInverter", b);
-                    if (nRet != MyCamera.MV_OK) { _logger.WriteLog("IO输出12: LineInverter失败 ret=0x" + HkRet(nRet)); }
-                }
-                catch (Exception ex) { _logger.WriteLog("IO输出12异常: " + ex.Message); }
-            }
+            lock (locker12) { SetCameraLineOutput(11, a, b, "IO输出12"); }
         }
         // 在 Form1_FormClosed 后，WinForms 会调用 Dispose(bool)
         // 避免在 Dispose 中 base.Dispose(disposing) 释放 CogRecordDisplay 的 COM RCW 时报
