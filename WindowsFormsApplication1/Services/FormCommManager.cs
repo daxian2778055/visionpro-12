@@ -782,6 +782,9 @@ namespace WindowsFormsApplication1
             // 统一收口嵌入窗体的滚轮：自身无滚动需求的控件把滚轮交还 pnlHost，保证滚轮可一滚到底；
             // 表格/多行文本框等自持滚动控件除外（保留它们滚内容的能力）。同一控件只挂一次。
             WireWheelRedirect(f);
+            // ★修复（UI）：嵌入式窗体运行期动态新增的控件同样纳入滚轮转发，避免焦点落在新控件上时吞滚轮。
+            f.ControlAdded -= HostFormControlAdded;
+            f.ControlAdded += HostFormControlAdded;
             _currentHost = f;
             _currentIsEditor = isEditor;
             lblHint.Visible = false;
@@ -834,6 +837,12 @@ namespace WindowsFormsApplication1
             }
         }
 
+        /// <summary>嵌入窗体动态新增控件时补挂滚轮转发（同一控件由 _wheelHooked 去重）。</summary>
+        private void HostFormControlAdded(object sender, ControlEventArgs e)
+        {
+            if (e != null && e.Control != null) WireWheelRedirect(e.Control);
+        }
+
         /// <summary>★B1：被登记控件释放时自动反注册，避免强引用泄漏。</summary>
         private void WheelHookedControlDisposed(object sender, EventArgs e)
         {
@@ -852,27 +861,75 @@ namespace WindowsFormsApplication1
 
         private void HostMouseWheel(object sender, MouseEventArgs e)
         {
-            // 自滚控件（表格/多行框等）悬停时优先滚自身内容，不外传
+            // 自滚控件（表格/多行框等且确实有可滚内容）悬停时优先滚自身内容，不外传
             if (IsSelfScrolling(sender as Control)) return;
 
             var he = e as HandledMouseEventArgs;
             if (he != null) he.Handled = true;
-            if (pnlHost.VerticalScroll.Visible)
+            if (!pnlHost.VerticalScroll.Visible) return;
+
+            // ★修复（UI）：原实现每个滚轮事件只发一次 SB_LINE*，与系统"一个刻度滚 N 行"不一致，
+            //   小窗口下要滚很多次才到底。现按系统设置的行数重复发送；系统设为"整页"时发 SB_PAGE*。
+            int lines = SystemInformation.MouseWheelScrollLines;
+            if (lines < 0)
             {
-                // SB_LINEUP=0 / SB_LINEDOWN=1，语义与系统滚轮一致，到达内容底自动停
+                // SB_PAGEUP=2 / SB_PAGEDOWN=3
+                SendMessage(pnlHost.Handle, 0x0115 /*WM_VSCROLL*/,
+                    new IntPtr(e.Delta > 0 ? 2 : 3), IntPtr.Zero);
+                return;
+            }
+            if (lines == 0) return;   // 系统设置为“不滚动”，尊重用户设置
+            for (int i = 0; i < lines; i++)
+            {
+                // SB_LINEUP=0 / SB_LINEDOWN=1，到达内容底自动停
                 SendMessage(pnlHost.Handle, 0x0115 /*WM_VSCROLL*/,
                     new IntPtr(e.Delta > 0 ? 0 : 1), IntPtr.Zero);
             }
         }
 
-        /// <summary>控件自身是否有独立滚动需求（有则悬停其上时滚轮先滚它，避免误抢）。</summary>
+        /// <summary>
+        /// 控件自身是否有独立滚动需求（有则悬停其上时滚轮先滚它，避免误抢）。
+        /// ★修复（UI）：原来"多行 TextBox / ListBox / RichTextBox 一律算自滚"——
+        ///   页面里 RECEIVE/SEND、TCP 收发框都是无滚动条的多行框，滚轮悬停其上会被吞掉，
+        ///   表现为"怎么滚都不动、只能拖滚动条"。现改为"确实有可滚内容才自滚，否则交还宿主页面"。
+        /// </summary>
         private static bool IsSelfScrolling(Control c)
         {
             if (c == null) return false;
-            if (c is DataGridView) return true;
-            if (c is RichTextBox) return true;
-            if (c is ListBox) return true;
-            if (c is TextBox tb) return tb.Multiline;
+
+            if (c is DataGridView dgv)
+            {
+                try { return dgv.Rows.Count > dgv.DisplayedRowCount(false); }
+                catch { return true; }
+            }
+            if (c is RichTextBox rtb)
+            {
+                try
+                {
+                    if (rtb.ScrollBars == RichTextBoxScrollBars.None) return false;
+                    int lineH = Math.Max(1, rtb.Font.Height);
+                    int visible = Math.Max(1, rtb.ClientSize.Height / lineH);
+                    return rtb.GetLineFromCharIndex(rtb.TextLength) + 1 > visible;
+                }
+                catch { return true; }
+            }
+            if (c is ListBox lb)
+            {
+                try { return lb.Items.Count * Math.Max(1, lb.ItemHeight) > Math.Max(1, lb.ClientSize.Height); }
+                catch { return true; }
+            }
+            if (c is TextBox tb)
+            {
+                if (!tb.Multiline) return false;                  // 单行框滚轮一律交给页面
+                if (tb.ScrollBars == ScrollBars.None) return false; // 无滚动条的多行框不吞滚轮（本次问题根因）
+                try
+                {
+                    int lineH = Math.Max(1, tb.Font.Height);
+                    int visible = Math.Max(1, tb.ClientSize.Height / lineH);
+                    return tb.GetLineFromCharIndex(tb.TextLength) + 1 > visible;
+                }
+                catch { return true; }
+            }
             if (c is ScrollableControl sc) return sc.AutoScroll && sc.VerticalScroll.Visible;
             return false;
         }
