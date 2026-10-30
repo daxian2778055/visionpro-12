@@ -8021,7 +8021,11 @@ namespace WindowsFormsApplication1
                         return false;
                     }
                     bool supportsOutput = false;
-                    for (int i = 0; i < st.nSupportedNum; i++)
+                    // ★防御式加固：SDK 返回的 nSupportedNum 超出固定数组长度时不得越界读。
+                    int supportedNum = (st.nSupportValue == null)
+                        ? 0
+                        : Math.Min((int)st.nSupportedNum, st.nSupportValue.Length);
+                    for (int i = 0; i < supportedNum; i++)
                         if (st.nSupportValue[i] == 1) { supportsOutput = true; break; }
                     if (st.nCurValue == 1)
                     {
