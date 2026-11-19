@@ -10,7 +10,7 @@ namespace WindowsFormsApplication1.Tests
     /// 现场事故链：CogSerializer.SaveObjectToFile 直写目标 .vpp，序列化中途抛
     /// ObjectDisposedException("无法访问已释放的对象 对象名:CogImage8Grey") →
     /// 目标被截断成残文件 → 启动加载报"流尾" → 好方案彻底打不开。
-    /// 本类验证：任何写失败目标字节不动、半成品临时文件清理、旧内容滚动 .bak。
+    /// 本类验证：任何写失败目标字节不动、半成品临时文件清理、旧内容滚动到 "备份" 子目录的 .bak。
     /// 纯文件系统逻辑——无 Cognex 依赖，CI 可跑。
     /// </summary>
     [TestClass]
@@ -44,7 +44,7 @@ namespace WindowsFormsApplication1.Tests
 
             Assert.AreEqual("第一版", File.ReadAllText(target, Encoding.UTF8));
             Assert.IsFalse(File.Exists(AtomicFileSave.TempPathFor(target)), "成功后不应残留临时文件");
-            Assert.IsFalse(File.Exists(target + ".bak"), "首次保存没有旧文件，不应产生 .bak");
+            Assert.IsFalse(File.Exists(AtomicFileSave.BackupPathFor(target)), "首次保存没有旧文件，不应产生 .bak");
         }
 
         [TestMethod]
@@ -56,8 +56,15 @@ namespace WindowsFormsApplication1.Tests
             AtomicFileSave.Write(target, tmp => File.WriteAllText(tmp, "新方案", Encoding.UTF8));
 
             Assert.AreEqual("新方案", File.ReadAllText(target, Encoding.UTF8));
-            Assert.AreEqual("旧方案", File.ReadAllText(target + ".bak", Encoding.UTF8), "旧文件必须完整滚动到 .bak");
+            Assert.AreEqual("旧方案", File.ReadAllText(AtomicFileSave.BackupPathFor(target), Encoding.UTF8), "旧文件必须完整滚动到 .bak");
             Assert.IsFalse(File.Exists(AtomicFileSave.TempPathFor(target)));
+
+            // ★备份移入 "备份" 子目录：方案同目录不再出现 .bak，且与方案同卷（File.Replace 原子性前提）
+            Assert.AreEqual(Path.Combine(_dir, "备份", "a.vpp.bak"), AtomicFileSave.BackupPathFor(target));
+            Assert.IsFalse(File.Exists(target + ".bak"), "备份不得留在方案同目录");
+            Assert.AreEqual(Path.GetPathRoot(target), Path.GetPathRoot(AtomicFileSave.BackupPathFor(target)),
+                "备份必须与方案同卷，否则 File.Replace 退化成非原子兜底");
+            Assert.IsTrue(Directory.Exists(Path.Combine(_dir, "备份")));
         }
 
         [TestMethod]
@@ -75,7 +82,7 @@ namespace WindowsFormsApplication1.Tests
                 }));
 
             CollectionAssert.AreEqual(before, File.ReadAllBytes(target), "保存失败绝不能动原文件");
-            Assert.IsFalse(File.Exists(target + ".bak"), "失败不应产生 .bak（旧文件仍在原位）");
+            Assert.IsFalse(File.Exists(AtomicFileSave.BackupPathFor(target)), "失败不应产生 .bak（旧文件仍在原位）");
             Assert.IsFalse(File.Exists(AtomicFileSave.TempPathFor(target)), "半成品临时文件必须清理");
         }
 
@@ -111,7 +118,29 @@ namespace WindowsFormsApplication1.Tests
             AtomicFileSave.Write(target, tmp => File.WriteAllText(tmp, "v3", Encoding.UTF8));
 
             Assert.AreEqual("v3", File.ReadAllText(target, Encoding.UTF8));
-            Assert.AreEqual("v2", File.ReadAllText(target + ".bak", Encoding.UTF8), ".bak 只滚动一份，是上一次成功的内容");
+            Assert.AreEqual("v2", File.ReadAllText(AtomicFileSave.BackupPathFor(target), Encoding.UTF8), ".bak 只滚动一份，是上一次成功的内容");
+        }
+
+        [TestMethod]
+        public void Write_不同子目录同名方案_备份各自隔离不互相覆盖()
+        {
+            // ★备份目录跟着方案目录走：甲\di.vpp 与 乙\di.vpp 的备份分处各自的 "备份" 子目录，
+            //   不会像扁平大备份目录那样同名互相覆盖。
+            string dirA = Path.Combine(_dir, "甲");
+            string dirB = Path.Combine(_dir, "乙");
+            string a = Path.Combine(dirA, "di.vpp");
+            string b = Path.Combine(dirB, "di.vpp");
+            Directory.CreateDirectory(dirA);
+            Directory.CreateDirectory(dirB);
+            File.WriteAllText(a, "甲的旧版", Encoding.UTF8);
+            File.WriteAllText(b, "乙的旧版", Encoding.UTF8);
+
+            AtomicFileSave.Write(a, tmp => File.WriteAllText(tmp, "甲的新版", Encoding.UTF8));
+            AtomicFileSave.Write(b, tmp => File.WriteAllText(tmp, "乙的新版", Encoding.UTF8));
+
+            Assert.AreEqual("甲的旧版", File.ReadAllText(AtomicFileSave.BackupPathFor(a), Encoding.UTF8));
+            Assert.AreEqual("乙的旧版", File.ReadAllText(AtomicFileSave.BackupPathFor(b), Encoding.UTF8));
+            Assert.AreNotEqual(AtomicFileSave.BackupPathFor(a), AtomicFileSave.BackupPathFor(b));
         }
 
         [TestMethod]
@@ -180,7 +209,7 @@ namespace WindowsFormsApplication1.Tests
                 "还原成功就不得报'内容丢失'异常（那会让调用方文案改口）");
             Assert.AreEqual("旧方案", File.ReadAllText(target, Encoding.UTF8),
                 "Move 失败必须先把 .bak 还原回原路径，'原方案文件未被改动'这句必须为真");
-            Assert.IsFalse(File.Exists(target + ".bak"), "还原成功后 .bak 已被移回原路径");
+            Assert.IsFalse(File.Exists(AtomicFileSave.BackupPathFor(target)), "还原成功后 .bak 已被移回原路径");
         }
 
         [TestMethod]

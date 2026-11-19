@@ -14,8 +14,9 @@ namespace WindowsFormsApplication1
     /// 本类保证：
     /// ① 写临时文件阶段任何异常（含进程被杀之外的一切失败）→ 目标文件保持原字节不变，
     ///    半成品临时文件被清理，绝不产生"半写方案"；
-    /// ② 替换成功时旧文件滚动备份为 .bak（与替换同一原子操作），作恢复手段——
-    ///    打开对话框过滤串为 "*.vpp*"，可手动选中 .bak 恢复；
+    /// ② 替换成功时旧文件滚动备份到方案同目录的 "备份" 子目录（与替换同一原子操作），作恢复手段——
+    ///    备份与方案同卷、每个方案目录各自一份，同名方案不会互相覆盖；需要恢复时按失败提示的
+    ///    完整路径取用（把备份改名/移回原目录）；放子目录而非方案同目录，避免方案多时 .bak 混排；
     /// ③ 上次异常退出残留的 .saving 在下次保存开始时先清理；
     /// ④ 临时文件名刻意剥离 ".vpp"（形如 xxx.saving 而非 xxx.vpp.saving）——
     ///    过滤串 "*.vpp*" 不会放行半成品临时文件（放行 .bak 是刻意的恢复手段，
@@ -36,7 +37,7 @@ namespace WindowsFormsApplication1
             string full = Path.GetFullPath(targetPath);
             string dir = Path.GetDirectoryName(full);
             string temp = TempPathFor(full);
-            string backup = full + ".bak";
+            string backup = BackupPathFor(full);
 
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);   // 另存为/模板保存可能选择尚不存在的文件夹
@@ -54,7 +55,10 @@ namespace WindowsFormsApplication1
                     throw new IOException("保存过程未产生目标文件: " + temp);
 
                 if (File.Exists(full))
+                {
+                    EnsureBackupDir(backup);   // ★备份移到 "备份" 子目录：先建目录再滚动，首次保存不留下空文件夹
                     ReplaceWithBackup(temp, full, backup);
+                }
                 else
                     File.Move(temp, full);   // 首次保存（目标不存在，无旧文件可破坏）
             }
@@ -84,6 +88,28 @@ namespace WindowsFormsApplication1
                 stem = stem.Remove(i, 4);
             if (stem.Length == 0) stem = "save";
             return Path.Combine(dir ?? "", stem + ".saving");
+        }
+
+        /// <summary>
+        /// ★备份文件路径：方案同目录下的 "备份" 子目录，文件名沿用 "&lt;方案名&gt;.bak"。
+        /// 刻意保持与方案同卷——File.Replace 要求源/目标/备份同卷，跨盘会退化到 Copy→Delete→Move
+        /// 兜底而失去原子性；同时每个方案目录各有一份备份，天然按目录隔离，同名方案互不覆盖。
+        /// 恢复时把备份改名/移回原目录即可，失败提示会给出这里的完整路径。
+        /// </summary>
+        internal static string BackupPathFor(string targetPath)
+        {
+            string full = Path.GetFullPath(targetPath);
+            string dir = Path.GetDirectoryName(full) ?? "";
+            return Path.Combine(dir, BackupDirName, Path.GetFileName(full) + ".bak");
+        }
+
+        private const string BackupDirName = "备份";
+
+        private static void EnsureBackupDir(string backup)
+        {
+            string backupDir = Path.GetDirectoryName(backup);
+            if (!string.IsNullOrEmpty(backupDir) && !Directory.Exists(backupDir))
+                Directory.CreateDirectory(backupDir);
         }
 
         private static void ReplaceWithBackup(string temp, string full, string backup)
@@ -138,7 +164,8 @@ namespace WindowsFormsApplication1
                 throw new IntegrityLostException(
                     "保存落位失败: " + moveEx.Message
                     + "；原方案旧内容保留在备份文件 " + backup
-                    + "（如原方案内容缺失/异常，请把该备份改名为 " + Path.GetFileName(full) + " 恢复）",
+                    + "（如原方案内容缺失/异常，请把该备份改名为 " + Path.GetFileName(full)
+                    + " 并移回原目录 " + (Path.GetDirectoryName(full) ?? "") + " 恢复）",
                     backup, moveEx);
             }
         }
