@@ -17,6 +17,10 @@ namespace WindowsFormsApplication1
         // 多路相机检测线程都会调用 WriteDate/WriteDate1 写同一批 CSV，必须串行化，
         // 否则并发读写同一文件会抛出 IOException 且计数互相覆盖。
         private readonly object _lock = new object();
+        // ★低风险优化：月度汇总与每日明细写的是不同文件，拆锁后两条写路径可并行，各文件仍串行。
+        //   CreateCsvPath 会同时创建两种文件，故它按固定顺序 _lock → _dailyLock 持两把锁，
+        //   保证"建文件/写表头"与"追加明细/重写汇总"互斥；另两处只取单锁，不构成锁环路。
+        private readonly object _dailyLock = new object();
 
         // ★第26轮#20：最近一次已核对过的"日文件 + 方案列头"组合，避免每条记录都去读文件头
         private string _lastDayHeaderKey = "";
@@ -30,6 +34,14 @@ namespace WindowsFormsApplication1
         // ★复盘P2-4：编码不符跳过当日累计行时的 5s 限流日志用（同一 CSV 写入本就在 _lock 内，无需原子；
         //  初值必须为 0——int.MinValue 会让 now-MinValue 溢出为负，限流条件永不成立、日志永不触发）
         private int _encSkipLogTick;
+        // ★低风险优化：编码不符判定的单槽缓存（与 _encSkipLogTick 同在 _lock 下访问）。
+        //   判据的语义是"文件里有没有被有损解码出来的 ? 行"，而写入只改当日行、从不改历史字节，
+        //   因此一次成功写入前后判定结果不变；写成功后刷新缓存的 (路径,长度,mtime) 即可在下次命中，
+        //   省掉每条记录对约 35 行逐行 GetBytes 的分配。stat 失败一律清空缓存强制重算。
+        private string _encCheckPath;
+        private DateTime _encCheckMtimeUtc;
+        private long _encCheckLength;
+        private bool _encCheckMismatch;
 
         /*按照年份创建文件夹*/
         public void CreateDirectoryCsvPath(string path22)
@@ -58,7 +70,11 @@ namespace WindowsFormsApplication1
         /*按照月份创建csv*/
         public void CreateCsvPath(string path22, string shuju)
         {
-            lock (_lock)   // ★第26轮#20：与 WriteDate/WriteDate1 同锁串行（12 路检测线程都会进来）
+            // ★第26轮#20：与 WriteDate 同锁串行（12 路检测线程都会进来）。
+            // ★低风险优化：本方法同时创建月度汇总与每日明细两种文件，明细侧还须与 WriteDate1 互斥，
+            //   故再持 _dailyLock；获取顺序恒为 _lock → _dailyLock，另两处只取单锁，无锁环路。
+            lock (_lock)
+            lock (_dailyLock)
             {
             try
             {
@@ -164,7 +180,7 @@ namespace WindowsFormsApplication1
 
                     // 保留旧实现的"编码不匹配"保护：整份文件出现大量无法按默认代码页表示的字符时
                     // （Encoding.Default 会替换成 '?'），本次不改写该行。
-                    bool encodingMismatch = HasTooManyUnmappableChars(lines);
+                    bool encodingMismatch = HasTooManyUnmappableCharsCached(strCsvPath, lines);
 
                     string sOrg = "mode";
                     try
@@ -202,6 +218,7 @@ namespace WindowsFormsApplication1
                             lines[lastIdx] = str + "," + (iok + ing) + "," + iok + "," + ing + "," + sOrg + "," + iok * 1.0f / (iok + ing);
 
                             WriteAllLinesAtomic(strCsvPath, lines);
+                            RefreshEncCheckCache(strCsvPath, encodingMismatch);
                         }
                         else if (encodingMismatch && CountNonEmptyLines(lines) < 35)
                         {
@@ -212,6 +229,7 @@ namespace WindowsFormsApplication1
                             //   同样消除）。超过 35 行仍不追加（保持旧实现按行数滚动的上限语义）。
                             string dayRow = str + "," + (okss + ng1) + "," + okss + "," + ng1 + "," + sOrg + "," + okss * 1.0f / (okss + ng1);
                             AppendLineSafe(strCsvPath, dayRow);
+                            RefreshEncCheckCache(strCsvPath, encodingMismatch);
                         }
                         else if (CountNonEmptyLines(lines) < 35)
                         {
@@ -222,6 +240,7 @@ namespace WindowsFormsApplication1
                             Array.Copy(lines, appended, lines.Length);
                             appended[lines.Length] = str + "," + (okss + ng1) + "," + okss + "," + ng1 + "," + sOrg + "," + okss * 1.0f / (okss + ng1);
                             WriteAllLinesAtomic(strCsvPath, appended);
+                            RefreshEncCheckCache(strCsvPath, encodingMismatch);
                         }
                         else if (!encodingMismatch)
                         {
@@ -238,6 +257,7 @@ namespace WindowsFormsApplication1
                             rolled[n++] = todayRow;
                             Array.Resize(ref rolled, n);
                             WriteAllLinesAtomic(strCsvPath, rolled);
+                            RefreshEncCheckCache(strCsvPath, encodingMismatch);
                         }
                     }
                     catch (Exception ex)
@@ -263,7 +283,8 @@ namespace WindowsFormsApplication1
         {
             try
             {
-                lock (_lock)
+                // ★低风险优化：明细文件与月度汇总互不重叠，改用专用锁，与 WriteDate 并行。
+                lock (_dailyLock)
                 {
                     string strYear = DateTime.Now.Year.ToString();
                     string strMoth = DateTime.Now.ToString("Y");
@@ -338,6 +359,45 @@ namespace WindowsFormsApplication1
             catch (Exception ex)
             {
                 try { Errorwrite.WriteLog("每日记录失败:" + ex.Message); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// ★低风险优化：编码判定的单槽缓存。判据本身一行未改，仅在 (路径,长度,mtime) 与上次
+        ///   成功写入后的状态完全一致时复用结果；任何 stat 失败/状态不符都回到原计算路径。
+        /// </summary>
+        private bool HasTooManyUnmappableCharsCached(string path, string[] lines)
+        {
+            try
+            {
+                FileInfo fi = new FileInfo(path);
+                if (_encCheckPath == path && _encCheckLength == fi.Length && _encCheckMtimeUtc == fi.LastWriteTimeUtc)
+                    return _encCheckMismatch;
+            }
+            catch { }
+            bool result = HasTooManyUnmappableChars(lines);
+            RefreshEncCheckCache(path, result);
+            return result;
+        }
+
+        /// <summary>
+        /// 写成功后刷新缓存的文件状态；判定结果保持不变——写入只替换/追加当日行，历史字节不动，
+        /// 且新行由当前代码页可表示的字符组成，不会产生新的不可映射字符。stat 失败则清空缓存，
+        /// 下次强制重算（绝不用过期判定去覆盖历史数据）。
+        /// </summary>
+        private void RefreshEncCheckCache(string path, bool mismatch)
+        {
+            try
+            {
+                FileInfo fi = new FileInfo(path);
+                _encCheckPath = path;
+                _encCheckLength = fi.Length;
+                _encCheckMtimeUtc = fi.LastWriteTimeUtc;
+                _encCheckMismatch = mismatch;
+            }
+            catch
+            {
+                _encCheckPath = null;
             }
         }
 

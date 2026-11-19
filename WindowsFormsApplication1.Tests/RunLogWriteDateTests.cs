@@ -200,6 +200,37 @@ namespace WindowsFormsApplication1.Tests
             StringAssert.StartsWith(tail, Today() + ",2,1,1,mode,", "新行应为今日行");
         }
 
+        // ---------- 编码判定缓存：外部改写文件后必须失效重算，不得拿旧判定覆盖历史数据 ----------
+
+        [TestMethod]
+        public void 编码缓存_外部改成编码不符后_下次写入必须重新判定并跳过()
+        {
+            // 第一次：正常文件 → 写入成功并缓存 mismatch=false
+            File.WriteAllLines(_monthCsv, new[]
+            {
+                "日期,总量,OK,NG,型号,合格率",
+                Today() + ",10,6,4,AA,0.6"
+            }, Encoding.Default);
+            _log.WriteDate(1, 0, _p22);
+
+            // 外部（其它进程/人工）把文件改成含 >20 个 '?' 的编码不符行 → 长度/mtime 变化
+            string junk = new string('?', 21);
+            File.WriteAllLines(_monthCsv, new[]
+            {
+                "日期,总量,OK,NG,型号,合格率",
+                junk + ",0,0,0,0,0",
+                Today() + ",10,6,4,AA,0.6"
+            }, Encoding.Default);
+
+            // 第二次：缓存必须失效、重新算出 mismatch=true → 本次不改写当日累计行
+            _log.WriteDate(1, 0, _p22);
+
+            string[] lines = File.ReadAllLines(_monthCsv, Encoding.Default);
+            Assert.AreEqual(3, lines.Length);
+            Assert.AreEqual(Today() + ",10,6,4,AA,0.6", lines[2],
+                "★外部改写后编码缓存必须失效重算，否则会用旧判定整表重写、把有损解码固化进历史行");
+        }
+
         // ---------- 功能⑧上限语义：≥35 非空行且非今日 → 滚掉最旧数据行 + 写入当日首条 ----------
 
         [TestMethod]
