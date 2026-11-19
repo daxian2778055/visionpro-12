@@ -109,8 +109,10 @@ public class Myjob
         public float cameraAcqTicks = 0;
 
         // 使用Interlocked或lock保护的字段，通过属性访问
-        private int _changel1 = 0;
-        private int _changel2 = 0;
+        // ★低风险加固：setter 在 _outputLock 内写、getter 无锁读（PLC 输出状态跨线程读取），
+        //   字段加 volatile 补齐可见性；写入仍保留原锁，不改任何调用方与时序。
+        private volatile int _changel1 = 0;
+        private volatile int _changel2 = 0;
         public int outputok2 = 0;
         public int outputng2 = 0;
         public object locker_ok = new object();

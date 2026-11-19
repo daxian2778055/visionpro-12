@@ -6133,9 +6133,10 @@ namespace WindowsFormsApplication1
             try
             {
                 var asm = System.Reflection.Assembly.GetExecutingAssembly();
-                // ★版本规则（现场定，2026-09-20）：版本号 = 构建日期 + 推送号（git 短哈希），
-                //   由构建时自动写入 BuildInfo（tools/gen-buildinfo.ps1，csproj GenerateBuildInfo 目标）。
-                //   正常构建后形如 "2026.09.20+18f0607"；BuildInfo 缺失（非常规构建）时回退程序集版本。
+                // ★版本规则（现场定）：版本号 = 推送日期 + 本次代码提交的 git 短哈希（yyyy.MM.dd+shortHash），
+                //   由维护者在推送前手工更新 BuildInfo.cs 并同步 Form1.Designer.cs 的日期戳 label148，
+                //   代码改动与版本号更新分成两次提交；形如 "2026.11.19+feff8f4"。
+                //   BuildInfo 缺失（非常规构建）时回退程序集版本。
                 string ver = BuildInfo.Version;
                 if (string.IsNullOrEmpty(ver))
                 {

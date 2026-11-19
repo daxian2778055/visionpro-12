@@ -34,6 +34,11 @@ error/
 _linecount.txt
 代码审查报告*.html
 
+# ===== 测试运行产物 =====
+TestResults/
+*.trx
+*.coverage
+
 # ===== 调试符号归档（随每次构建增长，不入库） =====
 WindowsFormsApplication1/SymbolsArchive/
 

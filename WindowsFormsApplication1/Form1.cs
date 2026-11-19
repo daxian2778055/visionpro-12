@@ -213,7 +213,10 @@ namespace WindowsFormsApplication1
         //   模拟实测：12 路 3fps（总需求 36/s、上限 62.5/s，预算根本没用完）旧法 11 路显示率 0%。
         //   均分也不合理（现场反馈）：快慢版本来不同，均分把快路压到 17% 而慢路用不完份额；
         //   按需求解后同场景快路 51%、慢路 100%、总量 62.4/s 仍在上限内。详见 RenderBudget.cs 头部。
-        private int _renderMinIntervalMs = 16;
+        // ★低风险加固：该值由 UI 线程写（DisplaySettings）、检测线程每帧读（TryClaimRenderBudget），
+        //   加 volatile 保证配置改动对渲染裁决立即可见；C# 不允许 volatile 字段作 out 参数，
+        //   故下方 TryParse 改用局部变量解析后再赋值。
+        private volatile int _renderMinIntervalMs = 16;
         private readonly RenderBudget _renderBudget = new RenderBudget();
         // ★第56轮：显示降频的阈值/权重参数（窗体侧留一份生效副本，配置窗回填与日志都用它；
         //   调度器内部也有一份不可变引用，两者由 ApplyDisplayThrottle 同一次赋值保持一致）。
@@ -238,7 +241,7 @@ namespace WindowsFormsApplication1
         // ★第57轮：这一格不再开放给现场，恒由全局最小间隔派生（一半、地板 8ms），见 AutoInteractiveIntervalMs。
         //   初值必须与 _renderMinIntervalMs=16 配套：留 0 就是"交互时不限速"，第56轮 P4 实测那是性能反转点
         //   （12 路 30fps 一动鼠标瞬时 360 次/秒 = 封顶的 5.8 倍）；留 20 则"放宽"条件恒假＝纯摆设（F6）。
-        private int _renderInteractiveIntervalMs = DisplayThrottleSettings.AutoInteractiveIntervalMs(16);
+        private volatile int _renderInteractiveIntervalMs = DisplayThrottleSettings.AutoInteractiveIntervalMs(16);
         // ★第58轮③：这些键已从配置窗和 ini 读取里退出（前三项由代码派生，后两项对应的分支已删除），
         //   但旧 ini 里可能还留着。读侧不再解析它们，只在启动时点名提示，免得现场改了数字
         //   却查不出为什么不生效。新增废弃键往这里加一行即可，不要往读取段里塞兼容分支。
@@ -296,9 +299,12 @@ namespace WindowsFormsApplication1
             _layoutMode = (savedLayout == "Row") ? "Row" : "Grid";
             // ★ 显示降载配置（2026-09-19）：全局渲染最小间隔（ms，0=不限速）与原图快速路径开关。
             //   弱机现场可把间隔调大（如 33）或开 RawImageMode=1；配置坏值回退默认。
-            if (!int.TryParse(_config.ReadString("Display", "RenderMinIntervalMs", "16"), out _renderMinIntervalMs)
-                || _renderMinIntervalMs < 0 || _renderMinIntervalMs > 1000)
+            int parsedRenderInterval;
+            if (!int.TryParse(_config.ReadString("Display", "RenderMinIntervalMs", "16"), out parsedRenderInterval)
+                || parsedRenderInterval < 0 || parsedRenderInterval > 1000)
                 _renderMinIntervalMs = 16;
+            else
+                _renderMinIntervalMs = parsedRenderInterval;
             _displayRawImage = _config.ReadString("Display", "RawImageMode", "0") == "1";
             // 交互期间隔：★第57轮起不再开放给现场，由全局最小间隔派生（一半、地板 8ms）。
             //   它的生效条件本来就是"严格小于全局间隔"（见 TryClaimRenderBudget）——填得比全局大就是个死框，
@@ -9325,7 +9331,13 @@ namespace WindowsFormsApplication1
                                                 if (nameMatched)
                                                     i_temp++;
                                             }
-                                            catch { }
+                                            // ★低风险加固：原为裸 catch{}，设备枚举/匹配/重建取流抛异常时
+                                            //   静默跳过，现场只见"相机没连上"却查不到原因。与旁支
+                                            //   CheckAndReconnectCamera 的口径一致，补记异常日志。
+                                            catch (Exception exDevice)
+                                            {
+                                                _logger.WriteLog("按名重扫第 " + j + " 台重连异常: " + exDevice.Message);
+                                            }
                                         }
                                     }
                                 }
@@ -13597,7 +13609,9 @@ namespace WindowsFormsApplication1
             DeviceListAcq();
         }
         int diyici = 0;
-        bool dakaizhong = false;
+        // ★低风险加固：开相机标志在 UI 线程写、后台重连/监控线程读（timer2_Tick、daoqi_jiankong 等），
+        //   与同用途的 chonglianzhong 一样声明 volatile，避免读到旧值导致重连判断滞后一拍。
+        private volatile bool dakaizhong = false;
         // ★ 2026-09-06 授权过期门控（④）：替代局部 dayz，供 initialize_FormSet 自动开相机前判断。
         // ★ 2026-09-07：后台监控线程（daoqi_jiankong）也会写它，故声明 volatile。
         private volatile bool _authExpired = false;

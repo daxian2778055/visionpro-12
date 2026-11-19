@@ -7,7 +7,7 @@ on:
 jobs:
   # 单元测试：WindowsFormsApplication1.Tests 采用"源码链接"设计（Compile Include 直链主工程源文件，
   # 不引用主工程程序集），因此不依赖 Cognex VisionPro（主工程的绝对路径 HintPath 在托管 runner 上不存在）
-  # 即可真实编译并运行 178 个用例（★第62轮：+2 例——PathLayout.SchemePathEquals（"同路径不重复切换"判据，
+  # 即可真实编译并运行当前全部用例（用例数逐轮增长，以 dotnet test 实测输出为准；★第62轮：+2 例——PathLayout.SchemePathEquals（"同路径不重复切换"判据，
   # 本轮自 Form1.cs 搬入可测文件）两个方向都钉住：写法差异（大小写/正斜杠/两端空白/尾部 NUL/末尾斜杠）必须判等，
   # 相近路径（不同目录/不同文件/前缀相似/扩展名相似/空目标/双反斜杠）必须判不等——后者一旦误判成相等，
   # PLC 要的换型会被静默跳过，现场看到的就是"发了换型字符但画面还是旧方案"，比漏判更坑人；
