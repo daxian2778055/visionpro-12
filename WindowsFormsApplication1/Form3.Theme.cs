@@ -40,8 +40,10 @@ namespace WindowsFormsApplication1
 
         #region ThemeFonts —— 字体（Microsoft YaHei 9pt，含回退）
 
-        private static readonly Font ThemeFontRegular = ResolveThemeFont(9F, FontStyle.Regular);
-        private static readonly Font ThemeFontBold = ResolveThemeFont(9F, FontStyle.Bold);
+        // ★文字显示不全修复：原 9pt 加粗 Microsoft YaHei 比控件设计时的默认字体更大，
+        //   label(高12)/按钮(高23) 装不下 → 文字被裁。统一降到 8pt，与原生控件尺寸匹配。
+        private static readonly Font ThemeFontRegular = ResolveThemeFont(8F, FontStyle.Regular);
+        private static readonly Font ThemeFontBold = ResolveThemeFont(8F, FontStyle.Bold);
 
         /// <summary>按“微软雅黑 → Segoe UI → 系统默认”顺序挑选可用字体，找不到时安全回退。</summary>
         private static Font ResolveThemeFont(float size, FontStyle style)
@@ -86,7 +88,8 @@ namespace WindowsFormsApplication1
                 button.UseVisualStyleBackColor = false;
                 button.BackColor = primary ? ThemeBtnBg : ThemeBtnBgSecondary;
                 button.ForeColor = ThemeBtnText;
-                button.Font = primary ? ThemeFontBold : ThemeFontRegular;
+                // 按钮统一用 Regular（不用 Bold）——加粗会撑宽字形，窄按钮(发送/保存/接收数据)的文字易被裁
+                button.Font = ThemeFontRegular;
                 button.FlatAppearance.BorderColor = ThemeBorder;
                 button.FlatAppearance.BorderSize = 1;
                 button.FlatAppearance.MouseOverBackColor = ThemeBtnBgHover;
