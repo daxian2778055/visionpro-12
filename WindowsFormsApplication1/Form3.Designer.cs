@@ -356,7 +356,7 @@
             // 
             // btnSendFile
             // 
-            this.btnSendFile.Location = new System.Drawing.Point(490, 460);
+            this.btnSendFile.Location = new System.Drawing.Point(490, 335);
             this.btnSendFile.Name = "btnSendFile";
             this.btnSendFile.Size = new System.Drawing.Size(87, 23);
             this.btnSendFile.TabIndex = 26;
@@ -415,7 +415,7 @@
             // 
             // txtFileName
             // 
-            this.txtFileName.Location = new System.Drawing.Point(620, 460);
+            this.txtFileName.Location = new System.Drawing.Point(620, 335);
             this.txtFileName.Name = "txtFileName";
             this.txtFileName.Size = new System.Drawing.Size(87, 21);
             this.txtFileName.TabIndex = 32;
@@ -431,7 +431,7 @@
             // 
             // btn_Ok
             // 
-            this.btn_Ok.Location = new System.Drawing.Point(620, 410);
+            this.btn_Ok.Location = new System.Drawing.Point(620, 300);
             this.btn_Ok.Name = "btn_Ok";
             this.btn_Ok.Size = new System.Drawing.Size(75, 23);
             this.btn_Ok.TabIndex = 33;
@@ -442,7 +442,7 @@
             // 
             // textBox9
             // 
-            this.textBox9.Location = new System.Drawing.Point(620, 438);
+            this.textBox9.Location = new System.Drawing.Point(620, 320);
             this.textBox9.Name = "textBox9";
             this.textBox9.Size = new System.Drawing.Size(112, 21);
             this.textBox9.TabIndex = 34;
@@ -663,7 +663,7 @@
             // 
             // textBox26（拍照触发字符）
             // 
-            this.textBox26.Location = new System.Drawing.Point(490, 428);
+            this.textBox26.Location = new System.Drawing.Point(490, 420);
             this.textBox26.Name = "textBox26";
             this.textBox26.Size = new System.Drawing.Size(120, 21);
             this.textBox26.TabIndex = 76;
@@ -671,7 +671,7 @@
             // label17（拍照触发字符标签）
             // 
             this.label17.AutoSize = true;
-            this.label17.Location = new System.Drawing.Point(490, 410);
+            this.label17.Location = new System.Drawing.Point(490, 405);
             this.label17.Name = "label17";
             this.label17.Size = new System.Drawing.Size(95, 12);
             this.label17.TabIndex = 77;
@@ -683,154 +683,154 @@
             // groupBox3（各相机拍照触发字符）
             // 
             this.groupBox3.SuspendLayout();
-            this.groupBox3.Location = new System.Drawing.Point(12, 405);
+            this.groupBox3.Location = new System.Drawing.Point(12, 340);
             this.groupBox3.Name = "groupBox3";
-            this.groupBox3.Size = new System.Drawing.Size(465, 200);
+            this.groupBox3.Size = new System.Drawing.Size(465, 145);
             this.groupBox3.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
             | System.Windows.Forms.AnchorStyles.Right)));
             this.groupBox3.TabIndex = 80;
             this.groupBox3.TabStop = false;
             this.groupBox3.Text = "各相机拍照触发字符（留空=任意字符触发）";
             // textBoxP1
-            this.textBoxP1.Location = new System.Drawing.Point(85, 25);
+            this.textBoxP1.Location = new System.Drawing.Point(85, 20);
             this.textBoxP1.Name = "textBoxP1";
             this.textBoxP1.Size = new System.Drawing.Size(70, 21);
             this.textBoxP1.TabIndex = 81;
             // labelP1
             this.labelP1.AutoSize = true;
-            this.labelP1.Location = new System.Drawing.Point(15, 28);
+            this.labelP1.Location = new System.Drawing.Point(15, 23);
             this.labelP1.Name = "labelP1";
             this.labelP1.Size = new System.Drawing.Size(41, 12);
             this.labelP1.TabIndex = 93;
             this.labelP1.Text = "相机1";
             // textBoxP2
-            this.textBoxP2.Location = new System.Drawing.Point(85, 70);
+            this.textBoxP2.Location = new System.Drawing.Point(85, 52);
             this.textBoxP2.Name = "textBoxP2";
             this.textBoxP2.Size = new System.Drawing.Size(70, 21);
             this.textBoxP2.TabIndex = 82;
             // labelP2
             this.labelP2.AutoSize = true;
-            this.labelP2.Location = new System.Drawing.Point(15, 73);
+            this.labelP2.Location = new System.Drawing.Point(15, 55);
             this.labelP2.Name = "labelP2";
             this.labelP2.Size = new System.Drawing.Size(41, 12);
             this.labelP2.TabIndex = 94;
             this.labelP2.Text = "相机2";
             // textBoxP3
-            this.textBoxP3.Location = new System.Drawing.Point(85, 115);
+            this.textBoxP3.Location = new System.Drawing.Point(85, 84);
             this.textBoxP3.Name = "textBoxP3";
             this.textBoxP3.Size = new System.Drawing.Size(70, 21);
             this.textBoxP3.TabIndex = 83;
             // labelP3
             this.labelP3.AutoSize = true;
-            this.labelP3.Location = new System.Drawing.Point(15, 118);
+            this.labelP3.Location = new System.Drawing.Point(15, 87);
             this.labelP3.Name = "labelP3";
             this.labelP3.Size = new System.Drawing.Size(41, 12);
             this.labelP3.TabIndex = 95;
             this.labelP3.Text = "相机3";
             // textBoxP4
-            this.textBoxP4.Location = new System.Drawing.Point(85, 160);
+            this.textBoxP4.Location = new System.Drawing.Point(85, 116);
             this.textBoxP4.Name = "textBoxP4";
             this.textBoxP4.Size = new System.Drawing.Size(70, 21);
             this.textBoxP4.TabIndex = 84;
             // labelP4
             this.labelP4.AutoSize = true;
-            this.labelP4.Location = new System.Drawing.Point(15, 163);
+            this.labelP4.Location = new System.Drawing.Point(15, 119);
             this.labelP4.Name = "labelP4";
             this.labelP4.Size = new System.Drawing.Size(41, 12);
             this.labelP4.TabIndex = 96;
             this.labelP4.Text = "相机4";
             // textBoxP5
-            this.textBoxP5.Location = new System.Drawing.Point(235, 25);
+            this.textBoxP5.Location = new System.Drawing.Point(235, 20);
             this.textBoxP5.Name = "textBoxP5";
             this.textBoxP5.Size = new System.Drawing.Size(70, 21);
             this.textBoxP5.TabIndex = 85;
             // labelP5
             this.labelP5.AutoSize = true;
-            this.labelP5.Location = new System.Drawing.Point(165, 28);
+            this.labelP5.Location = new System.Drawing.Point(165, 23);
             this.labelP5.Name = "labelP5";
             this.labelP5.Size = new System.Drawing.Size(41, 12);
             this.labelP5.TabIndex = 97;
             this.labelP5.Text = "相机5";
             // textBoxP6
-            this.textBoxP6.Location = new System.Drawing.Point(235, 70);
+            this.textBoxP6.Location = new System.Drawing.Point(235, 52);
             this.textBoxP6.Name = "textBoxP6";
             this.textBoxP6.Size = new System.Drawing.Size(70, 21);
             this.textBoxP6.TabIndex = 86;
             // labelP6
             this.labelP6.AutoSize = true;
-            this.labelP6.Location = new System.Drawing.Point(165, 73);
+            this.labelP6.Location = new System.Drawing.Point(165, 55);
             this.labelP6.Name = "labelP6";
             this.labelP6.Size = new System.Drawing.Size(41, 12);
             this.labelP6.TabIndex = 98;
             this.labelP6.Text = "相机6";
             // textBoxP7
-            this.textBoxP7.Location = new System.Drawing.Point(235, 115);
+            this.textBoxP7.Location = new System.Drawing.Point(235, 84);
             this.textBoxP7.Name = "textBoxP7";
             this.textBoxP7.Size = new System.Drawing.Size(70, 21);
             this.textBoxP7.TabIndex = 87;
             // labelP7
             this.labelP7.AutoSize = true;
-            this.labelP7.Location = new System.Drawing.Point(165, 118);
+            this.labelP7.Location = new System.Drawing.Point(165, 87);
             this.labelP7.Name = "labelP7";
             this.labelP7.Size = new System.Drawing.Size(41, 12);
             this.labelP7.TabIndex = 99;
             this.labelP7.Text = "相机7";
             // textBoxP8
-            this.textBoxP8.Location = new System.Drawing.Point(235, 160);
+            this.textBoxP8.Location = new System.Drawing.Point(235, 116);
             this.textBoxP8.Name = "textBoxP8";
             this.textBoxP8.Size = new System.Drawing.Size(70, 21);
             this.textBoxP8.TabIndex = 88;
             // labelP8
             this.labelP8.AutoSize = true;
-            this.labelP8.Location = new System.Drawing.Point(165, 163);
+            this.labelP8.Location = new System.Drawing.Point(165, 119);
             this.labelP8.Name = "labelP8";
             this.labelP8.Size = new System.Drawing.Size(41, 12);
             this.labelP8.TabIndex = 100;
             this.labelP8.Text = "相机8";
             // textBoxP9
-            this.textBoxP9.Location = new System.Drawing.Point(385, 25);
+            this.textBoxP9.Location = new System.Drawing.Point(385, 20);
             this.textBoxP9.Name = "textBoxP9";
             this.textBoxP9.Size = new System.Drawing.Size(70, 21);
             this.textBoxP9.TabIndex = 89;
             // labelP9
             this.labelP9.AutoSize = true;
-            this.labelP9.Location = new System.Drawing.Point(315, 28);
+            this.labelP9.Location = new System.Drawing.Point(315, 23);
             this.labelP9.Name = "labelP9";
             this.labelP9.Size = new System.Drawing.Size(41, 12);
             this.labelP9.TabIndex = 101;
             this.labelP9.Text = "相机9";
             // textBoxP10
-            this.textBoxP10.Location = new System.Drawing.Point(385, 70);
+            this.textBoxP10.Location = new System.Drawing.Point(385, 52);
             this.textBoxP10.Name = "textBoxP10";
             this.textBoxP10.Size = new System.Drawing.Size(70, 21);
             this.textBoxP10.TabIndex = 90;
             // labelP10
             this.labelP10.AutoSize = true;
-            this.labelP10.Location = new System.Drawing.Point(315, 73);
+            this.labelP10.Location = new System.Drawing.Point(315, 55);
             this.labelP10.Name = "labelP10";
             this.labelP10.Size = new System.Drawing.Size(41, 12);
             this.labelP10.TabIndex = 102;
             this.labelP10.Text = "相机10";
             // textBoxP11
-            this.textBoxP11.Location = new System.Drawing.Point(385, 115);
+            this.textBoxP11.Location = new System.Drawing.Point(385, 84);
             this.textBoxP11.Name = "textBoxP11";
             this.textBoxP11.Size = new System.Drawing.Size(70, 21);
             this.textBoxP11.TabIndex = 91;
             // labelP11
             this.labelP11.AutoSize = true;
-            this.labelP11.Location = new System.Drawing.Point(315, 118);
+            this.labelP11.Location = new System.Drawing.Point(315, 87);
             this.labelP11.Name = "labelP11";
             this.labelP11.Size = new System.Drawing.Size(41, 12);
             this.labelP11.TabIndex = 103;
             this.labelP11.Text = "相机11";
             // textBoxP12
-            this.textBoxP12.Location = new System.Drawing.Point(385, 160);
+            this.textBoxP12.Location = new System.Drawing.Point(385, 116);
             this.textBoxP12.Name = "textBoxP12";
             this.textBoxP12.Size = new System.Drawing.Size(70, 21);
             this.textBoxP12.TabIndex = 92;
             // labelP12
             this.labelP12.AutoSize = true;
-            this.labelP12.Location = new System.Drawing.Point(315, 163);
+            this.labelP12.Location = new System.Drawing.Point(315, 119);
             this.labelP12.Name = "labelP12";
             this.labelP12.Size = new System.Drawing.Size(41, 12);
             this.labelP12.TabIndex = 104;
@@ -930,7 +930,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(760, 620);
+            this.ClientSize = new System.Drawing.Size(760, 500);
             this.Controls.Add(this.label16);
             this.Controls.Add(this.comboBox2);
             this.Controls.Add(this.label15);
