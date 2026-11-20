@@ -1,0 +1,662 @@
+﻿[
+    {
+        "path":  "Form1.cs",
+        "sha256":  "2A6715934A7F4B57A1E4E18DFDF71A6E0A66C90F24797FBC7140CCBA70465640"
+    },
+    {
+        "path":  "Form6.cs",
+        "sha256":  "86644F079C5A6C43F6DC254EBC0E2636FE7B1797ED4A0655FEBB399DE736F896"
+    },
+    {
+        "path":  "WindowsFormsApplication1.sln",
+        "sha256":  "B2BA6A87698EE5B5DF6F55F19B99A290E864C2F61B6CADC83E8E6A59BBD28958"
+    },
+    {
+        "path":  "GrantIniAccess/EnvironmentProbe.cs",
+        "sha256":  "29BE16203FE0AC85942A7CE215F0B349F922545DD15A2A4A871AB15006A9D691"
+    },
+    {
+        "path":  "GrantIniAccess/GrantIniAccess.csproj",
+        "sha256":  "7323678545D9AC88576024E6D4E51AE2382F391F37D682D7DEC8382DCB22BDEF"
+    },
+    {
+        "path":  "GrantIniAccess/GrantIniAccess.sln",
+        "sha256":  "1A5777CAD719D1A1DB6D4A10E4DBBEEBD8CEACAB169185ECB0F6B15B950F76CD"
+    },
+    {
+        "path":  "GrantIniAccess/MainForm.cs",
+        "sha256":  "AFE101DDE48F21F407BF81C5DADC68BC35EF78AFCDEAAFC6BA2AA8B1EEA68E0D"
+    },
+    {
+        "path":  "GrantIniAccess/MainForm.Designer.cs",
+        "sha256":  "DA988A3B6B08E500B7573CE2CD17222E50044011CACCAF2BCF6336A6CF9882C9"
+    },
+    {
+        "path":  "GrantIniAccess/PermissionHelper.cs",
+        "sha256":  "41B7ADBD386E2ACA53F6FF2AC74F90DE181FEDC1B7EF98AD8E716D7252B7F5FF"
+    },
+    {
+        "path":  "GrantIniAccess/PrivilegeHelper.cs",
+        "sha256":  "4BDCB64183D2396C0CC7235826F16EA0FEEC8C08895B938B37F9CC933AE5A3F1"
+    },
+    {
+        "path":  "GrantIniAccess/Program.cs",
+        "sha256":  "8575DD650ED03AA7AEFC91EEA7A171CCC378790858F8FB3EFB6460776069A010"
+    },
+    {
+        "path":  "GrantIniAccess/Properties/AssemblyInfo.cs",
+        "sha256":  "3741623A158B535A3185DFAB46D8640115CF52C493119B68E7840BE3BF9B11BC"
+    },
+    {
+        "path":  "tests/InspectionRegressionTests.cs",
+        "sha256":  "EDDE119FB051C316A4FB479C2731AE6E19EB89E6072DB35AB3F790EDEBF5B857"
+    },
+    {
+        "path":  "WindowsFormsApplication1/AtomicFileSave.cs",
+        "sha256":  "EC7875F63FE816B476F55B4FA2B60B8F7241DD12B261D95AF1279B0324954867"
+    },
+    {
+        "path":  "WindowsFormsApplication1/BuildInfo.cs",
+        "sha256":  "894DC95685990A83140BCA2A3D42FCC0CC2D209C446388D43A5CBD9F1AFC04B0"
+    },
+    {
+        "path":  "WindowsFormsApplication1/ClassIni.cs",
+        "sha256":  "56ABA93596C720905D9EFF05CD727E9B83E99E2FB96A06BB0D4D82CBB1F4E795"
+    },
+    {
+        "path":  "WindowsFormsApplication1/CommGridHelper.cs",
+        "sha256":  "59C08612C4DF3914C63C06ED3D53B61B059BEA938F10B18E516DB4B516FE29BA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/CommGridUiSink.cs",
+        "sha256":  "BD36B8133758F5E27D78FA75CEF5B4AD2815D1B21A0EA16BE42DB6A1AE185CDF"
+    },
+    {
+        "path":  "WindowsFormsApplication1/CommReconnectHelper.cs",
+        "sha256":  "B96909EF3D73FE2DA9D5F5F08118B831552086A1222E18AD1A990035EEBDED43"
+    },
+    {
+        "path":  "WindowsFormsApplication1/CommTriggerHelper.cs",
+        "sha256":  "E154F5B44EE0454C102BE7B43C846C4A814E0F3A89DFCF77D0DB8030068C874C"
+    },
+    {
+        "path":  "WindowsFormsApplication1/CommTriggerSource.cs",
+        "sha256":  "F8AF8DBC844935F76160DDCDECA4BF06784E56AB1ED2289752011DDA5A873721"
+    },
+    {
+        "path":  "WindowsFormsApplication1/CrashMonitor.cs",
+        "sha256":  "F11F0818E789C00B66FED24BD4A38F45959DD48ED9D175F62B04BD1A088C1FF3"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Datas.cs",
+        "sha256":  "817B1D5D448B4513EC212A0E191DAB9C130B861B209FE97B3B84D14B88A24356"
+    },
+    {
+        "path":  "WindowsFormsApplication1/DeadImageScan.cs",
+        "sha256":  "EC3AB670D0A52A39CE89BC67A1A9518028A486618D7F5703C81C9E61D5B1985B"
+    },
+    {
+        "path":  "WindowsFormsApplication1/DemoUtils.cs",
+        "sha256":  "9168D720AA50816B0198FEA90E2D46945E67CDF2889585E6524B4148A6912BCA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/ErrorLog.cs",
+        "sha256":  "D7D23C1A3C559F086760A8B72955986AEBB26F8C36A7904A47AD7E9C97678739"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.Camera18Events.cs",
+        "sha256":  "A0DCBC37003D2A834CA57AA99FDEC4E19B8C7B37F5604CF5D3CAD6ED4D1B49C0"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.Camera58Events.cs",
+        "sha256":  "F42A1A0C26CDEB5B20E47228E53AF46E215A8C8E68B3FE2120A74B9447047E27"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.Camera912Events.cs",
+        "sha256":  "7E2A833E312D9790AD5BE9D672B4897EAB5603C152DD7BC613AE37CEADFEBB03"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.cs",
+        "sha256":  "6060374CA9FABAD0F2631258EFBD29A1A0FBEC63BB6F42026083699B9ED74C9A"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.Designer.cs",
+        "sha256":  "C11B1CA0825D71BF96E1DE602ED79D1CB7CEF68AE0D53DCCB7E8522DB710D28B"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.DisplaySettings.cs",
+        "sha256":  "0C1D5EA571CF8DC22A4E95892722FB3D6178EFC9F9EC6B787FA48ED131AD10DD"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.ErrorDisplay.cs",
+        "sha256":  "509E6EFB13DF492CC1D4E0BD4EC57751E0E0A4132A3F56811E8D3814466F5022"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form1.UiTheme.cs",
+        "sha256":  "B4170FCAEF1B2479C9AEF8CDE03982E0AC0595AAB23DC8DC28B178624206B728"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form10.cs",
+        "sha256":  "7F5FD43638DBABDCE4FE5F327C5C7DFA2BA1B1289BB5F76E25C452FB45B85683"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form10.Designer.cs",
+        "sha256":  "A234FAD6BB3392132613BDAE7888B23C3E957463A128FFDA1B541C2DFF50F649"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form2.cs",
+        "sha256":  "B8510C6A75FCA973B1682E5D650556EC18FCE8FD31CEA3E4AF7B38E86CE828A9"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form2.Designer.cs",
+        "sha256":  "5B4D625AE3065F0AAFF79C40B764E0BAAB44EEF829111394CA7228D9A7BC2DD4"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form3.cs",
+        "sha256":  "E9263469C5AF559BB48D8659013407FC0748DDAF193A27581A2F6F3936AF0CF1"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form3.Designer.cs",
+        "sha256":  "AEFC7109FB1B55F65B00D9D0CBD85B60AAE2D1E0A1145572AA0625A72C7F4DAF"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form4.cs",
+        "sha256":  "F1BB015A34900721D8015C8F31DA6F335200D4317E59D5F699C00411E12D0861"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form4.Designer.cs",
+        "sha256":  "AA94915FA37FC0391C1A7159DB10796535A2D77AE085F5233EC75A62FCEB71F3"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form5.cs",
+        "sha256":  "550C91F8B85912EE3A24A760E5ECA1FB2EB4705C08BE260C0DE9D26F3F1EB556"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form5.Designer.cs",
+        "sha256":  "2CABAEAC2220CBE7AF5373AA844EE84CAC9AE6DD797479285988864ACE28EC74"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form6.cs",
+        "sha256":  "C6C1C5EBE565F6153657A2AB3F4FBB3F821BFFEC1EEE50CDEFC048DD567B73BC"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form6.Designer.cs",
+        "sha256":  "FD3FDFC232223942D0A729BF82DDF3FF287E2190563CFA84D30A6023D6458B26"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form8.cs",
+        "sha256":  "0DB0C06D5E0380E6A9A8BEFD9035D3245B51AAEFED92E584FDA328DC0AB48338"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form8.Designer.cs",
+        "sha256":  "35B2C6DC4E56811B94F5DA66BCDC1C053BA80DBDE834D4EDF4B1D1AE78DC3C2D"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form9.cs",
+        "sha256":  "850CBD88169AD765EA175E7DD4C695BECCD61393CA18B8E6689E93C29B71ABE8"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Form9.Designer.cs",
+        "sha256":  "AF31320BA3631A2BFA4EA1CFA1B5BBBA498F7EC4DA5122CE1B19B2E38A604BA7"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormMelsecSerial.cs",
+        "sha256":  "7226C9E7D0D7F89ECF56C2A7D420E06635DC65B2FD8F06F588422D2390D8A197"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormMelsecSerial.Designer.cs",
+        "sha256":  "01221235CAC81291674E69C12C5E1AE96A13E9948CA67CDB6CC94EB6AF4FB5C7"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormMES.cs",
+        "sha256":  "9FD51E3C004E3BC347E5A4579379EE89E55F14E3D3618EDA47E88839982477F6"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormMES.Designer.cs",
+        "sha256":  "2BD961BE58B9D08E166FBBD1D5D25B22E745928A867CA94ED13D64D3E59A7FF4"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormModbus.cs",
+        "sha256":  "812E35C9C785CD4E0A272078B689B86B88ED34955D4D7FAB475076F358A11C9E"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormModbus.Designer.cs",
+        "sha256":  "406DF1CE0B0F7AFCFB12AF296D7AD643C4CB5292FD72ABFD92AD9F74F34B3686"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormModbusRtu.cs",
+        "sha256":  "F98CAD0832E8380E4ACC2F59E8D0137144220E551EF4BB6E8569E41F92EEE40D"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormModbusRtu.designer.cs",
+        "sha256":  "09B56170A21926FF562A3A8B6B6164D9AAD45253FF0621619118E15E179B0A82"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormMySQL.cs",
+        "sha256":  "5CA41273102B287EACF98634E1DAC5E82A085518203539AC9997DCCC805DBCDC"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormMySQL.Designer.cs",
+        "sha256":  "36392448FCFCDEC8E648C375CD75A81E025138B2A1FCE2152EA806F5DF69DB89"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormOmron.cs",
+        "sha256":  "CD12E5EE86DB8E1BB2E57AAF4D807AF1C641681387FA5EEC2DE584AEDC721D9A"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormOmron.Designer.cs",
+        "sha256":  "3AA622732E1BD4B8085B252F75AE36A788974D43C706F0DD5A4841FFC23DC149"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormOperationHelp.cs",
+        "sha256":  "3E14AD4F74019C77E5749ED2CF087B9D15AF9ED31BA2E79D46C1BE32FC488510"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FormOperationHelp.Designer.cs",
+        "sha256":  "185FAB5E10AD4254FC0A2D820C411E90AC9F3D618A8443D32D99D6411E729018"
+    },
+    {
+        "path":  "WindowsFormsApplication1/FrameAccounting.cs",
+        "sha256":  "540258D14A934950ED7804D9B72DAF2422CE4910E406BD4AA7B78208A33C4432"
+    },
+    {
+        "path":  "WindowsFormsApplication1/jieshou.cs",
+        "sha256":  "13B762B80072443BAB95769D8F31FB34C84962339B2F0C04AFB6ECC33665E9CA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Modbus.cs",
+        "sha256":  "E7537EF93D5B2C324D4A2A76EB5C13A1A5F07C5F154AACF5C88BDF836547B686"
+    },
+    {
+        "path":  "WindowsFormsApplication1/MVCamera.cs",
+        "sha256":  "DBB6433D13B29F0EB316CF308AB007386C68496EAFA9E2AB998ACD00C3FE0144"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Myjob.cs",
+        "sha256":  "C76F9EF99432FC05B94681214F71696A77676564756793CB262464E5F50A4AA6"
+    },
+    {
+        "path":  "WindowsFormsApplication1/NgImagePreviewForm.cs",
+        "sha256":  "71B2D44212FEEE6095B5842E5580A1B58515B27E021325BB19BB915B1AE256FA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Program.cs",
+        "sha256":  "09ABD3BE730F7D329CE150041248D6959139BBEFCB14CDBAFCE2A184BC585A3A"
+    },
+    {
+        "path":  "WindowsFormsApplication1/QRCodeUtil.cs",
+        "sha256":  "727D237BCCC6748A04586E78102D7108A3E1BE99E06CDD45360F1ECDED09764C"
+    },
+    {
+        "path":  "WindowsFormsApplication1/ReadErrorLog.cs",
+        "sha256":  "E1559D32554A0DD81C83A0FEE99E26794A8F25D623EF689732AB910C8FBDCCFA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/ReadErrorLog.Designer.cs",
+        "sha256":  "212FBA5232AD4CAE312E36182F5137FA0055F97EE83E0DA00CA4C4E3B334B84D"
+    },
+    {
+        "path":  "WindowsFormsApplication1/RenderBudget.cs",
+        "sha256":  "8EBDA3105D975295D31B3E6159E70D1B9BAAAD55F181888FC407A0C85BF9D1F5"
+    },
+    {
+        "path":  "WindowsFormsApplication1/RenderCostMeter.cs",
+        "sha256":  "07D24B7FD602881FBD72BF2881276086037AF6DDC2E80A6DFD9CDA2D3CA29DBC"
+    },
+    {
+        "path":  "WindowsFormsApplication1/RunLog.cs",
+        "sha256":  "769B988AFC5C7AE053AD540D653CD6C3C9F3FFF20180756062B5ACD72FFFF189"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Settings.Designer.cs",
+        "sha256":  "F7135960287F1EC9F5149A4802D9A24F37E4CCA17216674D9C5E1A93E45CF3E5"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Settings1.Designer.cs",
+        "sha256":  "0ECD7D58EF5F65ECE0BC39AD7F102113F722EBB908A83C420BFFDACDA1B49F5B"
+    },
+    {
+        "path":  "WindowsFormsApplication1/SubSet.cs",
+        "sha256":  "F247BE5688C39E8EC2D81D67550609153EAD6182F73852EBA4058B20C6DF75AB"
+    },
+    {
+        "path":  "WindowsFormsApplication1/SubSet.Designer.cs",
+        "sha256":  "547EC0E73C89E2E87DDB6BFAA163A78B704A1747C508FC055198BC9E9CEE4A5C"
+    },
+    {
+        "path":  "WindowsFormsApplication1/WindowsFormsApplication1.csproj",
+        "sha256":  "A2E01E20D4B05AD4EFF102EE4D00C6D11B98AD5E775033321D78818DB3976602"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Configuration/AppConfiguration.cs",
+        "sha256":  "24208F103E4A0459FB5BA138E8B02AE485B5D22FB770D2421C97C10929840CB0"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Configuration/IAppConfiguration.cs",
+        "sha256":  "C50B2B30C53EF326C64E86550096982747D993D066FAA4D78A5602DFB5519AFA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Camera/CameraController.cs",
+        "sha256":  "D6A39CF71A9B9775B2A31A114E16ED0785DF1CF25CF14AE9CBC6D79CF6BDD796"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Camera/CameraDeviceInfo.cs",
+        "sha256":  "49327AF279E02D66E58257CA89204DA09B3F0FBFDAB7BECE23E8E91B40024E95"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Camera/CameraPixelFormat.cs",
+        "sha256":  "B8CC0ACF9D99F2D26F5630B164119958FABAFF4C89BEEFC2A96D2D1CC62B7F50"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Camera/HikCameraEnumerator.cs",
+        "sha256":  "A156FD3C618ACDBC94F6B19EAFAADB167847DB9DEEDD08A97D829EBD3AFF441E"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Infrastructure/AppHost.cs",
+        "sha256":  "183B873161DBD23DF309D3B8D534B762F9A9144F0A934FA9D7DF8101747C4CE6"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Infrastructure/IAppService.cs",
+        "sha256":  "63DBEE2E78CEC3B915B6A3FDA8633E04B3D730F4A8A54D82D42F725D427C9AF6"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Infrastructure/ServiceProvider.cs",
+        "sha256":  "47AD07558A52E77CDDA0B3E729A83854F85F4ADD7553B1F53BD8505607F547CC"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Logging/AsyncFileLogger.cs",
+        "sha256":  "5D525A456D0F2FDA03AA2A280639C8CAB518CD243EC2943F24253B33F24AE7C1"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Logging/ILogger.cs",
+        "sha256":  "99484AA0F772C7E5F329333F70CB0BA254455F82CE75E971576D3168AC36DB28"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Logging/Log.cs",
+        "sha256":  "3AAF47AD92478B820CDAFA013C1F75F4AB82A2918156EB2FC4F287841B09C798"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Logging/LogManager.cs",
+        "sha256":  "028FE075313B8263BB9E86E89311192337FAB2FA81D01984DE4A687769AF1DB4"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Logging/RateLimitedLog.cs",
+        "sha256":  "6A6D12BB73C02625FDA98C6D357CF32267215CF5F6F45670202DF9838F141E32"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Threading/CameraWorkQueue.cs",
+        "sha256":  "FA2F0CC818011B255EE05B90FB0EAD248E1C75F9B57AFBD8100B5D8D3B1DCEB7"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Threading/ControlUiDispatcher.cs",
+        "sha256":  "0AFFEC8DE2BDB2935BB508611107914765EFC18F541E9D733E01D7F570A8FBB4"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Threading/InspectionLifecycle.cs",
+        "sha256":  "82801BC6A9099BBD6D69B4C3A4259FBCF842CD3C8F92EE55BE51B3EA72F2F576"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Core/Threading/IUiDispatcher.cs",
+        "sha256":  "FB6B2396188AE3597CD7CEFCE1972BD911F7041EB9CC75782C3F9C134428BABF"
+    },
+    {
+        "path":  "WindowsFormsApplication1/DemoControl/UserControlCurve.cs",
+        "sha256":  "F5CE20670ACEFA9C889403BBD57F5F9DE940A8814D716B7EB6562C30A37A13BA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/DemoControl/UserControlCurve.Designer.cs",
+        "sha256":  "E8B4633D78ACA0BBA8C7D6EF650466AB154F96EF453B1FD060B734E6A0261F03"
+    },
+    {
+        "path":  "WindowsFormsApplication1/DemoControl/UserControlHead.cs",
+        "sha256":  "E48ED7FFB959681E25107045202368E4CC695FD76C77350B3A994B133B462CA0"
+    },
+    {
+        "path":  "WindowsFormsApplication1/DemoControl/UserControlHead.Designer.cs",
+        "sha256":  "92B84FC7A9BE253514F3E41BFF6BF9879AFAC5813C612A60005292D911E97EE3"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Properties/AssemblyInfo.cs",
+        "sha256":  "EAA7B8E54A4DC48732FDD3B82F2AC9BB3C4FAD98061E8C8B2549C0075934C4EA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Properties/Resources.Designer.cs",
+        "sha256":  "7DBEF4AB21D17D62A353BD2E7819C5E7CCB8870A8660F22920F9F9152E72A6BC"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Properties/Settings.Designer.cs",
+        "sha256":  "193A776C4F5AB7E92A87C9C902A54C508D1265CC20F69378DEF48445A4D8408E"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/CommCameraGuard.cs",
+        "sha256":  "734678933952F73BFC0B14772F54AC54910D03371E58FDDE75DFBE2D41EB9ED3"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/CommLinkManager.cs",
+        "sha256":  "E3E260EA73B1A43DCD8820FA6151133CED97E1F6F93CC09E9A23B610B7331ADF"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/CommunicationService.cs",
+        "sha256":  "E1F485189D3B702C4B1AE108AED7F3D5941FC947EF7A4FAC67899ACD2B850FDC"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ConfigService.cs",
+        "sha256":  "48DCD8CAA7898FA643C4E6EC1F78737D5E9D965105DA42F00BCA5A17AD89DDEC"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FinsConfig.cs",
+        "sha256":  "00BA0A273F447087813089AF128F3B5BAA66BC80F926E4B08D7CEF3BD8D996FD"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FinsIniStore.cs",
+        "sha256":  "F2DA13F17AEC811F901C2316AD9F630FA47880FC62BED34FAA5606450D36DFD8"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FinsLink.cs",
+        "sha256":  "1DB688BFB0CBDBF9F2C2823C5BA3F13296AEF6B1F30636BF40F44C4710D57A19"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FinsLinkContext.cs",
+        "sha256":  "D1166840C0CE97F8F9B3094BE1B6E86D52FEEC2021C36A163D787C2EB874221F"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FinsRuntime.cs",
+        "sha256":  "098B6C4F47B2C9B37D5F09EE145D68A841366F43B697D0660F7A7EF9DDC4BEE1"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormCommManager.cs",
+        "sha256":  "414E09C2907BAA423970E1AA49B5D6F8F0B8665B5320C40C44B3DF313F766C89"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormCommManager.Designer.cs",
+        "sha256":  "6B6EB3F631EAD0814F4191605683BC5B2D1ECD2208F90704677D709B68357E8F"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormFinsLinkConfig.cs",
+        "sha256":  "8462B7D6607FAC1DD814DC20C8F2B14CFA477FC821EA59CC2CFC07FD707B9904"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormFinsLinkConfig.Designer.cs",
+        "sha256":  "5230385D2EBFCD4CA3DF8EF48A57855642222256A83E336F021439EF456C3F82"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormModbusRtuLinkConfig.cs",
+        "sha256":  "B552FD317FD11E04456B424B7E1C13A22B8BB5DDD161E5DA2E9174AEC4AA10B8"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormModbusRtuLinkConfig.Designer.cs",
+        "sha256":  "7FA050B035137E231249A0827EBFF872B8425D2DF1B369B7B5DF7ED27EA289D7"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormModbusTcpLinkConfig.cs",
+        "sha256":  "C336A1F4F784A70FF6971B818B359BC9A35F37C0B37C8FB05D8992D6B2539829"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/FormModbusTcpLinkConfig.Designer.cs",
+        "sha256":  "5C2152FD8B40016AB35DDFCBB3D3F89B52CAE4A5D334F0D356377D56B2B07CCB"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ICommLink.cs",
+        "sha256":  "BC10C5696C985F574DC1D5CBF625A9408C85DFF64D60C5C9A962FA20EB0BD14C"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/IPlcOutputWriter.cs",
+        "sha256":  "7841C93C3FF720967FC409C79715C325D7D827C7B25DB96B096F31CB486049F9"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/JobService.cs",
+        "sha256":  "E4C2E7552DF1E8071A7B497D60EE56F4D9D8FE3B2B9BD188DB3E8E5141C7DA86"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/LoggingService.cs",
+        "sha256":  "3CFA938B29213173932ECF46779FA767F5935C73B627F7BE0C5EA731E39C1753"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusRtuConfig.cs",
+        "sha256":  "3F2FFCE743262CC5560BDA8BE5D1E9C0874145153943E657B9A4C3FBFD1A757D"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusRtuIniStore.cs",
+        "sha256":  "CC5ADDD44491D04CCBA1CD684D8AA39D7534A0710E6294911FB084D666C9BAA4"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusRtuLink.cs",
+        "sha256":  "DB34806B7DF219223B2376114528741A6481181EDD5EEDA0B687541D2DE96E40"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusRtuLinkContext.cs",
+        "sha256":  "A4439CA510C88D9D92CB0BBD69581DB84A3D5BC22BD46C9BEA6F57169E6717DD"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusRtuRuntime.cs",
+        "sha256":  "94B7EBBC9FAD4E991D03CDF0D29AA8D928E48D895FA968C9D01C6DF94C7838FB"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusTcpConfig.cs",
+        "sha256":  "300DAA8D72C6AB59E61771B2239C280B993BAA530DD7EACA28E0BC73F49D236D"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusTcpIniStore.cs",
+        "sha256":  "BBE223B519208E18FE420202B49A73646B01A45C9847713B9479A55941908684"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusTcpLink.cs",
+        "sha256":  "DCF6E919AEDAD511234A8ADC3CCDD64A404284402B13C4233B4F9BC7FFEE6844"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusTcpLinkContext.cs",
+        "sha256":  "EE1C7F90DEE28D7917856D7A0685CD300D88C222CB3F494ADD816E00A7077D33"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/ModbusTcpRuntime.cs",
+        "sha256":  "B63C5CFC05846D521141B28A92B8A2D667A50170F6E2CB346AA0CE2C54570F86"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/NoProtoIniStore.cs",
+        "sha256":  "09060CADCA15FF8F5AE3B347F5A910E9A98EE3009B553460D814654B8AF8B370"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/NoProtoLinkConfig.cs",
+        "sha256":  "76CFD9929FBF8671F47690C5A074F3952C0FCF0AE8B4F2B68474B33FC4CFB20B"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/PathLayout.cs",
+        "sha256":  "ACAA59ED8297F2F7CEA201B638CFC3C0EC682E58B0F8E87B4A58310F2FDFB2EA"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/PendingCameraTriggers.cs",
+        "sha256":  "011F17641670357BA8365F290FD6FB65262017575C5E30F4D43B8C35F67B9A42"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/SerialPortGuard.cs",
+        "sha256":  "CC56770AF76708C36072CDD40D860F479530281A050F36E68EB996368F8A4727"
+    },
+    {
+        "path":  "WindowsFormsApplication1/Services/StatisticsService.cs",
+        "sha256":  "7E9A252ED9CF48EFF58505702C774228F1D55F39FD76563537EB315334EF5DF4"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/AtomicFileSaveTests.cs",
+        "sha256":  "F67991A107A759D7682FAC6EECAB74C94B0F083175508A6D434755DB727660EF"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/ClassIniTests.cs",
+        "sha256":  "E52E5211841AA49A865BF74B0B7362A99DB6C9BD6EFADEEA2021F21E0DCBF175"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/CommGridHelperTests.cs",
+        "sha256":  "3E7A991FD845D2DD025169A9AFF631781966D6513D36E9B45B340E0E0BE40C09"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/DeadImageScanTests.cs",
+        "sha256":  "3E8850682CE2C63C0710E0FFC9245A427A24974899F72270BE16EF274F9E6A8D"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/DisplayThrottleWeightTests.cs",
+        "sha256":  "75CD8092959A3710769B329A497BE05AB42D11973808A5442F76BD499EABABA6"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/FinsIniStoreSectionTests.cs",
+        "sha256":  "AD50A57BD80DBC33D70DA672F32466C4AC674CF44EE57F083393CFD7E31CB39A"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/FrameAccountingTests.cs",
+        "sha256":  "FE07A978B6B00F21D2F1BCBDD2F0947382F54DEB22B21735EB3A307DB22C9E46"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/ModbusTcpLoopbackTests.cs",
+        "sha256":  "5351F63026F10CD8E6226B007DBC894305C334640F085AB3E1FF84B4BB212E2D"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/PathLayoutTests.cs",
+        "sha256":  "1135A52DBFD6ACEA6F9A542E076604BC97DD17BB18D83A713B317E22CF9B1C56"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/PendingCameraTriggersTests.cs",
+        "sha256":  "51EF0D7A8E23956D062CEA5F970A1DEAB1D30DA145B4EBD459169BE480784889"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/RenderBudgetTests.cs",
+        "sha256":  "74A0077315E3E8AA008BD0923B67E020B208B5727A13B26537F86B0091076358"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/RenderCostMeterTests.cs",
+        "sha256":  "8B63F11AC3BF34B97B683DEA96ED766504090926AF56D5246B47EFE03F39BE19"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/RenderTailFrameTests.cs",
+        "sha256":  "E8C284411C077811CD272D0E31729662556891172BF97774AE435651536E07A9"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/RunLogHelperTests.cs",
+        "sha256":  "8F1EA8BF7BC781AF34D106E74DA0AE4C2DD9B628D7031B1DAE21B76B3A796C0F"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/RunLogWriteDateTests.cs",
+        "sha256":  "BC7EE62D60C8E606DBD4EE3F288E2FF68CC293005868272FF313EFC9047771F8"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/WindowsFormsApplication1.Tests.csproj",
+        "sha256":  "7DF9C298F1DFE5FA48E6786FF918964B43843376FD1A8E2C861EFF85E16549A2"
+    },
+    {
+        "path":  "_deleted_mes_db_backup/DatabaseHelper.cs",
+        "sha256":  "75FE82759A47B76F2130E53854D4C243A3DC86F68769DA33D29C27DF5A7BD3B0"
+    },
+    {
+        "path":  "_deleted_mes_db_backup/Form7.cs",
+        "sha256":  "1979465EB447E97D419F80BFFD3BC0526FE41AB0EE18CDF663E39EEDC796549B"
+    },
+    {
+        "path":  "_deleted_mes_db_backup/Form7.Designer.cs",
+        "sha256":  "511023997BA35F468227EF9D7AD7CF7086A5DF8735A03C5C81C5B92225BF5E61"
+    },
+    {
+        "path":  "_deleted_mes_db_backup/mainForm.cs",
+        "sha256":  "85E7FED2A665C112A9495E6407E8879D16E3BEE0E5AD9BD859E6D409BAB75A35"
+    },
+    {
+        "path":  "_deleted_mes_db_backup/mainForm.designer.cs",
+        "sha256":  "CEC8C7471E9031F13FFA3173406E517DF5F73BF03F477361CB124A33F21581EC"
+    }
+]
