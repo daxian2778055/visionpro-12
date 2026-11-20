@@ -13860,16 +13860,18 @@ namespace WindowsFormsApplication1
             _openRetryDeadline = System.Diagnostics.Stopwatch.GetTimestamp()
                 + 10 * System.Diagnostics.Stopwatch.Frequency;
 
+            // ★修复"设备重新上电首次启动误报 Please enter correct format!"：
+            //   tbUseNum 是 Enabled=false 的 UI 显示框，值来自启动时/重连后的设备枚举。设备刚上电、
+            //   相机尚未就绪时，构造函数里的 DeviceListAcq() 枚举到 0 台 → tbUseNum 为空/"0"。
+            //   旧逻辑据此弹窗并 return，直接跳过自动开相机；而真正的设备数以 13877 行的
+            //   HikCameraEnumerator.Enumerate() 为准（其结果在 13892 行回写 tbUseNum）。
+            //   且 nCameraUsingNum 解析后除 >12 钳位外全程未使用——这个守卫是无效的死校验。
+            //   改为：显示值非法时不弹窗、不 return，继续走下方真实枚举；若确实无设备，
+            //   13879 行的 devices.Count==0 检查会给出正确的"No device"提示。
             int nCameraUsingNum;
             if (!int.TryParse(tbUseNum.Text, out nCameraUsingNum) || nCameraUsingNum <= 0)
             {
-                if (diyici == 0)
-                {
-                    diyici = 1;
-                    ShowErrorMsg("Please enter correct format!", 0);
-                }
-                dakaizhong = false;
-                return;
+                _logger.WriteLog("bnOpen: 使用设备数显示值尚未就绪(空/0)，跳过该显示值校验，继续按实际枚举开相机");
             }
             if (nCameraUsingNum > 12) nCameraUsingNum = 12;
 
