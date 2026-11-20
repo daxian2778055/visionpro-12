@@ -34,6 +34,8 @@
   <ItemGroup>
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
+    <!-- Modbus.cs 用 System.IO.Ports（GetCRC16 所在文件整文件链接） -->
+    <Reference Include="System.IO.Ports" />
   </ItemGroup>
 
   <!-- ===== 被测源码（与主工程同一份文件，活链接） ===== -->
@@ -78,6 +80,13 @@
     <!-- RenderCostMeter：★第56轮 单次耗时实测累加器（裁决自身 / record 显示 / 原图显示三张表），
          窗口滚动 + 无锁，用来回答"限频会不会反过来加重负荷"以及"每路应得间隔是否真有余量" -->
     <Compile Include="..\WindowsFormsApplication1\RenderCostMeter.cs" Link="Linked\RenderCostMeter.cs" />
+
+    <!-- ★ch:CRC-16：Modbus.cs 整文件链接，用独立教科书参考实现交叉验证 GetCRC16（不改写生产、不复制实现） -->
+    <Compile Include="..\WindowsFormsApplication1\Modbus.cs" Link="Linked\Modbus.cs" />
+    <!-- ★ch:FAILSAFE：PLC 故障输出口径（InspectionFailureOutput）。SafeLog 经 AppHost 落日志，
+         测试工程用 TestDoubles\AppHostStub.cs 替身解析，只为不抛异常；被测的是故障值格式/整块重复逻辑 -->
+    <Compile Include="..\WindowsFormsApplication1\Services\IPlcOutputWriter.cs" Link="Linked\IPlcOutputWriter.cs" />
+    <Compile Include="..\WindowsFormsApplication1\Services\LoggingService.cs" Link="Linked\LoggingService.cs" />
 
     <!-- ===== ★第43轮：Modbus TCP 回环（127.0.0.1 自建 FC3 从站，无硬件跑完整轮询链）=====
          闭包：Runtime + Link + 配置 + 接口 + 渲染/助手类（HslCommunication 走 NuGet，见上） -->
