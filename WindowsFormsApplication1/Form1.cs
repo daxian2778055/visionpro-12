@@ -4908,7 +4908,10 @@ namespace WindowsFormsApplication1
         //   原先灰度流程直接 new CogImage8Grey(src) 会抛 CogException → inputOk=false → 整帧判 NG
         //   （现场表现："点回图永远 NG"）。这里按像素格式归一化后再构造，彩色同理。
         //   返回 null 表示格式无法转换，调用方沿用既有 inputOk=false 失败路径即可。
-        //   internal static 便于纯托管单测（无需相机/VisionPro 运行授权）。
+        //   ★第64轮 P3-3 改口：本方法构造 CogImage，依赖 Cognex 程序集，而测试工程走源码链接、
+        //   不引 Cognex，故**进不了纯托管单测**（原注释"便于纯托管单测"不成立）。
+        //   拷贝语义已用 bin\Debug 真 Cognex dll 四场景实测：彩色转换/灰度转换/灰度直构/彩色直构，
+        //   源 Bitmap Dispose 后读像素全过（构造器拷贝像素，不持有源句柄），无 use-after-free。
         internal static ICogImage CreateCogImageFromBitmap(Bitmap src, bool color)
         {
             if (src == null) return null;
@@ -13693,20 +13696,30 @@ namespace WindowsFormsApplication1
         // ★借鉴正泰版：开相机遇 0x80000203 时的可中断重试 + GigE 抢占 + 网段诊断。
         //   两种常见根因：相机 IP 与网卡跨网段（GVCP 控制通道不通）、上次异常退出的 GigE 会话残留/被占用。
         //   用户已确认"只要是要连的相机，抢占无妨"，故独占重试仍失败时对 GigE 启用抢占模式(2,0)。
+        // ★第64轮 P2-1：整轮开相机的重试总预算（Stopwatch ticks）。bnOpenCore 在进入循环前设定
+        //   （10s）。原实现每台被拒相机最长 7s 且都在 UI 线程持 _cameraLock，12 台全被占用最坏 ≈84s
+        //   界面冻结；而 _disposingFlag/_switchingScheme 在 UI 冻结期间没有任何线程能置位，
+        //   "可中断"在 bnOpen 这条 UI 路径上实际不生效。总预算是唯一真正能封顶的闸。
+        private long _openRetryDeadline = long.MaxValue;
+
         private bool WaitCameraOpenInterruptible(int ms)
         {
             int waited = 0;
             while (waited < ms)
             {
                 if (_disposingFlag || _switchingScheme) return true;   // 关闭/切方案中：提前放弃，别拖住界面
+                if (System.Diagnostics.Stopwatch.GetTimestamp() >= _openRetryDeadline) return true;  // 总预算用尽
                 Thread.Sleep(50);
                 waited += 50;
             }
-            return _disposingFlag || _switchingScheme;
+            return _disposingFlag || _switchingScheme
+                || System.Diagnostics.Stopwatch.GetTimestamp() >= _openRetryDeadline;
         }
 
-        // 判断相机 IP 是否与本地任一启用网卡同网段（跨网段时 GVCP 单播不通）
-        private bool IsSameSubnetWithLocal(string camIpStr)
+        // 判断相机 IP 是否与本地任一启用网卡同网段（跨网段时 GVCP 单播不通）。
+        // ★第64轮 P3-4：返回 bool?——true 同网段 / false 查过且无同网段网卡 / null 检查本身异常。
+        //   原实现异常时返回 false，调用方会误断言"跨网段(GVCP不通)"，把"没查成"说成"查出了结论"。
+        private bool? IsSameSubnetWithLocal(string camIpStr)
         {
             try
             {
@@ -13729,13 +13742,15 @@ namespace WindowsFormsApplication1
                         if (same) return true;
                     }
                 }
+                return false;   // 查完了，没有任何启用网卡与相机同网段
             }
-            catch (Exception ex) { _logger.WriteLog("网段检查异常:" + ex.Message); }
-            return false;
+            catch (Exception ex) { _logger.WriteLog("网段检查异常:" + ex.Message); return null; }
         }
 
         // 返回 SDK 打开结果；内部完成 CreateDevice + 可中断重试 + GigE 抢占 + 失败网段诊断。
-        // 调用点仍持有 _cameraLock，重试总时长控制在 7 秒内（3×2s + 1s），避免界面长时间冻结。
+        // 调用点仍持有 _cameraLock。单台重试上限 7s（3×2s + 1s），但★第64轮 P2-1 起整轮另有
+        //   _openRetryDeadline 总预算（bnOpenCore 设 10s）：预算用尽后剩余被拒相机不再重试/抢占，
+        //   直接记日志返回，避免 12 台全被占用时 UI 冻结叠加到 ≈84s。
         private int OpenDeviceWithRetry(int slot, int devIdx)
         {
             var cam = _cameraCtrl.Cameras[slot];
@@ -13747,13 +13762,18 @@ namespace WindowsFormsApplication1
                 return nRet;
             }
             nRet = cam.MV_CC_OpenDevice_NET();
-            if (nRet == MyCamera.MV_E_ACCESS_DENIED)
+            if (nRet == MyCamera.MV_E_ACCESS_DENIED
+                && System.Diagnostics.Stopwatch.GetTimestamp() >= _openRetryDeadline)
+            {
+                _logger.WriteLog("相机" + (slot + 1) + "打开被拒且整轮重试总预算已用尽，跳过重试与抢占");
+            }
+            else if (nRet == MyCamera.MV_E_ACCESS_DENIED)
             {
                 for (int retry = 0; retry < 3 && nRet == MyCamera.MV_E_ACCESS_DENIED; retry++)
                 {
                     if (WaitCameraOpenInterruptible(2000))
                     {
-                        _logger.WriteLog("程序退出/切方案中止相机" + (slot + 1) + "打开重试");
+                        _logger.WriteLog("相机" + (slot + 1) + "打开重试中止（退出/切方案/总预算用尽）");
                         break;
                     }
                     // CreateDevice 内部会先销毁旧句柄再重建，清掉残留会话
@@ -13782,8 +13802,11 @@ namespace WindowsFormsApplication1
                     UInt32 ip = g.nCurrentIp;
                     string ipStr = ((ip >> 24) & 0xFF) + "." + ((ip >> 16) & 0xFF) + "."
                                  + ((ip >> 8) & 0xFF) + "." + (ip & 0xFF);
-                    _logger.WriteLog("相机" + (slot + 1) + "网络检查:IP[" + ipStr + "]"
-                        + (IsSameSubnetWithLocal(ipStr) ? "与网卡同网段，失败多为会话残留/被占用" : "与网卡跨网段(GVCP不通)，请配置同网段 IP"));
+                    bool? sameSubnet = IsSameSubnetWithLocal(ipStr);
+                    string subnetVerdict = sameSubnet == null ? "网段未知（检查异常，见上条日志）"
+                        : sameSubnet.Value ? "与网卡同网段，失败多为会话残留/被占用"
+                        : "与网卡跨网段(GVCP不通)，请配置同网段 IP";
+                    _logger.WriteLog("相机" + (slot + 1) + "网络检查:IP[" + ipStr + "]" + subnetVerdict);
                 }
                 catch (Exception ex) { _logger.WriteLog("相机" + (slot + 1) + "网络检查异常:" + ex.Message); }
             }
@@ -13805,6 +13828,11 @@ namespace WindowsFormsApplication1
                 return;
 
             dakaizhong = true;
+            // ★第64轮 P2-1：整轮开相机（含枚举+逐台重试/抢占）的 UI 占用总预算 10s。
+            //   用 Stopwatch 单调时钟，不受系统时间跳变影响；预算用尽后 OpenDeviceWithRetry
+            //   对剩余被拒相机跳过重试/抢占，保证界面冻结有上限。
+            _openRetryDeadline = System.Diagnostics.Stopwatch.GetTimestamp()
+                + 10 * System.Diagnostics.Stopwatch.Frequency;
 
             int nCameraUsingNum;
             if (!int.TryParse(tbUseNum.Text, out nCameraUsingNum) || nCameraUsingNum <= 0)
@@ -14054,6 +14082,9 @@ namespace WindowsFormsApplication1
                     if (baoguang_temp < expRange.fMin) baoguang_temp = expRange.fMin;
                     if (baoguang_temp > expRange.fMax) baoguang_temp = expRange.fMax;
                 }
+                // ★第64轮 P3-2：夹住后把生效值回写文本框，界面显示=相机实际=block 参考值，
+                //   三者一致（沿用 R7/S5"非法/越界时框内重置为生效值"口径）。
+                tbExp.Text = baoguang_temp.ToString();
                 Myjob job = _jobs.Myjobs[index];
                 if (job != null && job.baoguang != 0 && job.block != null && job.block.Inputs.Contains("baoguang"))
                 {
