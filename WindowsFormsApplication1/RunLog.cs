@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
@@ -42,6 +43,57 @@ namespace WindowsFormsApplication1
         private DateTime _encCheckMtimeUtc;
         private long _encCheckLength;
         private bool _encCheckMismatch;
+        // ★借鉴正泰8相机版 R13：月文件读缓存。以"读之前"的 (路径,长度,mtime) 入缓存，
+        //   读写窗口内若有外部改动，下次 stat 不符即回退全量重读。命中时返回副本——
+        //   调用方会就地改写 lines（改当日行/追加/滚动），绝不能把缓存本体交出去。
+        //   与日文件的序号缓存字段完全独立，避免月/日互相踢失效导致缓存永不命中。
+        private string _csvMonthPath;
+        private long _csvMonthLen = -1;
+        private DateTime _csvMonthMtimeUtc;
+        private string[] _csvMonthLines;
+
+        private string[] ReadLinesMonthlyCached(string path)
+        {
+            long len = -1;
+            DateTime mt = DateTime.MinValue;
+            bool statOk = false;
+            try
+            {
+                FileInfo fi = new FileInfo(path);
+                len = fi.Length;
+                mt = fi.LastWriteTimeUtc;
+                statOk = true;
+            }
+            catch { }
+            if (statOk && _csvMonthLines != null && _csvMonthPath == path
+                && _csvMonthLen == len && _csvMonthMtimeUtc == mt)
+                return (string[])_csvMonthLines.Clone();
+            string[] lines = File.ReadAllLines(path, Encoding.Default);
+            if (statOk)
+            {
+                _csvMonthPath = path;
+                _csvMonthLen = len;      // 读前的 stat：窗口内被外部改动则下次不符自动重读
+                _csvMonthMtimeUtc = mt;
+                _csvMonthLines = (string[])lines.Clone();
+            }
+            return lines;
+        }
+
+        private void RefreshMonthlyCache(string path, string[] lines)
+        {
+            try
+            {
+                FileInfo fi = new FileInfo(path);
+                _csvMonthPath = path;
+                _csvMonthLen = fi.Length;
+                _csvMonthMtimeUtc = fi.LastWriteTimeUtc;
+                _csvMonthLines = (string[])lines.Clone();
+            }
+            catch
+            {
+                _csvMonthLines = null;   // stat 失败即作废，下帧老实重读
+            }
+        }
 
         /*按照年份创建文件夹*/
         public void CreateDirectoryCsvPath(string path22)
@@ -167,7 +219,9 @@ namespace WindowsFormsApplication1
                         return;
                     }
 
-                    string[] lines = File.ReadAllLines(strCsvPath, Encoding.Default);
+                    // ★借鉴正泰版 R13：命中 (路径,长度,mtime) 缓存直接用内存副本，省掉每条记录的整表磁盘读；
+                    //   返回的是副本，下面对 lines 的就地改写不会影响缓存本体。
+                    string[] lines = ReadLinesMonthlyCached(strCsvPath);
                     if (lines.Length == 0) return;
 
                     // 定位最后一条非空行（等价于旧实现"取最后一次 ReadLine 的结果"）
@@ -219,6 +273,7 @@ namespace WindowsFormsApplication1
 
                             WriteAllLinesAtomic(strCsvPath, lines);
                             RefreshEncCheckCache(strCsvPath, encodingMismatch);
+                            RefreshMonthlyCache(strCsvPath, lines);
                         }
                         else if (encodingMismatch && CountNonEmptyLines(lines) < 35)
                         {
@@ -241,6 +296,7 @@ namespace WindowsFormsApplication1
                             appended[lines.Length] = str + "," + (okss + ng1) + "," + okss + "," + ng1 + "," + sOrg + "," + okss * 1.0f / (okss + ng1);
                             WriteAllLinesAtomic(strCsvPath, appended);
                             RefreshEncCheckCache(strCsvPath, encodingMismatch);
+                            RefreshMonthlyCache(strCsvPath, appended);
                         }
                         else if (!encodingMismatch)
                         {
@@ -258,6 +314,7 @@ namespace WindowsFormsApplication1
                             Array.Resize(ref rolled, n);
                             WriteAllLinesAtomic(strCsvPath, rolled);
                             RefreshEncCheckCache(strCsvPath, encodingMismatch);
+                            RefreshMonthlyCache(strCsvPath, rolled);
                         }
                     }
                     catch (Exception ex)
@@ -309,7 +366,16 @@ namespace WindowsFormsApplication1
                     catch { seqValue = -1; }
                     if (seqValue < 0)
                     {
-                        string[] lines = File.ReadAllLines(strCsvPath, Encoding.Default);
+                        // ★借鉴正泰版：读时放开 FileShare.ReadWrite，现场用 Excel 同时打开查看也不会因独占冲突失败。
+                        string[] lines;
+                        using (var fs = new FileStream(strCsvPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        using (var rd = new StreamReader(fs, Encoding.Default))
+                        {
+                            var list = new List<string>();
+                            string ln;
+                            while ((ln = rd.ReadLine()) != null) list.Add(ln);
+                            lines = list.ToArray();
+                        }
                         int lastIdx = lines.Length - 1;
                         while (lastIdx >= 0 && string.IsNullOrEmpty(lines[lastIdx])) lastIdx--;
 
@@ -443,7 +509,7 @@ namespace WindowsFormsApplication1
             string tmp = path + ".tmp";
             File.WriteAllLines(tmp, lines, Encoding.Default);
             if (File.Exists(path))
-                File.Replace(tmp, path, null);
+                File.Replace(tmp, path, path + ".bak");   // ★借鉴正泰版：原子替换同时留 .bak，误写/损坏可回溯
             else
                 File.Move(tmp, path);
         }

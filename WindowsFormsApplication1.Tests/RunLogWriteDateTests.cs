@@ -231,6 +231,37 @@ namespace WindowsFormsApplication1.Tests
                 "★外部改写后编码缓存必须失效重算，否则会用旧判定整表重写、把有损解码固化进历史行");
         }
 
+        // ---------- 月文件读缓存（借鉴正泰版 R13）：命中累加正确、外部改写后失效 ----------
+
+        [TestMethod]
+        public void 月文件读缓存_连续写入正确累加_外部改写后必须失效重读()
+        {
+            File.WriteAllLines(_monthCsv, new[] { "日期,总量,OK,NG,型号,合格率" }, Encoding.Default);
+
+            // 两次写入：第二次应命中读缓存、在缓存副本上累加，而不是用陈旧内容
+            _log.WriteDate(1, 0, _p22);
+            _log.WriteDate(0, 1, _p22);
+            string[] lines = File.ReadAllLines(_monthCsv, Encoding.Default);
+            string[] f = lines[lines.Length - 1].Split(',');
+            Assert.AreEqual("2", f[1], "总量 = 2");
+            Assert.AreEqual("1", f[2], "OK = 1");
+            Assert.AreEqual("1", f[3], "NG = 1");
+            Assert.IsTrue(File.Exists(_monthCsv + ".bak"), "原子替换应留 .bak 备份");
+
+            // 外部把当日累计改成 100/60/40 → 缓存的 (长度,mtime) 失配，必须重读而非从 1/1 继续
+            File.WriteAllLines(_monthCsv, new[]
+            {
+                "日期,总量,OK,NG,型号,合格率",
+                Today() + ",100,60,40,AA,0.6"
+            }, Encoding.Default);
+            _log.WriteDate(1, 0, _p22);
+
+            lines = File.ReadAllLines(_monthCsv, Encoding.Default);
+            f = lines[lines.Length - 1].Split(',');
+            Assert.AreEqual("61", f[2], "读缓存必须在外部改写后失效：OK 应从 60 变 61，而不是从缓存的 1 变 2");
+            Assert.AreEqual("40", f[3], "NG 应保持外部的 40");
+        }
+
         // ---------- 功能⑧上限语义：≥35 非空行且非今日 → 滚掉最旧数据行 + 写入当日首条 ----------
 
         [TestMethod]
