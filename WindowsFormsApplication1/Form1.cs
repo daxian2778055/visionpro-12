@@ -5078,7 +5078,10 @@ namespace WindowsFormsApplication1
                 long gcMs = (System.Diagnostics.Stopwatch.GetTimestamp() - gcTick0) * 1000L
                     / System.Diagnostics.Stopwatch.Frequency;
                 long wsAfter = Environment.WorkingSet;
-                _logger.WriteLog("GcValve: 强制 Gen2 停顿 " + gcMs + "ms，工作集 "
+                // ★分级标记：现场 grep「【关注】」「【严重】」即可一眼筛出影响实时性的停顿，
+                //   不必逐行看数字。<100ms 普通；100~500ms 关注；>500ms 严重（PLC 节拍/检测可能超时）。
+                string gcLevel = gcMs > 500 ? "【严重】" : gcMs >= 100 ? "【关注】" : "";
+                _logger.WriteLog(gcLevel + "GcValve: 强制 Gen2 停顿 " + gcMs + "ms，工作集 "
                     + (ws / 1024 / 1024) + "MB → " + (wsAfter / 1024 / 1024)
                     + "MB，阈值 " + (_gcValveBytesLimit / 1024 / 1024) + "MB");
             }
