@@ -74,8 +74,10 @@ namespace WindowsFormsApplication1
         {
             InitializeComponent();
 
-            // 默认打开时尽量把高度撑满，以容纳最高的嵌窗（无协议 Form3 内容高约 890），避免右侧出现内部滚动条。
-            // 若屏幕工作区不够（如小屏笔记本），则按屏幕高度自适应，不会顶出任务栏。
+            // ★布局优化：默认按最高嵌窗的实际高度撑窗体，避免右侧出现内部滚动条。
+            //   四协议窗体现设计高度：无协议 Form3=620、Modbus/FINS/RTU=645 → 最高 645。
+            //   旧值 980 是为原先 890 高的竖长 Form3 撑的，已过时；现取 710（645+余量），
+            //   窗口不再无谓撑满整屏。若屏幕不够则按工作区自适应，不顶出任务栏。
             FitHeightToWorkingArea();
         }
 
@@ -92,12 +94,14 @@ namespace WindowsFormsApplication1
         }
 
         /// <summary>
-        /// 按屏幕工作区自动拉高窗体，使右侧 pnlHost 能直接放下最高的嵌窗（无协议 Form3 高约 890），
-        /// 从根本上避免“内外双滚”。若屏幕不够高则取最大可用高度，保留滚动条兜底。
+        /// 按屏幕工作区自动拉高窗体，使右侧 pnlHost 能直接放下最高的嵌窗。
+        /// ★布局优化：最高嵌窗现为 645（Modbus/FINS/RTU），无协议 Form3 已紧凑化为 620；
+        ///   目标 client 高度 710 = 645 + 余量，不再用旧的 980（那是为 890 高的 Form3 撑的）。
+        ///   若屏幕不够高则取最大可用高度，保留滚动条兜底。
         /// </summary>
         private void FitHeightToWorkingArea()
         {
-            const int desiredClientHeight = 980; // 890 内容 + 边距余量
+            const int desiredClientHeight = 710; // 最高嵌窗 645 + 边距余量
             try
             {
                 var workingArea = Screen.FromControl(this).WorkingArea;
@@ -722,7 +726,8 @@ namespace WindowsFormsApplication1
 
         /// <summary>把原协议窗体（或配置编辑器）作为非顶级子窗体嵌入右侧容器。
         /// 不使用 Dock=Fill，而是保留窗体原始设计尺寸并启用宿主 Panel 的 AutoScroll，
-        /// 解决 Form3（设计高度 890）被截断且没有滚动条的问题；同时 SuspendLayout 减少切换闪烁。</summary>
+        /// 解决嵌窗被截断且没有滚动条的问题；Form3 已紧凑化为 620 高、其余协议 645；
+        /// 同时 SuspendLayout 减少切换闪烁。</summary>
         /// <param name="isEditor">true=仅配置编辑器（生命周期由管理器持有，摘除仅 Hide）；false=共享单例/连接1 主窗
         /// （摘除仅 Hide、不恢复顶级，生命周期由 Form1 侧单例持有，进程结束才释放）。</param>
         private void ShowHostForm(Form f, bool isEditor = false)
