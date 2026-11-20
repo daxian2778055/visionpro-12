@@ -9,6 +9,7 @@
     .\verify.ps1                 # Debug：先编主工程再跑测试（完整验收）
     .\verify.ps1 -Configuration Release
     .\verify.ps1 -SkipMainBuild  # 只跑测试（CI 托管 runner 同款口径）
+    .\verify.ps1 -GenerateBaseline  # 验收后生成 audit-baseline.json（源码 SHA-256 基线，相对路径）
   真编译口径（第51.4轮补充，踩过坑）：
     要确认真编译 -> touch 单个源文件后再 dotnet build <csproj>，或直接跑本脚本。
     永远不要用 dotnet build -t:Rebuild，也不要先 Clean：Clean 之后 dotnet CLI 无法再生
@@ -19,7 +20,8 @@
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
-    [switch]$SkipMainBuild
+    [switch]$SkipMainBuild,
+    [switch]$GenerateBaseline
 )
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -70,5 +72,25 @@ else {
         exit $LASTEXITCODE
     }
     Write-Host 'verify.ps1：主工程编译 + 单元测试 + 检测回归 全部通过。' -ForegroundColor Green
+}
+
+if ($GenerateBaseline) {
+    # ★借鉴正泰版审计基线：对参与编译的源码记录相对路径 + SHA-256，换机器也能复核，
+    #   用于裁决"报告说改了但源码已变"的争议。默认不生成，只在显式指定时执行。
+    Write-Host '== [4/4] 生成源码 SHA-256 基线 =='
+    $hashFile = Join-Path $root 'audit-baseline.json'
+    $items = @()
+    Get-ChildItem -Path $root -Recurse -File | Where-Object {
+        $_.Extension -in '.cs', '.csproj', '.sln' -and
+        $_.FullName -notmatch '\\(bin|obj|\.git|packages|TestResults|_refactor_backup|audit-build)\\' -and
+        $_.Name -ne 'audit-baseline.json'
+    } | ForEach-Object {
+        $items += [pscustomobject]@{
+            path   = $_.FullName.Substring($root.Length + 1).Replace('\', '/')
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash
+        }
+    }
+    $items | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $hashFile -Encoding UTF8
+    Write-Host "基线已写入 $hashFile （$($items.Count) 个文件，全部相对路径）" -ForegroundColor Green
 }
 exit 0

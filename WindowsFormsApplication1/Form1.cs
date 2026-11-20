@@ -13690,6 +13690,106 @@ namespace WindowsFormsApplication1
         /// 只用于把"未确认授权却自动开相机/自动运行"这条隐式取舍写进日志，不参与任何判定。
         /// </summary>
         private volatile bool _authNotVerifiedFailOpen = false;
+        // ★借鉴正泰版：开相机遇 0x80000203 时的可中断重试 + GigE 抢占 + 网段诊断。
+        //   两种常见根因：相机 IP 与网卡跨网段（GVCP 控制通道不通）、上次异常退出的 GigE 会话残留/被占用。
+        //   用户已确认"只要是要连的相机，抢占无妨"，故独占重试仍失败时对 GigE 启用抢占模式(2,0)。
+        private bool WaitCameraOpenInterruptible(int ms)
+        {
+            int waited = 0;
+            while (waited < ms)
+            {
+                if (_disposingFlag || _switchingScheme) return true;   // 关闭/切方案中：提前放弃，别拖住界面
+                Thread.Sleep(50);
+                waited += 50;
+            }
+            return _disposingFlag || _switchingScheme;
+        }
+
+        // 判断相机 IP 是否与本地任一启用网卡同网段（跨网段时 GVCP 单播不通）
+        private bool IsSameSubnetWithLocal(string camIpStr)
+        {
+            try
+            {
+                System.Net.IPAddress camIp = System.Net.IPAddress.Parse(camIpStr);
+                foreach (System.Net.NetworkInformation.NetworkInterface ni in
+                    System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                    if (ni.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+                    foreach (System.Net.NetworkInformation.UnicastIPAddressInformation ua in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                        if (ua.IPv4Mask == null) continue;
+                        byte[] cam = camIp.GetAddressBytes();
+                        byte[] loc = ua.Address.GetAddressBytes();
+                        byte[] mask = ua.IPv4Mask.GetAddressBytes();
+                        bool same = true;
+                        for (int i = 0; i < 4; i++)
+                            if ((cam[i] & mask[i]) != (loc[i] & mask[i])) { same = false; break; }
+                        if (same) return true;
+                    }
+                }
+            }
+            catch (Exception ex) { _logger.WriteLog("网段检查异常:" + ex.Message); }
+            return false;
+        }
+
+        // 返回 SDK 打开结果；内部完成 CreateDevice + 可中断重试 + GigE 抢占 + 失败网段诊断。
+        // 调用点仍持有 _cameraLock，重试总时长控制在 7 秒内（3×2s + 1s），避免界面长时间冻结。
+        private int OpenDeviceWithRetry(int slot, int devIdx)
+        {
+            var cam = _cameraCtrl.Cameras[slot];
+            var dev = device1[devIdx];
+            int nRet = cam.MV_CC_CreateDevice_NET(ref dev);
+            if (nRet != MyCamera.MV_OK)
+            {
+                _logger.WriteLog("相机" + (slot + 1) + "CreateDevice失败:" + HkRet(nRet));
+                return nRet;
+            }
+            nRet = cam.MV_CC_OpenDevice_NET();
+            if (nRet == MyCamera.MV_E_ACCESS_DENIED)
+            {
+                for (int retry = 0; retry < 3 && nRet == MyCamera.MV_E_ACCESS_DENIED; retry++)
+                {
+                    if (WaitCameraOpenInterruptible(2000))
+                    {
+                        _logger.WriteLog("程序退出/切方案中止相机" + (slot + 1) + "打开重试");
+                        break;
+                    }
+                    // CreateDevice 内部会先销毁旧句柄再重建，清掉残留会话
+                    int cr = cam.MV_CC_CreateDevice_NET(ref dev);
+                    if (cr != MyCamera.MV_OK) { nRet = cr; break; }
+                    nRet = cam.MV_CC_OpenDevice_NET();
+                    _logger.WriteLog("相机" + (slot + 1) + "打开重试#" + (retry + 1) + ":" + HkRet(nRet));
+                }
+                // 独占重试仍被拒 → GigE 抢占模式接管残留会话（用户已确认可抢占）
+                if (nRet == MyCamera.MV_E_ACCESS_DENIED && dev.nTLayerType == MyCamera.MV_GIGE_DEVICE)
+                {
+                    if (!WaitCameraOpenInterruptible(1000))
+                    {
+                        nRet = cam.MV_CC_OpenDevice_NET(2, 0);
+                        _logger.WriteLog("相机" + (slot + 1) + "抢占模式打开:" + HkRet(nRet));
+                    }
+                }
+            }
+            if (nRet != MyCamera.MV_OK && dev.nTLayerType == MyCamera.MV_GIGE_DEVICE)
+            {
+                // 网段诊断：跨网段导致 GVCP 不通是 0x80000203 最常见根因，日志直接给可操作结论
+                try
+                {
+                    MyCamera.MV_GIGE_DEVICE_INFO g = (MyCamera.MV_GIGE_DEVICE_INFO)
+                        MyCamera.ByteToStruct(dev.SpecialInfo.stGigEInfo, typeof(MyCamera.MV_GIGE_DEVICE_INFO));
+                    UInt32 ip = g.nCurrentIp;
+                    string ipStr = ((ip >> 24) & 0xFF) + "." + ((ip >> 16) & 0xFF) + "."
+                                 + ((ip >> 8) & 0xFF) + "." + (ip & 0xFF);
+                    _logger.WriteLog("相机" + (slot + 1) + "网络检查:IP[" + ipStr + "]"
+                        + (IsSameSubnetWithLocal(ipStr) ? "与网卡同网段，失败多为会话残留/被占用" : "与网卡跨网段(GVCP不通)，请配置同网段 IP"));
+                }
+                catch (Exception ex) { _logger.WriteLog("相机" + (slot + 1) + "网络检查异常:" + ex.Message); }
+            }
+            return nRet;
+        }
+
         private void bnOpen_Click(object sender, EventArgs e)
         {
             // ★M10 修复：原实现 dakaizhong=true 后仅在"参数错误"与"正常结尾"两处复位，
@@ -13774,15 +13874,8 @@ namespace WindowsFormsApplication1
                         if (_cameraCtrl.Cameras[slot] == null)
                             _cameraCtrl.Cameras[slot] = new MyCamera();
 
-                        nRet = _cameraCtrl.Cameras[slot].MV_CC_CreateDevice_NET(ref device1[deviceArrayIndex]);
-                        if (MyCamera.MV_OK != nRet)
-                        {
-                            _logger.WriteLog("相机" + (slot + 1) + "CreateDevice失败:" + HkRet(nRet));
-                            ClearCameraSlotOnOpenFailed(slot.ToString(), ref temp[0], ref temp[1], ref temp[2], ref temp[3], ref temp[4], ref temp[5], ref temp[6], ref temp[7], ref temp[8], ref temp[9], ref temp[10], ref temp[11]);
-                            continue;
-                        }
-
-                        nRet = _cameraCtrl.Cameras[slot].MV_CC_OpenDevice_NET();
+                        // ★借鉴正泰版：含 0x80000203 可中断重试 + GigE 抢占 + 网段诊断的统一入口
+                        nRet = OpenDeviceWithRetry(slot, deviceArrayIndex);
                         if (MyCamera.MV_OK != nRet)
                         {
                             _logger.WriteLog("相机" + (slot + 1) + "打开失败:" + HkRet(nRet));
