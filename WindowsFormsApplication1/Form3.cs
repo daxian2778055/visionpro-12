@@ -142,6 +142,7 @@ namespace WindowsFormsApplication1
 
         private void Form3_Load(object sender, EventArgs e)
         {
+            ApplyTheme();
             // 统一入口：主窗首次 Show 触发 Load → InitializeForm；额外整窗（连接 2~4）由管理器 EnsureWindowHandle
             // 在创建句柄后显式触发。二者共用同一实现且只执行一次（_initialized 门闩），隐藏窗预启动后再 Show 不会重复建链。
             InitializeForm();
