@@ -928,8 +928,10 @@
             // 
             // Form3
             // 
-            this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
-            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+            // ★布局修复：原为 Font 模式 + 基准(6,12)，在 125%/150% DPI 下把设计坐标放大约1.4倍，
+            //   导致嵌入后相机表被撑出面板、出滚动条且底部被截断。改 None 让坐标 1:1 渲染，
+            //   500 高的内容在任何 DPI 下都稳定装入面板，无滚动条、不裁切（代价是高 DPI 下字略小）。
+            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.None;
             this.ClientSize = new System.Drawing.Size(760, 500);
             this.Controls.Add(this.label16);
             this.Controls.Add(this.comboBox2);

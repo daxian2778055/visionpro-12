@@ -773,10 +773,11 @@ namespace WindowsFormsApplication1
             pnlHost.SuspendLayout();
             try
             {
-                pnlHost.AutoScroll = true;
+                // Form3：AutoScaleMode=None、内容 500 高，稳定装入面板，显式关闭滚动条（用户要求无滚动条、全可见）。
+                // 其余协议：645 高、若面板不够仍靠 Panel 滚动兜底。
+                pnlHost.AutoScroll = !noProto;
                 f.Location = new Point(0, 0);
                 // 宽度取面板当前宽度与自然宽度之大者（避免横向滚动条），高度取自然高度。
-                // Form3 自然高度 500 < 面板高度 → 不产生滚动条；其余协议高度不足时由 Panel 滚动兜底。
                 f.Size = new Size(Math.Max(natural.Width, pnlHost.ClientSize.Width), natural.Height);
                 f.Anchor = AnchorStyles.Top | AnchorStyles.Left;
                 pnlHost.Controls.Add(f);

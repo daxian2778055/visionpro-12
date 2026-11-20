@@ -170,8 +170,8 @@ namespace WindowsFormsApplication1
         /// <summary>
         /// 应用统一浅色主题。由 Form3_Load 在初始化前调用一次。
         /// 全程只改外观属性；单个控件设置失败由 SafeSkin / 外层 try 吞掉，不影响其它控件。
-        /// 特别注意：不设置 this.Font —— AutoScaleMode=Font 的窗体改 Font 会触发 Load 时
-        /// 对子控件整体缩放，从而改变 Location/Size；字体逐控件设置以规避该副作用。
+        /// 特别注意：不设置 this.Font —— 窗体现为 AutoScaleMode=None，坐标 1:1 渲染；
+        /// 字体仍逐控件设置，保持可调且与 Designer 坐标解耦。
         /// </summary>
         internal void ApplyTheme()
         {
