@@ -305,6 +305,18 @@ namespace WindowsFormsApplication1
                 _renderMinIntervalMs = 16;
             else
                 _renderMinIntervalMs = parsedRenderInterval;
+            // ★可配置 GC 阀阈值：code.ini [GcValve] BytesLimitMB，缺省 4096(4GB)、合法区间 256~65536(256MB~64GB)；
+            //   4K 相机/大内存机器按需调，换分辨率不必改代码。坏值回退默认并记日志。
+            int parsedGcLimitMb;
+            if (!int.TryParse(_config.ReadString("GcValve", "BytesLimitMB", "4096"), out parsedGcLimitMb)
+                || parsedGcLimitMb < 256 || parsedGcLimitMb > 65536)
+            {
+                _gcValveBytesLimit = 4096L * 1024 * 1024;
+            }
+            else
+            {
+                _gcValveBytesLimit = (long)parsedGcLimitMb * 1024 * 1024;
+            }
             _displayRawImage = _config.ReadString("Display", "RawImageMode", "0") == "1";
             // 交互期间隔：★第57轮起不再开放给现场，由全局最小间隔派生（一半、地板 8ms）。
             //   它的生效条件本来就是"严格小于全局间隔"（见 TryClaimRenderBudget）——填得比全局大就是个死框，
@@ -5014,7 +5026,9 @@ namespace WindowsFormsApplication1
         //   ⚠ 换相机分辨率必须重算：4K 灰度 ≈ 8.3MB/张，12 路 ≈ 100MB/帧 ⇒ 4GB 只够 40 帧，
         //     此时应按 (单帧总字节 × 期望缓存帧数) 反推阈值，不要直接沿用 4GB。
         private const int RetiredFrameGcRetryMask = 1023;      // 高位期间每 1024 张退役帧（≈34 秒@30fps）最多再强制一次
-        private const long RetiredFrameGcBytesLimit = 4096L * 1024 * 1024;   // 工作集超 4GB 才触发
+        // ★可配置：工作集触发阈值(MB)，默认 4096。4K 相机需按"单帧总字节×期望缓存帧数"重算，
+        //   现场可在 code.ini [GcValve] BytesLimitMB 调整，无需改代码重编译。
+        private static long _gcValveBytesLimit = 4096L * 1024 * 1024;
         private int _retiredFrameTicks;                        // 退役帧计数（Interlocked，不持锁）
         private volatile bool _gcValveFired;                   // 安全阀是否处于"已突破"状态（迟滞用）
 
@@ -5028,7 +5042,7 @@ namespace WindowsFormsApplication1
             try
             {
                 long ws = Environment.WorkingSet;
-                bool over = ws > RetiredFrameGcBytesLimit;
+                bool over = ws > _gcValveBytesLimit;
                 if (!over)
                 {
                     // 低于阈值：零开销、零日志（第51.1轮的"刷屏"只可能发生在高位，这里彻底避开）
@@ -5046,7 +5060,7 @@ namespace WindowsFormsApplication1
                 {
                     _gcValveFired = true;
                     _logger.WriteLog("退役输入帧由 GC 回收：进程工作集 " + (ws / 1024 / 1024)
-                        + "MB 超过 " + (RetiredFrameGcBytesLimit / 1024 / 1024)
+                        + "MB 超过 " + (_gcValveBytesLimit / 1024 / 1024)
                         + "MB，强制一次 Gen2 并等待终结器（持续高位不重复记，回落到阈值以下即复位）");
                 }
                 // ★第51.2轮 P1：突破时立刻强制一次；之后只要仍超阈值，每 256 张退役帧再强制一次。
@@ -5056,8 +5070,17 @@ namespace WindowsFormsApplication1
                 if (!crossed && (ticks & RetiredFrameGcRetryMask) != 0) return;
                 // ★第51.2轮 P1（实测依据见上方注释）：Optimized 在本负载下恒为 no-op，必须 Forced；
                 //   且必须等终结器跑完，否则像素还没还给系统、工作集不回落、复位条件永远不满足。
+                // ★观测埋点：量本次强制 GC 的停顿(毫秒)，让现场用日志判断"到底有没有在卡"——
+                //   GetTimestamp 是纳秒级读计数器、每次 GC 才取 2 次，开销可忽略；日志按节流频率写，不刷屏。
+                long gcTick0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 GC.Collect(2, GCCollectionMode.Forced, true);
                 GC.WaitForPendingFinalizers();
+                long gcMs = (System.Diagnostics.Stopwatch.GetTimestamp() - gcTick0) * 1000L
+                    / System.Diagnostics.Stopwatch.Frequency;
+                long wsAfter = Environment.WorkingSet;
+                _logger.WriteLog("GcValve: 强制 Gen2 停顿 " + gcMs + "ms，工作集 "
+                    + (ws / 1024 / 1024) + "MB → " + (wsAfter / 1024 / 1024)
+                    + "MB，阈值 " + (_gcValveBytesLimit / 1024 / 1024) + "MB");
             }
             catch { }
         }
