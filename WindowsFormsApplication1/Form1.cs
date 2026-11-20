@@ -307,11 +307,15 @@ namespace WindowsFormsApplication1
                 _renderMinIntervalMs = parsedRenderInterval;
             // ★可配置 GC 阀阈值：code.ini [GcValve] BytesLimitMB，缺省 4096(4GB)、合法区间 256~65536(256MB~64GB)；
             //   4K 相机/大内存机器按需调，换分辨率不必改代码。坏值回退默认并记日志。
+            string gcLimitRaw = _config.ReadString("GcValve", "BytesLimitMB", "4096");
             int parsedGcLimitMb;
-            if (!int.TryParse(_config.ReadString("GcValve", "BytesLimitMB", "4096"), out parsedGcLimitMb)
+            if (!int.TryParse(gcLimitRaw, out parsedGcLimitMb)
                 || parsedGcLimitMb < 256 || parsedGcLimitMb > 65536)
             {
                 _gcValveBytesLimit = 4096L * 1024 * 1024;
+                // ★第65轮 P3-2：坏值回退默认时点名（键缺省走 "4096" 正常解析、不记日志），
+                //   与显示降频/根目录"兜底必须点名"同口径，现场改错能查。
+                _logger.WriteLog("GcValve BytesLimitMB=\"" + gcLimitRaw + "\" 非法（须 256~65536 整数），已回退默认 4096MB");
             }
             else
             {

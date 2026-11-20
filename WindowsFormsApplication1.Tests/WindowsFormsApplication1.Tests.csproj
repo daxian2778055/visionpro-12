@@ -34,8 +34,9 @@
   <ItemGroup>
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Drawing" />
-    <!-- Modbus.cs 用 System.IO.Ports（GetCRC16 所在文件整文件链接） -->
-    <Reference Include="System.IO.Ports" />
+    <!-- ★第65轮 P3-1：不引 System.IO.Ports——net48 下 SerialPort(System.IO.Ports 命名空间)
+         在 System.dll 里，SDK 风格工程已自动引用 System；显式引 System.IO.Ports 反而解析不到
+         （无此程序集）产生 MSB3245。Modbus.cs 经 System.dll 即可编译。 -->
   </ItemGroup>
 
   <!-- ===== 被测源码（与主工程同一份文件，活链接） ===== -->
