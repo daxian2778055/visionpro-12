@@ -57,7 +57,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/BuildInfo.cs",
-        "sha256":  "894DC95685990A83140BCA2A3D42FCC0CC2D209C446388D43A5CBD9F1AFC04B0"
+        "sha256":  "9ED153DAFF0565ED4711DBA1260B68B172C228A2A611751BF83C489C68C8ADDA"
     },
     {
         "path":  "WindowsFormsApplication1/ClassIni.cs",
@@ -117,7 +117,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/Form1.cs",
-        "sha256":  "6060374CA9FABAD0F2631258EFBD29A1A0FBEC63BB6F42026083699B9ED74C9A"
+        "sha256":  "40BB278CE40111CA59EE5747993B9BD36D385875B34CD4528744AC3090A57138"
     },
     {
         "path":  "WindowsFormsApplication1/Form1.Designer.cs",
@@ -604,6 +604,14 @@
         "sha256":  "FE07A978B6B00F21D2F1BCBDD2F0947382F54DEB22B21735EB3A307DB22C9E46"
     },
     {
+        "path":  "WindowsFormsApplication1.Tests/InspectionFailureOutputTests.cs",
+        "sha256":  "2EA92AD332C47E72FBBD1A4CAC1B1F01D2036B1BF84C84BAF647ED59810FCE43"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/ModbusCrcTests.cs",
+        "sha256":  "E0A464CD0E0506099068A9E60E89266148C1EB46E57E76644B16E79DECED59AF"
+    },
+    {
         "path":  "WindowsFormsApplication1.Tests/ModbusTcpLoopbackTests.cs",
         "sha256":  "5351F63026F10CD8E6226B007DBC894305C334640F085AB3E1FF84B4BB212E2D"
     },
@@ -637,7 +645,11 @@
     },
     {
         "path":  "WindowsFormsApplication1.Tests/WindowsFormsApplication1.Tests.csproj",
-        "sha256":  "7DF9C298F1DFE5FA48E6786FF918964B43843376FD1A8E2C861EFF85E16549A2"
+        "sha256":  "182B8AA75345A69145C7770B3E9EF160F4F8AC972D97F7707F71967C6CADB9B3"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/TestDoubles/AppHostStub.cs",
+        "sha256":  "4BEB61E618519CA5D2AA3660F3ADFE84AA5DF38EAFEB4A4F1CE89B5379B06BA6"
     },
     {
         "path":  "_deleted_mes_db_backup/DatabaseHelper.cs",
