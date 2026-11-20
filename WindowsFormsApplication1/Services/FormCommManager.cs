@@ -749,17 +749,15 @@ namespace WindowsFormsApplication1
             f.TopMost = false;               // 禁止子窗体置顶/抢夺焦点
             f.Parent = pnlHost;
 
-            // ★布局优化：无协议 Form3 已紧凑化到 500 高、右侧控件带 Anchor。
-            //   统一走"自然尺寸"策略（所有协议一致，不再对 Form3 特殊 Dock=Fill——Fill 会把它
-            //   拉到面板高度，面板一矮就裁掉底部相机表；这就是上一版滚动条/截断的根因）。
-            //   Form3 内容仅 500 高，pnlHost 实际约 700 高，能完整放下且不出现滚动条；
-            //   其余协议 645 高、若面板不够则靠 Panel 滚动兜底。
+            // ★最终布局方案：无协议 Form3 用 Dock=Fill 自动贴合 pnlHost 高度——
+            //   Form3 已 AutoScaleMode=None（坐标1:1）、ClientSize 设计基准640、底部相机表带 Bottom anchor，
+            //   Fill 后高度=面板高度，控件按 Anchor 分布，既不裁切也不留大空白、且无滚动条。
+            //   （历史根因：此前用"自然尺寸+强制 AutoScrollMinSize=500"导致高度被锁死；用 Font 缩放导致坐标放大裁切。）
+            //   其余三协议窗体(645高、无 Anchor)保持原"自然尺寸 + Panel 滚动"策略。
             bool noProto = f is Form3;
-            f.Dock = DockStyle.None;
+            f.Dock = noProto ? DockStyle.Fill : DockStyle.None;
 
-            // 记录窗体自然设计尺寸（首次嵌入时），后续用 AutoScrollMinSize 保证内容完整。
-            // Form3 强制以当前紧凑 ClientSize(500) 为准，避免旧实例残留的 AutoScrollMinSize(620/890) 撑高。
-            if (noProto) f.AutoScrollMinSize = new Size(760, 500);
+            // 记录窗体自然设计尺寸（仅非 Fill 窗体需要），避免旧实例残留的 AutoScrollMinSize 撑高。
             if (f.AutoScrollMinSize.IsEmpty)
                 f.AutoScrollMinSize = f.ClientSize;
             Size natural = f.AutoScrollMinSize;
@@ -773,13 +771,20 @@ namespace WindowsFormsApplication1
             pnlHost.SuspendLayout();
             try
             {
-                // Form3：AutoScaleMode=None、内容 500 高，稳定装入面板，显式关闭滚动条（用户要求无滚动条、全可见）。
-                // 其余协议：645 高、若面板不够仍靠 Panel 滚动兜底。
+                // Form3：Dock=Fill 贴合面板、无滚动条；高度由面板决定，内部控件按 Anchor 分布。
+                // 其余协议：自然尺寸 + Panel 滚动兜底。
                 pnlHost.AutoScroll = !noProto;
                 f.Location = new Point(0, 0);
-                // 宽度取面板当前宽度与自然宽度之大者（避免横向滚动条），高度取自然高度。
-                f.Size = new Size(Math.Max(natural.Width, pnlHost.ClientSize.Width), natural.Height);
-                f.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+                if (noProto)
+                {
+                    f.Size = pnlHost.ClientSize;
+                    f.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+                }
+                else
+                {
+                    f.Size = new Size(Math.Max(natural.Width, pnlHost.ClientSize.Width), natural.Height);
+                    f.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+                }
                 pnlHost.Controls.Add(f);
                 f.Show();
                 f.BringToFront();
