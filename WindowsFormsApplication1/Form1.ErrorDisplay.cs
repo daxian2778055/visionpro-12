@@ -432,6 +432,10 @@ namespace WindowsFormsApplication1
 
         // ★第26轮#2/#4：12 路触发模式下拉框的统一入口（原来每个 handler 各自内联一份绕锁硬件写入）。
         private bool _triggerModeRollbackBusy;
+        // ★启动初始化期：trriger_set 给下拉框赋值会触发 SelectedIndexChanged→ApplyTriggerModeSelection，
+        //   此时未登录授权 → 被误判为"用户未授权修改"而回滚成空（现场设备重上电首启日志刷这行）。
+        //   程序自己赋的值不应被授权保护拦截，故初始化期置 true，让入口直接跳过。
+        internal static volatile bool InitializingTriggerMode;
 
         /// <summary>
         /// 触发模式下拉框统一入口。原实现的整段守卫是 `frm5.mark == 1 || job.state.Contains("相")`，
@@ -445,6 +449,7 @@ namespace WindowsFormsApplication1
         {
             if (slot < 0 || slot >= 12 || cb == null) return;
             if (_triggerModeRollbackBusy) return;   // 回滚赋值自身引发的重入
+            if (InitializingTriggerMode) return;    // 程序初始化赋值，不是用户操作，跳过授权回滚
             Myjob job = _jobs.Myjobs[slot];
             if (job == null) return;
             string oldMode = job.triggerMode ?? "";

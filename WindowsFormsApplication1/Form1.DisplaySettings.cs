@@ -516,6 +516,11 @@ namespace WindowsFormsApplication1
             }
             this.Invoke(new Action(() =>
             {
+                // ★启动初始化期置位：下面 12 路 comboBox.Text 赋值触发的 SelectedIndexChanged 一律跳过
+                //   （程序自己赋值不是用户操作）；Invoke 是同步的，末尾 finally 复位，覆盖整段赋值。
+                InitializingTriggerMode = true;
+                try
+                {
                 if (!dahua)
                 {
                     try
@@ -768,6 +773,8 @@ namespace WindowsFormsApplication1
                         _jobs.myjob12.triggerMode = _config.ReadString("camera12", "triggermode", "连续运行").Replace("\0", "");
                     }
                 }
+                }
+                finally { InitializingTriggerMode = false; }   // 初始化赋值完毕，恢复正常的授权拦截
             }));
             // ★G4 修复（2026-09-23）：trriger_set 由启动后台线程调用（Form1.cs 启动线程 try{trriger_set();}），
             //   下面 12 路"SDK 触发参数写 + cbSoftTriggerN/bnTriggerExecN 控件"原是裸跨线程代码——
