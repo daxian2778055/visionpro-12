@@ -4904,15 +4904,56 @@ namespace WindowsFormsApplication1
             m_nSaveImageBufSize[camIndex] = needSize;
         }
 
+        // ★借鉴正泰版 CreateCogImageFromBitmap：离线回图路径的 jpg/png 多为 24/32bpp，
+        //   原先灰度流程直接 new CogImage8Grey(src) 会抛 CogException → inputOk=false → 整帧判 NG
+        //   （现场表现："点回图永远 NG"）。这里按像素格式归一化后再构造，彩色同理。
+        //   返回 null 表示格式无法转换，调用方沿用既有 inputOk=false 失败路径即可。
+        //   internal static 便于纯托管单测（无需相机/VisionPro 运行授权）。
+        internal static ICogImage CreateCogImageFromBitmap(Bitmap src, bool color)
+        {
+            if (src == null) return null;
+            if (color)
+            {
+                if (src.PixelFormat == PixelFormat.Format24bppRgb)
+                    return new CogImage24PlanarColor(src);
+                using (Bitmap b24 = new Bitmap(src.Width, src.Height, PixelFormat.Format24bppRgb))
+                using (Graphics g = Graphics.FromImage(b24))
+                {
+                    g.DrawImage(src, 0, 0, src.Width, src.Height);
+                    return new CogImage24PlanarColor(b24);
+                }
+            }
+            if (src.PixelFormat == PixelFormat.Format8bppIndexed)
+                return new CogImage8Grey(src);
+            Bitmap use = src;
+            Bitmap owned = null;
+            if (src.PixelFormat != PixelFormat.Format24bppRgb)
+            {
+                owned = new Bitmap(src.Width, src.Height, PixelFormat.Format24bppRgb);
+                using (Graphics g = Graphics.FromImage(owned))
+                    g.DrawImage(src, 0, 0, src.Width, src.Height);
+                use = owned;
+            }
+            try
+            {
+                CogImage24PlanarColor c24 = new CogImage24PlanarColor(use);
+                return CogImageConvert.GetIntensityImage(c24, 0, 0, c24.Width, c24.Height);
+            }
+            finally
+            {
+                if (owned != null) owned.Dispose();
+            }
+        }
+
         private void AssignBlockInputImage(CogToolBlock block, Bitmap src, bool color)
         {
             if (block == null || src == null || !block.Inputs.Contains("Input"))
                 throw new InvalidOperationException("检测输入图像或 Input 端口不存在");
             object old = null;
             try { old = block.Inputs["Input"].Value; } catch { }
-            ICogImage next = color
-                ? (ICogImage)new CogImage24PlanarColor(src)
-                : new CogImage8Grey(src);
+            ICogImage next = CreateCogImageFromBitmap(src, color);
+            if (next == null)
+                throw new InvalidOperationException("检测输入图像格式无法转换为 CogImage");
             block.Inputs["Input"].Value = next;
             if (!object.ReferenceEquals(old, next))
                 RetireInputImage(old);   // ★第51轮：退役帧不再 Dispose、交给 GC（病根与实测依据见 RetireInputImage 上方注释）
@@ -5827,7 +5868,13 @@ namespace WindowsFormsApplication1
                                 {
                                     myjob.block.Run();
                                     runOk = myjob.block.RunStatus.Result != CogToolResultConstants.Error;
-                                    if (!runOk) _logger.WriteLog("相机" + myjob.path_number + " 工具块运行状态为 Error");
+                                    // ★借鉴正泰版：脚本持续报错时每帧都写日志会刷屏（12路×30fps 可达数百行/秒）。
+                                    //   用现成的限流日志器，每个相机一个 tag，5 秒最多一行并补报累计次数。
+                                    if (!runOk)
+                                        WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                                            "runstatus-" + myjob.path_number,
+                                            msg => _logger.WriteLog(msg),
+                                            "相机" + myjob.path_number + " 工具块运行状态为 Error", 5000);
                                 }
                                 catch (Exception exRun)
                                 {
@@ -6040,6 +6087,14 @@ namespace WindowsFormsApplication1
                                         if (!float.TryParse(buchangOut, out compens)) compens = 0f;
                                         float baoguang_temp = baseExposure * (255 - compens / 255);
                                         _cameraCtrl.Cameras[camIdx].MV_CC_SetEnumValue_NET("ExposureAuto", 0);
+                                        // ★借鉴正泰版：补偿后曝光可能超出相机允许范围，先读 fMin/fMax 夹住再下发，
+                                        //   否则 SDK 直接返回错误、每帧刷 "Set Exposure Time Fail!"。
+                                        MyCamera.MVCC_FLOATVALUE expRange = new MyCamera.MVCC_FLOATVALUE();
+                                        if (_cameraCtrl.Cameras[camIdx].MV_CC_GetFloatValue_NET("ExposureTime", ref expRange) == MyCamera.MV_OK)
+                                        {
+                                            if (baoguang_temp < expRange.fMin) baoguang_temp = expRange.fMin;
+                                            if (baoguang_temp > expRange.fMax) baoguang_temp = expRange.fMax;
+                                        }
                                         int nRet = _cameraCtrl.Cameras[camIdx].MV_CC_SetFloatValue_NET("ExposureTime", baoguang_temp);
                                         if (nRet != MyCamera.MV_OK)
                                         {
@@ -6852,6 +6907,9 @@ namespace WindowsFormsApplication1
             long renderT0 = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
+                // ★借鉴正泰版：最小化时无人看画，跳过 record 置位/光栅化，这次上屏成本直接归零。
+                //   放在 try 内——finally 照常复位 _renderBusy 与成本计量；连续模式下恢复后下一帧立即刷新。
+                if (WindowState == FormWindowState.Minimized) return;
                 Cognex.VisionPro.CogRecordDisplay _cd = _cogDisplay[slot];
                 var _mj = _jobs.Myjobs[slot];
                 try
@@ -6871,7 +6929,12 @@ namespace WindowsFormsApplication1
                 }
                 catch (Exception ex)
                 {
-                    _logger.WriteLog(ex.ToString() + "相机" + (slot + 1) + "record");
+                    // ★借鉴正泰版：record 置位失败不再每帧刷日志，按相机限流 10s 一条并补报累计次数，
+                    //   保留完整异常文本供现场取证。
+                    WindowsFormsApplication1.Core.Logging.RateLimitedLog.ThrottledMessage(
+                        "render-record-" + slot,
+                        msg => _logger.WriteLog(msg),
+                        ex.ToString() + "相机" + (slot + 1) + "record", 10000);
                 }
                 try
                 {
@@ -6965,6 +7028,13 @@ namespace WindowsFormsApplication1
             long renderT0 = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
+                // ★借鉴正泰版：最小化时无人看画，跳过换图；本方法对未交接的 frame 负所有权，
+                //   必须在此归还，否则每帧泄漏一张位图。finally 照常复位单飞标志。
+                if (WindowState == FormWindowState.Minimized)
+                {
+                    if (frame != null) frame.Dispose();
+                    return;
+                }
                 PictureBox pb = _rawBox[slot];
                 if (pb == null)
                 {
@@ -13883,6 +13953,14 @@ namespace WindowsFormsApplication1
 
                 _cameraCtrl.Cameras[index].MV_CC_SetEnumValue_NET("ExposureAuto", 0);
                 float baoguang_temp = float.Parse(tbExp.Text);
+                // ★借鉴正泰版：读到相机曝光范围就夹住，block 里的 baoguang 参考值同步用夹后的值，
+                //   避免"脚本拿请求值、相机实际是另一个值"的不一致。
+                MyCamera.MVCC_FLOATVALUE expRange = new MyCamera.MVCC_FLOATVALUE();
+                if (_cameraCtrl.Cameras[index].MV_CC_GetFloatValue_NET("ExposureTime", ref expRange) == MyCamera.MV_OK)
+                {
+                    if (baoguang_temp < expRange.fMin) baoguang_temp = expRange.fMin;
+                    if (baoguang_temp > expRange.fMax) baoguang_temp = expRange.fMax;
+                }
                 Myjob job = _jobs.Myjobs[index];
                 if (job != null && job.baoguang != 0 && job.block != null && job.block.Inputs.Contains("baoguang"))
                 {
