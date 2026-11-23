@@ -57,7 +57,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/BuildInfo.cs",
-        "sha256":  "339DC6DD0B6092BA49AAFB65247F66CF50B0DBDB443CF4A37295815905BB0834"
+        "sha256":  "E4426C65E940EFE3E3FD894B9562A01CDB0F3A086255B5399A5B2E145B53248A"
     },
     {
         "path":  "WindowsFormsApplication1/ClassIni.cs",
@@ -117,11 +117,11 @@
     },
     {
         "path":  "WindowsFormsApplication1/Form1.cs",
-        "sha256":  "6E8066F1FC50BAC091C7BF3F202860EEB5008BF6A67EA133B44499CA4A4A3B79"
+        "sha256":  "4198E24275A2D7CF04D7DB9F8150591619647A34129763A32E8214DD914D0789"
     },
     {
         "path":  "WindowsFormsApplication1/Form1.Designer.cs",
-        "sha256":  "C11B1CA0825D71BF96E1DE602ED79D1CB7CEF68AE0D53DCCB7E8522DB710D28B"
+        "sha256":  "D7417996965F52C8DA6BAABE5B1A41FA7A87A01654B1BE0129F97E4FA42B9AB0"
     },
     {
         "path":  "WindowsFormsApplication1/Form1.DisplaySettings.cs",
@@ -649,7 +649,7 @@
     },
     {
         "path":  "WindowsFormsApplication1.Tests/WindowsFormsApplication1.Tests.csproj",
-        "sha256":  "182B8AA75345A69145C7770B3E9EF160F4F8AC972D97F7707F71967C6CADB9B3"
+        "sha256":  "333B6E32DA30002217E8E5EDCBBFBCCCE02760A70AF3B244EA10EED528A0C5B0"
     },
     {
         "path":  "WindowsFormsApplication1.Tests/TestDoubles/AppHostStub.cs",
