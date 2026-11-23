@@ -6829,9 +6829,24 @@ namespace WindowsFormsApplication1
                                 label254.Text = _lostFrameCache[11];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label255.Text = (m_nFrames[11] - _jobs.myjob12.sum).ToString();
                             }
-                            // ★2026-11-23：离线相机显示改用持久快照（稳定不闪）；cameraState 的其它
-                            //   一次性提示（重连成功等）由各自日志承担，不再往这个 label 塞。
-                            label74.Text = _camOfflineSnapshot;
+                            // ★2026-11-23：离线相机显示——在 UI 线程直接按"方案内(block绑定)但句柄为空"判据
+                            //   计算，持续显示、不闪；不依赖 timer2 是否已启用或 cameraState 的临时拼接。
+                            try
+                            {
+                                int jcUI = (manager1 != null) ? manager1.JobCount : 0;
+                                System.Text.StringBuilder offUI = new System.Text.StringBuilder();
+                                for (int ci = 0; ci < 12 && ci < jcUI; ci++)
+                                {
+                                    if (_cameraCtrl.Cameras[ci] == null
+                                        || System.Threading.Volatile.Read(ref _cameraSdkFault[ci]) == 1)
+                                    {
+                                        if (offUI.Length > 0) offUI.Append("  ");
+                                        offUI.Append("相机").Append(ci + 1).Append("离线");
+                                    }
+                                }
+                                label74.Text = offUI.ToString();
+                            }
+                            catch { label74.Text = _camOfflineSnapshot; }
                             label77.Text = daoqi;
                             // 过期警告弹窗（只弹一次）
                             if (!string.IsNullOrEmpty(daoqi) && !daoqi_popup_shown)
@@ -9550,15 +9565,19 @@ namespace WindowsFormsApplication1
                     }
 
                     // ★2026-11-23：发布稳定的"离线相机"快照给 UI（替代闪烁的 cameraState）。
-                    //   判据：该路已启动(yun==1)但句柄为空 → 离线。内容不变则不重新赋值，UI 显示稳定不闪。
+                    //   判据修正：该路在方案流程内(block 已绑定，即 ci < JobCount)但句柄为空 → 离线。
+                    //   原用 yun==1 作判据是错的——取流失败后 ReleaseFailedCameraSlot 把 yun 置 0，
+                    //   于是"已启动但掉线"的相机反而被判成"没启动"而不显示（现场相机2正是此况：
+                    //   JobCount=2、相机2 block=OK，但取流失败句柄置 null → 应显示离线）。
+                    //   内容不变则不重新赋值，UI 显示稳定不闪。
                     try
                     {
+                        int jc = (manager1 != null) ? manager1.JobCount : 0;
                         System.Text.StringBuilder off = new System.Text.StringBuilder();
-                        for (int ci = 0; ci < 12; ci++)
+                        for (int ci = 0; ci < 12 && ci < jc; ci++)
                         {
-                            Myjob cj = _jobs != null && _jobs.Myjobs != null && ci < _jobs.Myjobs.Length ? _jobs.Myjobs[ci] : null;
-                            if (cj != null && cj.yun == 1 && (_cameraCtrl.Cameras[ci] == null
-                                || System.Threading.Volatile.Read(ref _cameraSdkFault[ci]) == 1))
+                            if (_cameraCtrl.Cameras[ci] == null
+                                || System.Threading.Volatile.Read(ref _cameraSdkFault[ci]) == 1)
                             {
                                 if (off.Length > 0) off.Append("  ");
                                 off.Append("相机").Append(ci + 1).Append("离线");
