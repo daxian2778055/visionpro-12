@@ -1068,8 +1068,15 @@ namespace WindowsFormsApplication1
                 if (!int.TryParse(_config.ReadString("camera", "yanshi", "5"), out _yanshiMs))
                     _yanshiMs = 5;
                 // ★G5-①修复：配置为负值时 Sleep 抛 ArgumentOutOfRangeException 被外层 catch("111") 吞掉
-                //   → 其后 12 路作业绑定整段跳过（假运行）；超大值则把启动线程睡死。钳制到 0~2000ms。
-                _yanshiMs = Math.Max(0, Math.Min(2000, _yanshiMs));
+                //   → 其后 12 路作业绑定整段跳过（假运行）；故下限 0 必须保留。
+                // ★2026-11-23 修复"界面设 80000ms 实际只等 2000ms"：上限原为 2000，与界面
+                //   numericUpDown1.Maximum=120000 严重不匹配——现场为等设备重上电把延时设很大，
+                //   却被这里静默钳到 2 秒，GigE 相机尚未就绪就开始枚举/开相机 → 启动报错 + 触发重连竞态。
+                //   上限改为与界面一致的 120000（后台线程 Sleep，不冻结 UI），让设置真正生效；
+                //   仍保留上限防手滑填超大值把启动线程睡死。
+                _yanshiMs = Math.Max(0, Math.Min(120000, _yanshiMs));
+                if (_yanshiMs > 2000)
+                    _logger.WriteLog("启动延时等待相机就绪 " + _yanshiMs + "ms（配置 yanshi，超过旧钳位 2000ms 的新上限已生效）");
                 Thread.Sleep(_yanshiMs);
                 StreamReader sr = null;
                 // ★N6：菜单项增删属 UI 操作，整段收口到 UI 线程——原实现后台线程裸操作 DropDownItems（Debug 抛跨线程异常/Release 竞态；F1 围栏未覆盖此段）
