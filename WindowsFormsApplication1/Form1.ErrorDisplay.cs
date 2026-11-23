@@ -267,10 +267,12 @@ namespace WindowsFormsApplication1
                         + "已按默认「连续运行」放行检测；原始值=[" + (_jobs.Myjobs[slot].triggerMode ?? "<null>")
                         + "]（10s 限流）");
                 }
-                // ★自愈：把内部值补成"连续运行"，后续帧走正常分支，不再每次空判定+限流记日志。
-                //   不动 UI 下拉框（保持现场显示），只补内部状态——避免报错期间检测一直靠兜底分支。
-                _jobs.Myjobs[slot].triggerMode = "连续运行";
-                return true;   // 兜底放行，按连续运行处理
+                // ★2026-11-23 修正：不再写回 triggerMode！上一版把内部值改成"连续运行"，
+                //   但 UI 下拉框仍显示设计器默认"通讯触发"、硬件也可能处于触发模式 →
+                //   UI/内部/硬件三方不一致，且会触发 15s 连续停摆看门狗的误恢复死循环。
+                //   现在只"本次按连续运行放行检测"，不碰内部状态；根因（trriger_set 提前 return
+                //   导致内部值未初始化）由启动链路修复处理，这里仅保证检测不中断。
+                return true;   // 兜底放行，按连续运行处理，但不改写 triggerMode
             }
             // 非空的未知模式（如拼写变体）保持原行为：不处理该帧，但限流记日志便于发现
             int tick2 = Environment.TickCount;
@@ -690,6 +692,40 @@ namespace WindowsFormsApplication1
             }
         }
 
+        /// <summary>
+        /// ★2026-11-23 S1 修复：取流准备(PrepareCameraGrab)失败后的统一收口。
+        /// 首次运行路径原本只置 yun=0、相机句柄仍在(非 null)，导致四条恢复路径全部失效：
+        /// timer2 按名重扫只在 Cameras[i]==null 时枚举 / 设备级重连要求 IsDeviceConnected=false /
+        /// 两个看门狗要求 yun==1 或有 pending → 相机永久"在但永不取流/永不检测"的僵尸槽。
+        /// 这里复用重连路径已有的"完整销毁 + 置 null"口径，交给 timer2 按名重扫自愈（修复1已无条件启用重连）。
+        /// </summary>
+        private void ReleaseFailedCameraSlot(int slot, int nRet, string phase)
+        {
+            if (slot < 0 || slot >= 12) return;
+            if (_jobs.Myjobs[slot] != null) _jobs.Myjobs[slot].yun = 0;
+            try
+            {
+                lock (_cameraLock)
+                {
+                    var cam = _cameraCtrl.Cameras[slot];
+                    if (cam != null)
+                    {
+                        try { cam.MV_CC_StopGrabbing_NET(); } catch { }
+                        SetCameraGrabbing(slot, false);
+                        try { cam.MV_CC_CloseDevice_NET(); } catch { }
+                        try { cam.MV_CC_DestroyDevice_NET(); } catch { }
+                        _cameraCtrl.Cameras[slot] = null;
+                    }
+                }
+                _logger.WriteLog("相机" + (slot + 1) + phase + "失败(nRet=0x" + HkRet(nRet)
+                    + ")，已销毁句柄置 null，交给 timer2 按名重扫自愈");
+            }
+            catch (Exception ex)
+            {
+                _logger.WriteLog("相机" + (slot + 1) + "取流失败收口异常: " + ex.Message);
+            }
+        }
+
         private bool PrepareCameraGrab(int camIndex, out int nRet)
         {
             nRet = -1;
@@ -773,6 +809,11 @@ namespace WindowsFormsApplication1
                 // ★ 2026-09-13：只要采集成功启动（设备重连恢复、或本恢复流程最终成功），就清除"恢复未完成"标志，
                 //   避免下一轮定时器再按旧标志停采、清掉刚接收的触发。
                 System.Threading.Volatile.Write(ref _grabRecoveryPending[camIndex], 0);
+                // ★2026-11-23 S2 修复：取流刚启动时主动建立"连续运行零帧看门狗"基线。
+                //   原基线只在收到第一帧后才写(_contFrameLastMs)，若相机从上电起一帧都不回，
+                //   基线永远为 0 → 15s 停摆判定条件 `_cfLastMs != 0` 永不成立 → 永久静默停摆。
+                //   这里以"启动取流时刻"为基线，此后 15s 无帧即可触发 RebuildGrabFor 自愈。
+                System.Threading.Volatile.Write(ref _contFrameLastMs[camIndex], Environment.TickCount);
             }
             if (clearCommPending)
             {

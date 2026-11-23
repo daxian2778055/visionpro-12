@@ -4038,7 +4038,8 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(0, out nRet))
                                 {
-                                    _jobs.myjob1.yun = 0;
+                                    // ★S1 修复：销毁句柄置 null 交给重连自愈（原来只置 yun=0 → 永久僵尸槽）
+                                    ReleaseFailedCameraSlot(0, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4080,8 +4081,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(1, out nRet))
                                 {
-                                    _jobs.myjob2.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机2 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(1, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4123,8 +4123,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(2, out nRet))
                                 {
-                                    _jobs.myjob3.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机3 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(2, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4165,8 +4164,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(3, out nRet))
                                 {
-                                    _jobs.myjob4.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机4 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(3, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4207,8 +4205,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(4, out nRet))
                                 {
-                                    _jobs.myjob5.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机5 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(4, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4250,8 +4247,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(5, out nRet))
                                 {
-                                    _jobs.myjob6.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机6 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(5, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4292,8 +4288,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(6, out nRet))
                                 {
-                                    _jobs.myjob7.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机7 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(6, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4334,8 +4329,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(7, out nRet))
                                 {
-                                    _jobs.myjob8.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机8 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(7, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4373,8 +4367,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(8, out nRet))
                                 {
-                                    _jobs.myjob9.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机9 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(8, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4412,8 +4405,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(9, out nRet))
                                 {
-                                    _jobs.myjob10.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机10 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(9, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4451,8 +4443,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(10, out nRet))
                                 {
-                                    _jobs.myjob11.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机11 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(10, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -4490,8 +4481,7 @@ namespace WindowsFormsApplication1
                                 int nRet;
                                 if (!PrepareCameraGrab(11, out nRet))
                                 {
-                                    _jobs.myjob12.yun = 0;
-                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机12 Get PayloadSize failed", nRet)));
+                                    ReleaseFailedCameraSlot(11, nRet, "启动取流");
                                 }
                                 else
                                 {
@@ -8985,7 +8975,11 @@ namespace WindowsFormsApplication1
         //   原实现靠 Thread.Sleep 轮询 chonglianzhong，UI 线程完全不泵消息，在途 Task 的 this.Invoke 必挂。
         private readonly System.Threading.ManualResetEventSlim _reconnectSettled = new System.Threading.ManualResetEventSlim(true);
         /// <summary>运行或打开设备后启用，用于断线/热插拔重连。</summary>
-        private bool _cameraReconnectEnabled = false;
+        // ★低风险加固：UI 线程写、timer2 的 Task.Run 后台读，改 volatile 保证可见性（与 chonglianzhong 同口径）
+        private volatile bool _cameraReconnectEnabled = false;
+        // ★2026-11-23：0 台相机时的"发现重连"节流——timer2 每 400ms tick，但无相机时每 3s 才真正枚举一次，
+        //   避免 A4 担心的全网 GigE 广播风暴；一旦枚举到设备并连上，此节流自然不再触发。
+        private int _lastDiscoveryTick;
 
         /// <summary>与 bnOpen_Click 相同：chUserDefinedName==camera_name[N] 绑定流程槽位</summary>
         private bool TryResolveCameraSlotByName(string devName, int deviceArrayIndex, out int slot)
@@ -9380,6 +9374,12 @@ namespace WindowsFormsApplication1
                                 }
                                 if (hasNullCamera)
                                 {
+                                    // ★2026-11-23 发现节流：0 台相机时 timer2 每 400ms tick 会触发全网枚举，
+                                    //   这里限制"有槽位为空"的发现枚举最快 3s 一次（有相机在线时通常 hasNullCamera=false，不受影响）。
+                                    int discNow = Environment.TickCount;
+                                    if ((uint)(discNow - _lastDiscoveryTick) < 3000u)
+                                        return;   // finally 会复位 chonglianzhong；下次 tick 再试
+                                    _lastDiscoveryTick = discNow;
                                     // 只在有未打开的相机时才重新枚举，避免不必要的性能开销
                                     MyCamera.MV_CC_DEVICE_INFO_LIST reconnectList = new MyCamera.MV_CC_DEVICE_INFO_LIST();
                                     int enumRet = MyCamera.MV_CC_EnumDevices_NET(MyCamera.MV_GIGE_DEVICE | MyCamera.MV_USB_DEVICE, ref reconnectList);
@@ -13862,7 +13862,12 @@ namespace WindowsFormsApplication1
         private void bnOpenCore()
         {
             if (manager1 == null || manager1.JobCount <= 0)
+            {
+                // ★2026-11-23：方案未加载时点"打开设备"原本静默 return、界面毫无反应；补日志 + 状态栏提示
+                _logger.WriteLog("打开设备中止：方案未加载或 JobCount=0（请先加载方案）");
+                try { if (!IsDisposed && IsHandleCreated) label133.Text = "方案未加载，无法开相机"; } catch { }
                 return;
+            }
 
             dakaizhong = true;
             // ★第64轮 P2-1：整轮开相机（含枚举+逐台重试/抢占）的 UI 占用总预算 10s。
@@ -13877,14 +13882,9 @@ namespace WindowsFormsApplication1
             //   旧逻辑据此弹窗并 return，直接跳过自动开相机；而真正的设备数以 13877 行的
             //   HikCameraEnumerator.Enumerate() 为准（其结果在 13892 行回写 tbUseNum）。
             //   且 nCameraUsingNum 解析后除 >12 钳位外全程未使用——这个守卫是无效的死校验。
-            //   改为：显示值非法时不弹窗、不 return，继续走下方真实枚举；若确实无设备，
-            //   13879 行的 devices.Count==0 检查会给出正确的"No device"提示。
-            int nCameraUsingNum;
-            if (!int.TryParse(tbUseNum.Text, out nCameraUsingNum) || nCameraUsingNum <= 0)
-            {
-                _logger.WriteLog("bnOpen: 使用设备数显示值尚未就绪(空/0)，跳过该显示值校验，继续按实际枚举开相机");
-            }
-            if (nCameraUsingNum > 12) nCameraUsingNum = 12;
+            //   2026-11-23 复审清理：原这里还残留一段解析 tbUseNum.Text 到 nCameraUsingNum 的死代码
+            //   （解析后除 >12 钳位外全程未用、每次启动还打一条无意义日志），已删除——
+            //   tbUseNum 只是 UI 显示框，真实设备数以下方 HikCameraEnumerator.Enumerate() 为准。
 
             // 枚举设备并按 UserDefinedName 映射到槽位（取代 12 段复制 if）
             List<CameraDeviceInfo> devices = HikCameraEnumerator.Enumerate();
@@ -14029,9 +14029,12 @@ namespace WindowsFormsApplication1
 
             ApplyTriggerModesForOpenedCameras();
             dakaizhong = false;
-            // ★A4 修复：0 台在线不启用自动重连（否则 timer2 每 400ms 全网 GigE 广播枚举）
-            if (CountOpenedCameras() > 0)
-                EnableCameraReconnect();
+            // ★2026-11-23 修复"0 台相机时永久卡死"：原 A4 逻辑仅 CountOpenedCameras()>0 才启用重连，
+            //   设备重上电首次启动若一台都没连上（相机未就绪），重连定时器永不启动，
+            //   RecoverStaleTriggers 也在 timer2 内一并失效 → 软件永久停在"无相机"态，须手动点打开设备。
+            //   改为无条件启用：timer2 内部对"0 台发现枚举"另有 3s 节流（见 _lastDiscoveryTick），
+            //   不会每 400ms 全网广播；有相机时行为与原来一致。
+            EnableCameraReconnect();
             // ★A3：包大小设置失败收尾汇总（锁内不再弹 modal，避免让排队中的重连 Invoke 插进半开状态）
             if (packetSizeFailed > 0)
                 _logger.WriteLog("有 " + packetSizeFailed + " 台相机包大小设置失败（不影响继续运行，请检查网卡巨帧/网络设置）");
