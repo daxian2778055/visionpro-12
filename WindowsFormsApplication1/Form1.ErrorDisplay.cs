@@ -251,28 +251,39 @@ namespace WindowsFormsApplication1
                     return false;
                 return true;
             }
-            // ★2026-11-23 兜底：触发模式为空/不认识时，绝不能让相机白采图却不检测。
-            //   现场出现 UI 显示"通讯触发"(设计器默认值)但内部 triggerMode 为空的情况
-            //   （trriger_set 因 WaitForManagerLoaded 超时提前 return，内部值停留在初始化清空态），
-            //   导致 ShouldProcessImageCallback 每帧 return false、相机永不检测、每 5s 刷"该类累计"日志。
-            //   空值按默认"连续运行"放行，保证检测不中断；同时记一条限流诊断日志，
-            //   带原始 triggerMode 值，便于追查空值来源（配置/加载时序）。
+            // ★2026-11-23 根因修复：触发模式内部值为空时，从 ini 重新读取并回填真实配置。
+            //   现场现象：UI 下拉框显示"通讯触发"(设计器写死的默认值)，但内部 triggerMode 为空
+            //   （ini 里该键存在但值为空时 GetPrivateProfileString 返回空串、默认值"连续运行"不生效；
+            //   或 trriger_set 因方案未就绪提前 return 未赋值）。上一版兜底把它当"连续运行"放行，
+            //   导致通讯触发相机被当连续运行每帧检测 → 待检队列满、过载日志刷屏。
+            //   现在按 ini 实际值回填：ini="通讯触发"就按通讯触发处理（无触发不检测，不再过载）；
+            //   ini 也空/非法才回退默认"连续运行"并记一次日志。
             if (mode == "")
             {
-                int now = Environment.TickCount;
-                if (now - _emptyModeLogTick[slot] > 10000)
+                string iniMode = NormalizeTriggerMode(
+                    _config.ReadString("camera" + (slot + 1), "triggermode", "通讯触发").Replace("\0", ""));
+                if (string.IsNullOrEmpty(iniMode)) iniMode = "通讯触发";   // 与设计器默认/ReadCfgTriggerMode 同口径
+                if (iniMode == "连续运行" || iniMode == "触发拍照" || iniMode == "通讯触发")
                 {
-                    _emptyModeLogTick[slot] = now;
-                    _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空（UI 显示可能为设计器默认值），"
-                        + "已按默认「连续运行」放行检测；原始值=[" + (_jobs.Myjobs[slot].triggerMode ?? "<null>")
-                        + "]（10s 限流）");
+                    _jobs.Myjobs[slot].triggerMode = iniMode;   // 回填真实配置，同步内部状态
+                    _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空，已从 ini 回填 [" + iniMode + "]");
+                    if (iniMode == "连续运行" || iniMode == "触发拍照") return true;
+                    // iniMode == 通讯触发：按通讯触发门控判定（无在途触发就不处理该帧）
+                    if (!_jobs.CommTriggerArmed || !_jobs.HasPendingTrigger(slot)) return false;
+                    return true;
                 }
-                // ★2026-11-23 修正：不再写回 triggerMode！上一版把内部值改成"连续运行"，
-                //   但 UI 下拉框仍显示设计器默认"通讯触发"、硬件也可能处于触发模式 →
-                //   UI/内部/硬件三方不一致，且会触发 15s 连续停摆看门狗的误恢复死循环。
-                //   现在只"本次按连续运行放行检测"，不碰内部状态；根因（trriger_set 提前 return
-                //   导致内部值未初始化）由启动链路修复处理，这里仅保证检测不中断。
-                return true;   // 兜底放行，按连续运行处理，但不改写 triggerMode
+                else
+                {
+                    // ini 里也是空/非法 → 用默认"连续运行"，记一次限流日志（配置缺失需现场补配）
+                    int now = Environment.TickCount;
+                    if (now - _emptyModeLogTick[slot] > 10000)
+                    {
+                        _emptyModeLogTick[slot] = now;
+                        _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空，已按默认「通讯触发」处理；"
+                            + "请检查 ini [camera" + (slot + 1) + "] triggermode 配置（10s 限流）");
+                    }
+                    return true;
+                }
             }
             // 非空的未知模式（如拼写变体）保持原行为：不处理该帧，但限流记日志便于发现
             int tick2 = Environment.TickCount;

@@ -508,6 +508,17 @@ namespace WindowsFormsApplication1
                 }
             }));
         }
+        // ★2026-11-23：读触发模式配置——GetPrivateProfileString 对"键存在但值为空"返回空串、默认值不生效，
+        //   导致 ini 里 triggermode= 时读到空、内部状态空 → 运行期被误判为连续运行、每帧检测过载。
+        //   空值统一回退"通讯触发"：与设计器 comboBox 默认值一致，也符合现场绝大多数相机(11/12)用通讯触发的实际。
+        //   从源头保证 triggerMode 不为空，且与 UI 显示一致。
+        private string ReadCfgTriggerMode(string section)
+        {
+            string v = _config.ReadString(section, "triggermode", "通讯触发").Replace("\0", "").Trim();
+            if (string.IsNullOrEmpty(v)) return "通讯触发";
+            return (v == "连续运行" || v == "触发拍照" || v == "通讯触发") ? v : "通讯触发";
+        }
+
         private void trriger_set()
         {
             if (!WaitForManagerLoaded())
@@ -532,14 +543,14 @@ namespace WindowsFormsApplication1
                         }
                         else
                         {
-                            comboBox1.Text = _config.ReadString("camera1", "triggermode", "连续运行").Replace("\0", "");
-                            _jobs.myjob1.triggerMode = _config.ReadString("camera1", "triggermode", "连续运行").Replace("\0", "");
+                            comboBox1.Text = ReadCfgTriggerMode("camera1");
+                            _jobs.myjob1.triggerMode = ReadCfgTriggerMode("camera1");
                         }
                     }
                     catch
                     {
-                        comboBox1.Text = _config.ReadString("camera1", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob1.triggerMode = _config.ReadString("camera1", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox1.Text = ReadCfgTriggerMode("camera1");
+                        _jobs.myjob1.triggerMode = ReadCfgTriggerMode("camera1");
                     }
                     try
                     {
@@ -552,15 +563,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox4.Text = _config.ReadString("camera2", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob2.triggerMode = _config.ReadString("camera2", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox4.Text = ReadCfgTriggerMode("camera2");
+                                _jobs.myjob2.triggerMode = ReadCfgTriggerMode("camera2");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox4.Text = _config.ReadString("camera2", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob2.triggerMode = _config.ReadString("camera2", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox4.Text = ReadCfgTriggerMode("camera2");
+                        _jobs.myjob2.triggerMode = ReadCfgTriggerMode("camera2");
                     }
                     try
                     {
@@ -573,15 +584,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox5.Text = _config.ReadString("camera3", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob3.triggerMode = _config.ReadString("camera3", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox5.Text = ReadCfgTriggerMode("camera3");
+                                _jobs.myjob3.triggerMode = ReadCfgTriggerMode("camera3");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox5.Text = _config.ReadString("camera3", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob3.triggerMode = _config.ReadString("camera3", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox5.Text = ReadCfgTriggerMode("camera3");
+                        _jobs.myjob3.triggerMode = ReadCfgTriggerMode("camera3");
                     }
                     try
                     {
@@ -594,15 +605,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox8.Text = _config.ReadString("camera4", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob4.triggerMode = _config.ReadString("camera4", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox8.Text = ReadCfgTriggerMode("camera4");
+                                _jobs.myjob4.triggerMode = ReadCfgTriggerMode("camera4");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox8.Text = _config.ReadString("camera4", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob4.triggerMode = _config.ReadString("camera4", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox8.Text = ReadCfgTriggerMode("camera4");
+                        _jobs.myjob4.triggerMode = ReadCfgTriggerMode("camera4");
                     }
                     try
                     {
@@ -615,15 +626,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox25.Text = _config.ReadString("camera5", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob5.triggerMode = _config.ReadString("camera5", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox25.Text = ReadCfgTriggerMode("camera5");
+                                _jobs.myjob5.triggerMode = ReadCfgTriggerMode("camera5");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox25.Text = _config.ReadString("camera5", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob5.triggerMode = _config.ReadString("camera5", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox25.Text = ReadCfgTriggerMode("camera5");
+                        _jobs.myjob5.triggerMode = ReadCfgTriggerMode("camera5");
                     }
                     try
                     {
@@ -636,15 +647,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox28.Text = _config.ReadString("camera6", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob6.triggerMode = _config.ReadString("camera6", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox28.Text = ReadCfgTriggerMode("camera6");
+                                _jobs.myjob6.triggerMode = ReadCfgTriggerMode("camera6");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox28.Text = _config.ReadString("camera6", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob6.triggerMode = _config.ReadString("camera6", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox28.Text = ReadCfgTriggerMode("camera6");
+                        _jobs.myjob6.triggerMode = ReadCfgTriggerMode("camera6");
                     }
                     try
                     {
@@ -657,15 +668,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox31.Text = _config.ReadString("camera7", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob7.triggerMode = _config.ReadString("camera7", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox31.Text = ReadCfgTriggerMode("camera7");
+                                _jobs.myjob7.triggerMode = ReadCfgTriggerMode("camera7");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox31.Text = _config.ReadString("camera7", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob7.triggerMode = _config.ReadString("camera7", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox31.Text = ReadCfgTriggerMode("camera7");
+                        _jobs.myjob7.triggerMode = ReadCfgTriggerMode("camera7");
                     }
                     try
                     {
@@ -678,15 +689,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox34.Text = _config.ReadString("camera8", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob8.triggerMode = _config.ReadString("camera8", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox34.Text = ReadCfgTriggerMode("camera8");
+                                _jobs.myjob8.triggerMode = ReadCfgTriggerMode("camera8");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox34.Text = _config.ReadString("camera8", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob8.triggerMode = _config.ReadString("camera8", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox34.Text = ReadCfgTriggerMode("camera8");
+                        _jobs.myjob8.triggerMode = ReadCfgTriggerMode("camera8");
                     }
                     try
                     {
@@ -699,15 +710,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox43.Text = _config.ReadString("camera9", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob9.triggerMode = _config.ReadString("camera9", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox43.Text = ReadCfgTriggerMode("camera9");
+                                _jobs.myjob9.triggerMode = ReadCfgTriggerMode("camera9");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox43.Text = _config.ReadString("camera9", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob9.triggerMode = _config.ReadString("camera9", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox43.Text = ReadCfgTriggerMode("camera9");
+                        _jobs.myjob9.triggerMode = ReadCfgTriggerMode("camera9");
                     }
                     try
                     {
@@ -720,15 +731,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox47.Text = _config.ReadString("camera10", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob10.triggerMode = _config.ReadString("camera10", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox47.Text = ReadCfgTriggerMode("camera10");
+                                _jobs.myjob10.triggerMode = ReadCfgTriggerMode("camera10");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox47.Text = _config.ReadString("camera10", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob10.triggerMode = _config.ReadString("camera10", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox47.Text = ReadCfgTriggerMode("camera10");
+                        _jobs.myjob10.triggerMode = ReadCfgTriggerMode("camera10");
                     }
                     try
                     {
@@ -741,15 +752,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox51.Text = _config.ReadString("camera11", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob11.triggerMode = _config.ReadString("camera11", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox51.Text = ReadCfgTriggerMode("camera11");
+                                _jobs.myjob11.triggerMode = ReadCfgTriggerMode("camera11");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox51.Text = _config.ReadString("camera11", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob11.triggerMode = _config.ReadString("camera11", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox51.Text = ReadCfgTriggerMode("camera11");
+                        _jobs.myjob11.triggerMode = ReadCfgTriggerMode("camera11");
                     }
                     try
                     {
@@ -762,15 +773,15 @@ namespace WindowsFormsApplication1
                             }
                             else
                             {
-                                comboBox55.Text = _config.ReadString("camera12", "triggermode", "连续运行").Replace("\0", "");
-                                _jobs.myjob12.triggerMode = _config.ReadString("camera12", "triggermode", "连续运行").Replace("\0", "");
+                                comboBox55.Text = ReadCfgTriggerMode("camera12");
+                                _jobs.myjob12.triggerMode = ReadCfgTriggerMode("camera12");
                             }
                         }
                     }
                     catch
                     {
-                        comboBox55.Text = _config.ReadString("camera12", "triggermode", "连续运行").Replace("\0", "");
-                        _jobs.myjob12.triggerMode = _config.ReadString("camera12", "triggermode", "连续运行").Replace("\0", "");
+                        comboBox55.Text = ReadCfgTriggerMode("camera12");
+                        _jobs.myjob12.triggerMode = ReadCfgTriggerMode("camera12");
                     }
                 }
                 }
