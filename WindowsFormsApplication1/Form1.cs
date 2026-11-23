@@ -6829,7 +6829,9 @@ namespace WindowsFormsApplication1
                                 label254.Text = _lostFrameCache[11];   // ★P2-2 读后台采样缓存（原 GetLostFrame 每圈 P/Invoke）
                                 label255.Text = (m_nFrames[11] - _jobs.myjob12.sum).ToString();
                             }
-                            label74.Text = cameraState;
+                            // ★2026-11-23：离线相机显示改用持久快照（稳定不闪）；cameraState 的其它
+                            //   一次性提示（重连成功等）由各自日志承担，不再往这个 label 塞。
+                            label74.Text = _camOfflineSnapshot;
                             label77.Text = daoqi;
                             // 过期警告弹窗（只弹一次）
                             if (!string.IsNullOrEmpty(daoqi) && !daoqi_popup_shown)
@@ -8970,6 +8972,10 @@ namespace WindowsFormsApplication1
             //}
         }
         string cameraState = "";
+        // ★2026-11-23：离线状态持久快照——cameraState 每次 timer2 tick 都被清空重建，
+        //   跨线程读时有时无导致界面"相机N离线"闪烁、看不清。这里由 timer2 每轮重算一次
+        //   离线相机列表并发布到 volatile 快照（内容不变则不赋值，避免 UI 无谓重绘），UI 持续显示之。
+        private volatile string _camOfflineSnapshot = "";
         volatile bool chonglianzhong = false;   // ★低风险加固：UI 线程(timer2_Tick)读写、Task.Run 后台 finally 复位，跨线程需 volatile 保证可见性
         // ★R2 修复（2026-09-23 第24轮）：bnClose 有界等待在途重连落地的确定性信号（初判有信号=无在途 Task）。
         //   原实现靠 Thread.Sleep 轮询 chonglianzhong，UI 线程完全不泵消息，在途 Task 的 this.Invoke 必挂。
@@ -9542,6 +9548,26 @@ namespace WindowsFormsApplication1
                         // ★B3 修复：原空 catch——本轮重连异常被完全吞掉，无任何日志可查
                         try { _logger.WriteLog("自动重连本轮异常: " + exTick.Message); } catch { }
                     }
+
+                    // ★2026-11-23：发布稳定的"离线相机"快照给 UI（替代闪烁的 cameraState）。
+                    //   判据：该路已启动(yun==1)但句柄为空 → 离线。内容不变则不重新赋值，UI 显示稳定不闪。
+                    try
+                    {
+                        System.Text.StringBuilder off = new System.Text.StringBuilder();
+                        for (int ci = 0; ci < 12; ci++)
+                        {
+                            Myjob cj = _jobs != null && _jobs.Myjobs != null && ci < _jobs.Myjobs.Length ? _jobs.Myjobs[ci] : null;
+                            if (cj != null && cj.yun == 1 && (_cameraCtrl.Cameras[ci] == null
+                                || System.Threading.Volatile.Read(ref _cameraSdkFault[ci]) == 1))
+                            {
+                                if (off.Length > 0) off.Append("  ");
+                                off.Append("相机").Append(ci + 1).Append("离线");
+                            }
+                        }
+                        string offlineText = off.ToString();
+                        if (_camOfflineSnapshot != offlineText) _camOfflineSnapshot = offlineText;
+                    }
+                    catch { }
 
                     if (!cameraState.Contains("相"))
                         cameraState = "";
@@ -14268,12 +14294,17 @@ namespace WindowsFormsApplication1
                 bool willCount = job != null && _jobs.yunxing && job.yun == 1 && job.en == 1;
                 if (!willCount)
                     _frameAcct.Note(index, FrameAccounting.Reason.ManualTriggerStopped);
-                _logger.WriteLog("相机" + (index + 1) + " 软触发已发出（模式="
-                    + (job != null ? (NormalizeTriggerMode(job.triggerMode) == "" ? "未设置" : NormalizeTriggerMode(job.triggerMode)) : "未知")
-                    + "，" + (_jobs.yunxing ? "运行中" : "停止态")
-                    + "，该路启动=" + (job != null ? job.yun : -1) + "，该路使能=" + (job != null ? job.en : -1) + "）。"
-                    + (willCount ? "本帧应计入检测数。"
-                                 : "本帧按设计不计入检测数（只采图），累计次数见 设置→帧计数归因（只读）。"));
+                // ★2026-11-23：正常触发(willCount=true)每次都记日志会刷屏（拍得越多垃圾越多），
+                //   正常路径静默；只有异常路径（停止态/未启动/未使能，本帧不计入检测数）才记，
+                //   那才是需要诊断"为什么没计数"的场景，且这类操作不频繁。
+                if (!willCount)
+                {
+                    _logger.WriteLog("相机" + (index + 1) + " 手动软触发未计入检测数（模式="
+                        + (job != null ? (NormalizeTriggerMode(job.triggerMode) == "" ? "未设置" : NormalizeTriggerMode(job.triggerMode)) : "未知")
+                        + "，" + (_jobs.yunxing ? "运行中" : "停止态")
+                        + "，该路启动=" + (job != null ? job.yun : -1) + "，该路使能=" + (job != null ? job.en : -1) + "）——"
+                        + "本帧只采图不计入，累计次数见 设置→帧计数归因（只读）。");
+                }
             }
             catch { }
         }
