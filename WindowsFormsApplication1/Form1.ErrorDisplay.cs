@@ -77,6 +77,18 @@ namespace WindowsFormsApplication1
             MessageBox.Show(errorMsg, "PROMPT");
         }
 
+        /// <summary>
+        /// ★2026-11-23：可自动恢复的相机瞬态错误（枚举不到设备 PayloadSize 失败等）专用通道——
+        /// 只记日志、不弹窗。设备重上电/半就绪时的这类失败会被 timer2 重连 + RecoverStaleTriggers
+        /// 重建取流兜底恢复，弹窗只会阻塞 UI 并打扰操作员；真正无法恢复的严重错误仍走 ShowErrorMsg 弹窗。
+        /// 带【可恢复】前缀便于现场从日志里分辨"这是会自动好的瞬态错误"。
+        /// </summary>
+        private void ShowAutoRecoverableMsg(string csMessage, int nErrorNum)
+        {
+            string suffix = nErrorNum == 0 ? "" : " (0x" + HkRet(nErrorNum) + ")";
+            _logger.WriteLog("【可恢复】" + csMessage + suffix + "（重连/重建取流将自动尝试恢复，无需人工干预）");
+        }
+
         private bool IsCameraGrabbing(int camIndex)
         {
             switch (camIndex)

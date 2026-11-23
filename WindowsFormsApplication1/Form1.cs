@@ -4081,7 +4081,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(1, out nRet))
                                 {
                                     _jobs.myjob2.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机2 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机2 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4124,7 +4124,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(2, out nRet))
                                 {
                                     _jobs.myjob3.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机3 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机3 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4166,7 +4166,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(3, out nRet))
                                 {
                                     _jobs.myjob4.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机4 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机4 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4208,7 +4208,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(4, out nRet))
                                 {
                                     _jobs.myjob5.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机5 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机5 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4251,7 +4251,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(5, out nRet))
                                 {
                                     _jobs.myjob6.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机6 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机6 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4293,7 +4293,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(6, out nRet))
                                 {
                                     _jobs.myjob7.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机7 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机7 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4335,7 +4335,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(7, out nRet))
                                 {
                                     _jobs.myjob8.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机8 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机8 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4374,7 +4374,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(8, out nRet))
                                 {
                                     _jobs.myjob9.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机9 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机9 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4413,7 +4413,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(9, out nRet))
                                 {
                                     _jobs.myjob10.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机10 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机10 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4452,7 +4452,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(10, out nRet))
                                 {
                                     _jobs.myjob11.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机11 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机11 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -4491,7 +4491,7 @@ namespace WindowsFormsApplication1
                                 if (!PrepareCameraGrab(11, out nRet))
                                 {
                                     _jobs.myjob12.yun = 0;
-                                    this.Invoke(new Action(() => ShowErrorMsg("相机12 Get PayloadSize failed", nRet)));
+                                    this.Invoke(new Action(() => ShowAutoRecoverableMsg("相机12 Get PayloadSize failed", nRet)));
                                 }
                                 else
                                 {
@@ -13894,7 +13894,8 @@ namespace WindowsFormsApplication1
                 if (diyici == 0)
                 {
                     diyici = 1;
-                    ShowErrorMsg("No device, please select", 0);
+                    // ★可自动恢复：枚举不到设备（相机未就绪），timer2 重连线程会兜底 → 只记日志不弹窗
+                    ShowAutoRecoverableMsg("No device, please select（相机尚未就绪，等待重连）", 0);
                 }
                 dakaizhong = false;
                 return;
