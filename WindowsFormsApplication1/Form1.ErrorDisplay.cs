@@ -235,6 +235,9 @@ namespace WindowsFormsApplication1
             }
         }
 
+        // ★2026-11-23：空触发模式兜底的限流日志 tick（按槽位，10s 一条），避免每帧刷屏
+        private readonly int[] _emptyModeLogTick = new int[12];
+
         private bool ShouldProcessImageCallback(int slot)
         {
             if (slot < 0 || slot >= 12) return false;
@@ -247,6 +250,34 @@ namespace WindowsFormsApplication1
                 if (!_jobs.CommTriggerArmed || !_jobs.HasPendingTrigger(slot))
                     return false;
                 return true;
+            }
+            // ★2026-11-23 兜底：触发模式为空/不认识时，绝不能让相机白采图却不检测。
+            //   现场出现 UI 显示"通讯触发"(设计器默认值)但内部 triggerMode 为空的情况
+            //   （trriger_set 因 WaitForManagerLoaded 超时提前 return，内部值停留在初始化清空态），
+            //   导致 ShouldProcessImageCallback 每帧 return false、相机永不检测、每 5s 刷"该类累计"日志。
+            //   空值按默认"连续运行"放行，保证检测不中断；同时记一条限流诊断日志，
+            //   带原始 triggerMode 值，便于追查空值来源（配置/加载时序）。
+            if (mode == "")
+            {
+                int now = Environment.TickCount;
+                if (now - _emptyModeLogTick[slot] > 10000)
+                {
+                    _emptyModeLogTick[slot] = now;
+                    _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空（UI 显示可能为设计器默认值），"
+                        + "已按默认「连续运行」放行检测；原始值=[" + (_jobs.Myjobs[slot].triggerMode ?? "<null>")
+                        + "]（10s 限流）");
+                }
+                // ★自愈：把内部值补成"连续运行"，后续帧走正常分支，不再每次空判定+限流记日志。
+                //   不动 UI 下拉框（保持现场显示），只补内部状态——避免报错期间检测一直靠兜底分支。
+                _jobs.Myjobs[slot].triggerMode = "连续运行";
+                return true;   // 兜底放行，按连续运行处理
+            }
+            // 非空的未知模式（如拼写变体）保持原行为：不处理该帧，但限流记日志便于发现
+            int tick2 = Environment.TickCount;
+            if (tick2 - _emptyModeLogTick[slot] > 10000)
+            {
+                _emptyModeLogTick[slot] = tick2;
+                _logger.WriteLog("相机" + (slot + 1) + " 触发模式未识别=[" + mode + "]，本帧不处理（10s 限流）");
             }
             return false;
         }
