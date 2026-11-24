@@ -251,39 +251,32 @@ namespace WindowsFormsApplication1
                     return false;
                 return true;
             }
-            // ★2026-11-23 根因修复：触发模式内部值为空时，从 ini 重新读取并回填真实配置。
-            //   现场现象：UI 下拉框显示"通讯触发"(设计器写死的默认值)，但内部 triggerMode 为空
-            //   （ini 里该键存在但值为空时 GetPrivateProfileString 返回空串、默认值"连续运行"不生效；
-            //   或 trriger_set 因方案未就绪提前 return 未赋值）。上一版兜底把它当"连续运行"放行，
-            //   导致通讯触发相机被当连续运行每帧检测 → 待检队列满、过载日志刷屏。
-            //   现在按 ini 实际值回填：ini="通讯触发"就按通讯触发处理（无触发不检测，不再过载）；
-            //   ini 也空/非法才回退默认"连续运行"并记一次日志。
+            // ★2026-11-23 根因修复：触发模式内部值为空时，从 ini 读取并合法化后回填。
+            //   空值/非法值必须回退"通讯触发"并走通讯触发门控；上一版在非法分支直接 return true，
+            //   日志声称按通讯触发处理，实际却放行全部帧，重新造成无触发逐帧检测与过载。
             if (mode == "")
             {
-                string iniMode = NormalizeTriggerMode(
-                    _config.ReadString("camera" + (slot + 1), "triggermode", "通讯触发").Replace("\0", ""));
-                if (string.IsNullOrEmpty(iniMode)) iniMode = "通讯触发";   // 与设计器默认/ReadCfgTriggerMode 同口径
-                if (iniMode == "连续运行" || iniMode == "触发拍照" || iniMode == "通讯触发")
+                string rawIniMode = _config.ReadString("camera" + (slot + 1), "triggermode", "通讯触发");
+                bool known = FrameAccounting.IsKnownTriggerMode(rawIniMode);
+                string iniMode = FrameAccounting.ResolveTriggerMode(rawIniMode);
+                _jobs.Myjobs[slot].triggerMode = iniMode;
+                if (!known)
                 {
-                    _jobs.Myjobs[slot].triggerMode = iniMode;   // 回填真实配置，同步内部状态
-                    _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空，已从 ini 回填 [" + iniMode + "]");
-                    if (iniMode == "连续运行" || iniMode == "触发拍照") return true;
-                    // iniMode == 通讯触发：按通讯触发门控判定（无在途触发就不处理该帧）
-                    if (!_jobs.CommTriggerArmed || !_jobs.HasPendingTrigger(slot)) return false;
-                    return true;
-                }
-                else
-                {
-                    // ini 里也是空/非法 → 用默认"连续运行"，记一次限流日志（配置缺失需现场补配）
                     int now = Environment.TickCount;
                     if (now - _emptyModeLogTick[slot] > 10000)
                     {
                         _emptyModeLogTick[slot] = now;
-                        _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空，已按默认「通讯触发」处理；"
+                        _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空，ini 值为空/非法，已回退「通讯触发」；"
                             + "请检查 ini [camera" + (slot + 1) + "] triggermode 配置（10s 限流）");
                     }
-                    return true;
                 }
+                else
+                {
+                    _logger.WriteLog("相机" + (slot + 1) + " 触发模式内部值为空，已从 ini 回填 [" + iniMode + "]");
+                }
+                if (iniMode == "连续运行" || iniMode == "触发拍照") return true;
+                if (!_jobs.CommTriggerArmed || !_jobs.HasPendingTrigger(slot)) return false;
+                return true;
             }
             // 非空的未知模式（如拼写变体）保持原行为：不处理该帧，但限流记日志便于发现
             int tick2 = Environment.TickCount;
@@ -709,37 +702,80 @@ namespace WindowsFormsApplication1
         /// timer2 按名重扫只在 Cameras[i]==null 时枚举 / 设备级重连要求 IsDeviceConnected=false /
         /// 两个看门狗要求 yun==1 或有 pending → 相机永久"在但永不取流/永不检测"的僵尸槽。
         /// 这里复用重连路径已有的"完整销毁 + 置 null"口径，交给 timer2 按名重扫自愈（修复1已无条件启用重连）。
+        /// expectedCamera 是 PrepareCameraGrab 实际操作的对象；槽位已被其它路径换上新相机时必须放弃收口。
         /// </summary>
-        private void ReleaseFailedCameraSlot(int slot, int nRet, string phase)
+        private void ReleaseFailedCameraSlot(int slot, int nRet, string phase, MyCamera expectedCamera)
         {
             if (slot < 0 || slot >= 12) return;
             if (_jobs.Myjobs[slot] != null) _jobs.Myjobs[slot].yun = 0;
+            MyCamera cam = null;
+            bool closing = false;
             try
             {
                 lock (_cameraLock)
                 {
-                    var cam = _cameraCtrl.Cameras[slot];
-                    if (cam != null)
+                    cam = _cameraCtrl.Cameras[slot];
+                    if (!ReferenceEquals(cam, expectedCamera))
                     {
-                        try { cam.MV_CC_StopGrabbing_NET(); } catch { }
-                        SetCameraGrabbing(slot, false);
-                        try { cam.MV_CC_CloseDevice_NET(); } catch { }
-                        try { cam.MV_CC_DestroyDevice_NET(); } catch { }
+                        _logger.WriteLog("相机" + (slot + 1) + phase + "失败后对象已被替换/释放，放弃本次收口（不拆当前槽位）");
+                        return;
+                    }
+                    if (cam == null)
+                    {
+                        _logger.WriteLog("相机" + (slot + 1) + phase + "失败(nRet=0x" + HkRet(nRet) + ")，槽位已空，无需释放");
+                        return;
+                    }
+                    Interlocked.Exchange(ref _slotClosing[slot], 1);
+                    closing = true;
+                    try { cam.MV_CC_StopGrabbing_NET(); } catch { }
+                    SetCameraGrabbing(slot, false);
+                }
+
+                try { Thread.Sleep(30); } catch { }
+                lock (_cameraLock)
+                {
+                    if (!ReferenceEquals(_cameraCtrl.Cameras[slot], cam))
+                    {
+                        _logger.WriteLog("相机" + (slot + 1) + phase + "失败后等待期间对象被替换，放弃销毁");
+                        return;
+                    }
+                    lock (m_BufForSaveImageLock[slot])
+                    {
+                        int closeRet = -1;
+                        int destroyRet = -1;
+                        try { closeRet = cam.MV_CC_CloseDevice_NET(); } catch { }
+                        try { destroyRet = cam.MV_CC_DestroyDevice_NET(); } catch { }
                         _cameraCtrl.Cameras[slot] = null;
+                        if (closeRet != MyCamera.MV_OK || destroyRet != MyCamera.MV_OK)
+                            _logger.WriteLog("相机" + (slot + 1) + "取流失败释放返回异常: Close=" + closeRet + " Destroy=" + destroyRet);
                     }
                 }
+                m_slotTLayerType[slot] = 0;
+                _lostFrameCache[slot] = "0";
+                _jobs.ClearCommTriggerPending(slot);
                 _logger.WriteLog("相机" + (slot + 1) + phase + "失败(nRet=0x" + HkRet(nRet)
-                    + ")，已销毁句柄置 null，交给 timer2 按名重扫自愈");
+                    + ")，已执行释放收口并置 null，交给 timer2 按名重扫自愈");
             }
             catch (Exception ex)
             {
                 _logger.WriteLog("相机" + (slot + 1) + "取流失败收口异常: " + ex.Message);
             }
+            finally
+            {
+                if (closing) Interlocked.Exchange(ref _slotClosing[slot], 0);
+            }
         }
 
         private bool PrepareCameraGrab(int camIndex, out int nRet)
         {
+            MyCamera ignored;
+            return PrepareCameraGrab(camIndex, out nRet, out ignored);
+        }
+
+        private bool PrepareCameraGrab(int camIndex, out int nRet, out MyCamera attemptedCamera)
+        {
             nRet = -1;
+            attemptedCamera = null;
             if (camIndex < 0 || camIndex >= 12 || _cameraCtrl.Cameras[camIndex] == null)
             {
                 _logger.WriteLog("相机" + (camIndex + 1) + "未连接，无法启动取流");
@@ -759,6 +795,7 @@ namespace WindowsFormsApplication1
                     return false;
                 }
                 camRef = cam;   // ★出锁复查用：必须是停流前那一台，不能只看槽位非空
+                attemptedCamera = cam;   // 失败收口只允许释放这一台，不能拆等待期间换上的新对象
                 try
                 {
                     if (!cam.MV_CC_IsDeviceConnected_NET())
@@ -822,9 +859,10 @@ namespace WindowsFormsApplication1
                 System.Threading.Volatile.Write(ref _grabRecoveryPending[camIndex], 0);
                 // ★2026-11-23 S2 修复：取流刚启动时主动建立"连续运行零帧看门狗"基线。
                 //   原基线只在收到第一帧后才写(_contFrameLastMs)，若相机从上电起一帧都不回，
-                //   基线永远为 0 → 15s 停摆判定条件 `_cfLastMs != 0` 永不成立 → 永久静默停摆。
-                //   这里以"启动取流时刻"为基线，此后 15s 无帧即可触发 RebuildGrabFor 自愈。
+                //   基线永远为 0 → 15s 停摆判据一直把 0 当"未建立" → 永久静默停摆。
+                //   这里以"启动取流时刻"为基线并显式置 _contFrameBaselineSet，此后 15s 无帧即可触发自愈。
                 System.Threading.Volatile.Write(ref _contFrameLastMs[camIndex], Environment.TickCount);
+                System.Threading.Volatile.Write(ref _contFrameBaselineSet[camIndex], 1);   // 0 只是合法 tick，不再兼任“未建立基线”哨兵
             }
             if (clearCommPending)
             {

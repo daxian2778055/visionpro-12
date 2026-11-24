@@ -3933,6 +3933,7 @@ namespace WindowsFormsApplication1
         // ★B7：连续运行回帧看门狗采样（上次帧计数 / 计数变化时刻 TickCount；0=未初始化，首次只建基线不判定）
         private readonly int[] _contFrameLast = new int[12];
         private readonly int[] _contFrameLastMs = new int[12];
+        private readonly byte[] _contFrameBaselineSet = new byte[12];
         // ★B7：连续运行模式"无新帧"判定阈值（毫秒）。取 15 秒：正常连续运行路帧率远高于此；
         //   极低帧率(≤0.5fps)或长曝光(数秒)场景也不会误判。
         private const int ContFrameStallTimeoutMs = 15000;
@@ -4042,10 +4043,10 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob1.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(0, out nRet))
+                                if (!PrepareCameraGrab(0, out nRet, out MyCamera failedCamera0))
                                 {
                                     // ★S1 修复：销毁句柄置 null 交给重连自愈（原来只置 yun=0 → 永久僵尸槽）
-                                    ReleaseFailedCameraSlot(0, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(0, nRet, "启动取流", failedCamera0);
                                 }
                                 else
                                 {
@@ -4085,9 +4086,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob2.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(1, out nRet))
+                                if (!PrepareCameraGrab(1, out nRet, out MyCamera failedCamera1))
                                 {
-                                    ReleaseFailedCameraSlot(1, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(1, nRet, "启动取流", failedCamera1);
                                 }
                                 else
                                 {
@@ -4127,9 +4128,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob3.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(2, out nRet))
+                                if (!PrepareCameraGrab(2, out nRet, out MyCamera failedCamera2))
                                 {
-                                    ReleaseFailedCameraSlot(2, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(2, nRet, "启动取流", failedCamera2);
                                 }
                                 else
                                 {
@@ -4168,9 +4169,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob4.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(3, out nRet))
+                                if (!PrepareCameraGrab(3, out nRet, out MyCamera failedCamera3))
                                 {
-                                    ReleaseFailedCameraSlot(3, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(3, nRet, "启动取流", failedCamera3);
                                 }
                                 else
                                 {
@@ -4209,9 +4210,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob5.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(4, out nRet))
+                                if (!PrepareCameraGrab(4, out nRet, out MyCamera failedCamera4))
                                 {
-                                    ReleaseFailedCameraSlot(4, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(4, nRet, "启动取流", failedCamera4);
                                 }
                                 else
                                 {
@@ -4251,9 +4252,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob6.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(5, out nRet))
+                                if (!PrepareCameraGrab(5, out nRet, out MyCamera failedCamera5))
                                 {
-                                    ReleaseFailedCameraSlot(5, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(5, nRet, "启动取流", failedCamera5);
                                 }
                                 else
                                 {
@@ -4292,9 +4293,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob7.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(6, out nRet))
+                                if (!PrepareCameraGrab(6, out nRet, out MyCamera failedCamera6))
                                 {
-                                    ReleaseFailedCameraSlot(6, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(6, nRet, "启动取流", failedCamera6);
                                 }
                                 else
                                 {
@@ -4333,9 +4334,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob8.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(7, out nRet))
+                                if (!PrepareCameraGrab(7, out nRet, out MyCamera failedCamera7))
                                 {
-                                    ReleaseFailedCameraSlot(7, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(7, nRet, "启动取流", failedCamera7);
                                 }
                                 else
                                 {
@@ -4371,9 +4372,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob9.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(8, out nRet))
+                                if (!PrepareCameraGrab(8, out nRet, out MyCamera failedCamera8))
                                 {
-                                    ReleaseFailedCameraSlot(8, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(8, nRet, "启动取流", failedCamera8);
                                 }
                                 else
                                 {
@@ -4409,9 +4410,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob10.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(9, out nRet))
+                                if (!PrepareCameraGrab(9, out nRet, out MyCamera failedCamera9))
                                 {
-                                    ReleaseFailedCameraSlot(9, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(9, nRet, "启动取流", failedCamera9);
                                 }
                                 else
                                 {
@@ -4447,9 +4448,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob11.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(10, out nRet))
+                                if (!PrepareCameraGrab(10, out nRet, out MyCamera failedCamera10))
                                 {
-                                    ReleaseFailedCameraSlot(10, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(10, nRet, "启动取流", failedCamera10);
                                 }
                                 else
                                 {
@@ -4485,9 +4486,9 @@ namespace WindowsFormsApplication1
                                 _jobs.myjob12.trriger = 0;
                                 _jobs.yunxing = true;
                                 int nRet;
-                                if (!PrepareCameraGrab(11, out nRet))
+                                if (!PrepareCameraGrab(11, out nRet, out MyCamera failedCamera11))
                                 {
-                                    ReleaseFailedCameraSlot(11, nRet, "启动取流");
+                                    ReleaseFailedCameraSlot(11, nRet, "启动取流", failedCamera11);
                                 }
                                 else
                                 {
@@ -9009,11 +9010,11 @@ namespace WindowsFormsApplication1
         private int _lastDiscoveryTick;
 
         /// <summary>与 bnOpen_Click 相同：chUserDefinedName==camera_name[N] 绑定流程槽位</summary>
-        private bool TryResolveCameraSlotByName(string devName, int deviceArrayIndex, out int slot)
+        private bool TryResolveCameraSlotByName(string devName, out int slot)
         {
             // ★2026-11-24：与 bnOpen 的 MapToSlots 统一口径（去 \0/Trim + 大小写不敏感），
             //   且取"第一个匹配"（与 MapToSlots 一致）——原精确匹配+取最后一个，在重名/名称漂移时
-            //   会与 bnOpen 绑出不同槽位，造成错绑。index 回写移到确认匹配后、只写命中的那一个。
+            //   会与 bnOpen 绑出不同槽位，造成错绑。这里只解析槽位；index 由成功认领空槽位的建链分支提交。
             slot = -1;
             string want = HikCameraEnumerator.Normalize(devName);
             if (want.Length == 0) return false;
@@ -9022,7 +9023,6 @@ namespace WindowsFormsApplication1
                 if (string.Equals(want, HikCameraEnumerator.Normalize(camera_name[i]), StringComparison.OrdinalIgnoreCase))
                 {
                     slot = i;
-                    _jobs.Myjobs[i].index = deviceArrayIndex;
                     return true;   // 第一个匹配即返回，与 MapToSlots 的 break 同口径
                 }
             }
@@ -9061,7 +9061,7 @@ namespace WindowsFormsApplication1
                 if (!IsConfiguredCameraName(devName)) return false;
                 // ★2026-11-24：nameMatched 移到 slot 解析成功之后——原置 true 后若解析失败返回，
                 //   外层据 nameMatched 做 i_temp++ 会造成 device1[] 索引错位、后续错绑槽位。
-                if (!TryResolveCameraSlotByName(devName, deviceArrayIndex, out slot)) return false;
+                if (!TryResolveCameraSlotByName(devName, out slot)) return false;
                 nameMatched = true;
             }
             else if (devInfo.nTLayerType == MyCamera.MV_USB_DEVICE)
@@ -9070,7 +9070,7 @@ namespace WindowsFormsApplication1
                 devName = usbInfo.chUserDefinedName;
                 if (!IsConfiguredCameraName(devName)) return false;
                 // ★2026-11-24：同上，nameMatched 移到 slot 解析成功之后
-                if (!TryResolveCameraSlotByName(devName, deviceArrayIndex, out slot)) return false;
+                if (!TryResolveCameraSlotByName(devName, out slot)) return false;
                 nameMatched = true;
             }
             else
@@ -9091,6 +9091,8 @@ namespace WindowsFormsApplication1
                 if (_cameraCtrl.Cameras[slot] == null)
                     _cameraCtrl.Cameras[slot] = new MyCamera();
                 if (_cameraCtrl.Cameras[slot] == null) return false;
+                // 只有原本为空且已进入建链的槽位才提交新 index；同名第二台不得覆盖已开槽位。
+                _jobs.Myjobs[slot].index = deviceArrayIndex;
 
                 nRet = _cameraCtrl.Cameras[slot].MV_CC_CreateDevice_NET(ref device1[deviceArrayIndex]);
                 if (nRet != MyCamera.MV_OK) return false;
@@ -9113,9 +9115,35 @@ namespace WindowsFormsApplication1
                     if (nPacketSize > 0)
                         _cameraCtrl.Cameras[slot].MV_CC_SetIntValue_NET("GevSCPSPacketSize", (uint)nPacketSize);
                 }
-                _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(cbException, (IntPtr)slot);   // 2026-09-06：注册 SDK 异常回调（★P0：传字段持有委托，防 GC）
-                nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
-                return nRet == MyCamera.MV_OK;
+                try
+                {
+                    _cameraCtrl.Cameras[slot].MV_CC_RegisterExceptionCallBack_NET(cbException, (IntPtr)slot);
+                    nRet = _cameraCtrl.Cameras[slot].MV_CC_RegisterImageCallBackEx_NET(cbImage, (IntPtr)slot);
+                }
+                catch
+                {
+                    nRet = -1;
+                }
+                if (nRet != MyCamera.MV_OK)
+                {
+                    _logger.WriteLog("相机" + (slot + 1) + "按名重扫注册回调失败: 0x" + HkRet(nRet) + "，释放句柄等待重扫");
+                    Interlocked.Exchange(ref _slotClosing[slot], 1);
+                    try
+                    {
+                        lock (m_BufForSaveImageLock[slot])
+                        {
+                            try { _cameraCtrl.Cameras[slot].MV_CC_CloseDevice_NET(); } catch { }
+                            try { _cameraCtrl.Cameras[slot].MV_CC_DestroyDevice_NET(); } catch { }
+                            _cameraCtrl.Cameras[slot] = null;
+                        }
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _slotClosing[slot], 0);
+                    }
+                    return false;
+                }
+                return true;
             }
         }
 
@@ -9275,7 +9303,8 @@ namespace WindowsFormsApplication1
                     else
                     {
                         int _cfLastMs = System.Threading.Volatile.Read(ref _contFrameLastMs[i]);
-                        if (_cfLastMs != 0 && (uint)(_tickNow - _cfLastMs) > (uint)ContFrameStallTimeoutMs)
+                        if (System.Threading.Volatile.Read(ref _contFrameBaselineSet[i]) != 0
+                            && (uint)(_tickNow - _cfLastMs) > (uint)ContFrameStallTimeoutMs)
                         {
                             if (System.Threading.Interlocked.CompareExchange(ref _triggerRecovering[i], 1, 0) == 0)
                             {
@@ -13964,6 +13993,7 @@ namespace WindowsFormsApplication1
                     ShowAutoRecoverableMsg("No device, please select（相机尚未就绪，等待重连）", 0);
                 }
                 dakaizhong = false;
+                EnableCameraReconnect();   // 0 设备/0 匹配也不能绕过发现重连，随后由 bnOpen_Click 的 finally 放开 dakaizhong
                 return;
             }
 

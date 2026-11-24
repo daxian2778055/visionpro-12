@@ -110,6 +110,20 @@ namespace WindowsFormsApplication1
         /// </summary>
         public static string NormalizeMode(string mode) => (mode ?? "").Replace("\0", "").Trim();
 
+        /// <summary>配置值是否已是受支持的三种触发模式；空值与未知值都必须显式回退，不能放行帧。</summary>
+        public static bool IsKnownTriggerMode(string mode)
+        {
+            string normalized = NormalizeMode(mode);
+            return normalized == "连续运行" || normalized == "触发拍照" || normalized == "通讯触发";
+        }
+
+        /// <summary>配置值合法化：保留三种已知模式，其余统一回退通讯触发。</summary>
+        public static string ResolveTriggerMode(string mode)
+        {
+            string normalized = NormalizeMode(mode);
+            return IsKnownTriggerMode(normalized) ? normalized : "通讯触发";
+        }
+
         /// <summary>
         /// 该路是否「连续运行」（相机自由跑帧）。判定收口到这里，是为了让这条边界**可被单测钉住**：
         /// ★第55轮恢复的正是第53轮误删的"连续运行的相机不参与计件"——当时它只是界面刷新处

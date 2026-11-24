@@ -514,9 +514,8 @@ namespace WindowsFormsApplication1
         //   从源头保证 triggerMode 不为空，且与 UI 显示一致。
         private string ReadCfgTriggerMode(string section)
         {
-            string v = _config.ReadString(section, "triggermode", "通讯触发").Replace("\0", "").Trim();
-            if (string.IsNullOrEmpty(v)) return "通讯触发";
-            return (v == "连续运行" || v == "触发拍照" || v == "通讯触发") ? v : "通讯触发";
+            return FrameAccounting.ResolveTriggerMode(
+                _config.ReadString(section, "triggermode", "通讯触发"));
         }
 
         private void trriger_set()

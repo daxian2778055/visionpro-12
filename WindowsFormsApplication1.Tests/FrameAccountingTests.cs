@@ -228,6 +228,20 @@ namespace WindowsFormsApplication1.Tests
             Assert.AreEqual("", FrameAccounting.NormalizeMode("  \0  "));
         }
 
+        [TestMethod]
+        public void 触发模式配置合法化_空值与非法值必须回退通讯触发()
+        {
+            Assert.AreEqual("连续运行", FrameAccounting.ResolveTriggerMode("\0 连续运行 \0"));
+            Assert.AreEqual("触发拍照", FrameAccounting.ResolveTriggerMode(" 触发拍照 "));
+            Assert.AreEqual("通讯触发", FrameAccounting.ResolveTriggerMode("通讯触发"));
+            Assert.AreEqual("通讯触发", FrameAccounting.ResolveTriggerMode(""));
+            Assert.AreEqual("通讯触发", FrameAccounting.ResolveTriggerMode(null));
+            Assert.AreEqual("通讯触发", FrameAccounting.ResolveTriggerMode("非法模式"));
+            Assert.IsFalse(FrameAccounting.IsKnownTriggerMode(""));
+            Assert.IsFalse(FrameAccounting.IsKnownTriggerMode("非法模式"));
+            Assert.IsTrue(FrameAccounting.IsKnownTriggerMode("\0 通讯触发 \0"));
+        }
+
         // ── ★第58轮（朋友复审①）：两张平行表的映射逐一对齐 ────────────────────
         // Display[] / Groups[] 靠下标与 Reason 枚举对齐，全靠手工维护；TablesAligned 只比长度，
         // 所以"把任意两项顺序写反"这种错长度检查照样过，但界面上的归因标签会张冠李戴——
