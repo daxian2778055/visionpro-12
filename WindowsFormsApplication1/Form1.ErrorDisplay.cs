@@ -707,9 +707,7 @@ namespace WindowsFormsApplication1
         private void ReleaseFailedCameraSlot(int slot, int nRet, string phase, MyCamera expectedCamera)
         {
             if (slot < 0 || slot >= 12) return;
-            if (_jobs.Myjobs[slot] != null) _jobs.Myjobs[slot].yun = 0;
             MyCamera cam = null;
-            bool closing = false;
             try
             {
                 lock (_cameraLock)
@@ -722,32 +720,36 @@ namespace WindowsFormsApplication1
                     }
                     if (cam == null)
                     {
+                        if (_jobs.Myjobs[slot] != null) _jobs.Myjobs[slot].yun = 0;
                         _logger.WriteLog("相机" + (slot + 1) + phase + "失败(nRet=0x" + HkRet(nRet) + ")，槽位已空，无需释放");
                         return;
                     }
-                    Interlocked.Exchange(ref _slotClosing[slot], 1);
-                    closing = true;
-                    try { cam.MV_CC_StopGrabbing_NET(); } catch { }
-                    SetCameraGrabbing(slot, false);
-                }
-
-                try { Thread.Sleep(30); } catch { }
-                lock (_cameraLock)
-                {
-                    if (!ReferenceEquals(_cameraCtrl.Cameras[slot], cam))
+                    if (Interlocked.CompareExchange(ref _slotClosing[slot], 1, 0) != 0)
                     {
-                        _logger.WriteLog("相机" + (slot + 1) + phase + "失败后等待期间对象被替换，放弃销毁");
+                        _logger.WriteLog("相机" + (slot + 1) + phase + "失败但槽位已在拆除中，放弃本次释放");
                         return;
                     }
-                    lock (m_BufForSaveImageLock[slot])
+                    try
                     {
-                        int closeRet = -1;
-                        int destroyRet = -1;
-                        try { closeRet = cam.MV_CC_CloseDevice_NET(); } catch { }
-                        try { destroyRet = cam.MV_CC_DestroyDevice_NET(); } catch { }
-                        _cameraCtrl.Cameras[slot] = null;
-                        if (closeRet != MyCamera.MV_OK || destroyRet != MyCamera.MV_OK)
-                            _logger.WriteLog("相机" + (slot + 1) + "取流失败释放返回异常: Close=" + closeRet + " Destroy=" + destroyRet);
+                        if (_jobs.Myjobs[slot] != null) _jobs.Myjobs[slot].yun = 0;
+                        try { cam.MV_CC_StopGrabbing_NET(); } catch { }
+                        SetCameraGrabbing(slot, false);
+                        // 失败收口必须让“停流→销毁”之间不被其它相机路径换对象；这 30ms 只在失败路径付出。
+                        Thread.Sleep(30);
+                        lock (m_BufForSaveImageLock[slot])
+                        {
+                            int closeRet = -1;
+                            int destroyRet = -1;
+                            try { closeRet = cam.MV_CC_CloseDevice_NET(); } catch { }
+                            try { destroyRet = cam.MV_CC_DestroyDevice_NET(); } catch { }
+                            _cameraCtrl.Cameras[slot] = null;
+                            if (closeRet != MyCamera.MV_OK || destroyRet != MyCamera.MV_OK)
+                                _logger.WriteLog("相机" + (slot + 1) + "取流失败释放返回异常: Close=" + closeRet + " Destroy=" + destroyRet);
+                        }
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _slotClosing[slot], 0);
                     }
                 }
                 m_slotTLayerType[slot] = 0;
@@ -759,10 +761,6 @@ namespace WindowsFormsApplication1
             catch (Exception ex)
             {
                 _logger.WriteLog("相机" + (slot + 1) + "取流失败收口异常: " + ex.Message);
-            }
-            finally
-            {
-                if (closing) Interlocked.Exchange(ref _slotClosing[slot], 0);
             }
         }
 
@@ -832,6 +830,7 @@ namespace WindowsFormsApplication1
                 if (IsCameraGrabbing(camIndex))
                 {
                     _logger.WriteLog("相机" + (camIndex + 1) + "启动取流前已被其它路径开启，放弃本次重复启动");
+                    attemptedCamera = null;   // 同一对象已由其它路径成功开采，本次失败不得触发释放
                     return false;
                 }
                 MyCamera.MVCC_INTVALUE stParam = new MyCamera.MVCC_INTVALUE();
