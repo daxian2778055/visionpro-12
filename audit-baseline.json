@@ -57,7 +57,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/BuildInfo.cs",
-        "sha256":  "3F45B3242A3F336BB0C73D27DEEC83C129959C6D71A3BFFE1D46E9FEF7119429"
+        "sha256":  "ABDC6CA067A86C95293EF0501BE268184CC003EAE64D2EBDF9A2A0844D2068E4"
     },
     {
         "path":  "WindowsFormsApplication1/ClassIni.cs",
@@ -117,11 +117,11 @@
     },
     {
         "path":  "WindowsFormsApplication1/Form1.cs",
-        "sha256":  "33C882E48598CFFC3F09206B9AE1DEE00FED8232FF79860531E7A05618D4A6C2"
+        "sha256":  "AEFA8C475CF803F904273C2B075A2690CAFDD57A48F38C18C58377D07BE65619"
     },
     {
         "path":  "WindowsFormsApplication1/Form1.Designer.cs",
-        "sha256":  "D7417996965F52C8DA6BAABE5B1A41FA7A87A01654B1BE0129F97E4FA42B9AB0"
+        "sha256":  "57F7DBFDD7828E334CFC1EE0F6CFBF006BE49A147E6A81B264C818A24E55977E"
     },
     {
         "path":  "WindowsFormsApplication1/Form1.DisplaySettings.cs",
@@ -353,7 +353,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/Core/Camera/HikCameraEnumerator.cs",
-        "sha256":  "A156FD3C618ACDBC94F6B19EAFAADB167847DB9DEEDD08A97D829EBD3AFF441E"
+        "sha256":  "650912EC41D0CB966D489F5DB6A1EFEDBDC8DEEEF1B6B598D86B6F3EEBA92DFE"
     },
     {
         "path":  "WindowsFormsApplication1/Core/Infrastructure/AppHost.cs",
