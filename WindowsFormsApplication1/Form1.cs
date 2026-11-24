@@ -3149,7 +3149,13 @@ namespace WindowsFormsApplication1
             int nRet = MyCamera.MV_CC_EnumDevices_NET(MyCamera.MV_GIGE_DEVICE | MyCamera.MV_USB_DEVICE, ref m_pDeviceList);
             if (0 != nRet)
             {
-                ShowErrorMsg("Enumerate devices fail!", 0);
+                // ★2026-11-24：构造函数阶段(句柄未创建)枚举失败若弹 MessageBox，会卡在启动流程里、
+                //   用户看到"软件起不来"。此时只记日志；手动点"查找设备"时句柄已创建，仍正常弹窗提示。
+                string msg = "Enumerate devices fail! (0x" + HkRet(nRet) + ")";
+                if (!IsHandleCreated || IsDisposed || _disposingFlag)
+                    _logger.WriteLog("启动时设备枚举失败（已跳过，不影响软件启动）: " + msg);
+                else
+                    ShowErrorMsg("Enumerate devices fail!", nRet);
                 return;
             }
             m_nDevNum = (int)m_pDeviceList.nDeviceNum;
@@ -9005,21 +9011,33 @@ namespace WindowsFormsApplication1
         /// <summary>与 bnOpen_Click 相同：chUserDefinedName==camera_name[N] 绑定流程槽位</summary>
         private bool TryResolveCameraSlotByName(string devName, int deviceArrayIndex, out int slot)
         {
+            // ★2026-11-24：与 bnOpen 的 MapToSlots 统一口径（去 \0/Trim + 大小写不敏感），
+            //   且取"第一个匹配"（与 MapToSlots 一致）——原精确匹配+取最后一个，在重名/名称漂移时
+            //   会与 bnOpen 绑出不同槽位，造成错绑。index 回写移到确认匹配后、只写命中的那一个。
             slot = -1;
-            string nnn = "";
+            string want = HikCameraEnumerator.Normalize(devName);
+            if (want.Length == 0) return false;
             for (int i = 0; i < 12; i++)
             {
-                if (devName == camera_name[i]) { _jobs.Myjobs[i].index = deviceArrayIndex; nnn = i.ToString(); }
+                if (string.Equals(want, HikCameraEnumerator.Normalize(camera_name[i]), StringComparison.OrdinalIgnoreCase))
+                {
+                    slot = i;
+                    _jobs.Myjobs[i].index = deviceArrayIndex;
+                    return true;   // 第一个匹配即返回，与 MapToSlots 的 break 同口径
+                }
             }
-            if (string.IsNullOrEmpty(nnn)) return false;
-            slot = int.Parse(nnn);
-            return true;
+            return false;
         }
 
         private bool IsConfiguredCameraName(string devName)
         {
+            // ★2026-11-24：与 bnOpen 的 MapToSlots 统一口径（去 \0/Trim + 大小写不敏感），
+            //   原精确 == 在相机名大小写/尾随空格漂移时会把本系统相机判成外来设备、重扫不重连。
+            string want = HikCameraEnumerator.Normalize(devName);
+            if (want.Length == 0) return false;
             for (int i = 0; i < 12; i++)
-                if (devName == camera_name[i]) return true;
+                if (string.Equals(want, HikCameraEnumerator.Normalize(camera_name[i]), StringComparison.OrdinalIgnoreCase))
+                    return true;
             return false;
         }
 
@@ -9041,16 +9059,19 @@ namespace WindowsFormsApplication1
                 MyCamera.MV_GIGE_DEVICE_INFO gigeInfo = (MyCamera.MV_GIGE_DEVICE_INFO)MyCamera.ByteToStruct(devInfo.SpecialInfo.stGigEInfo, typeof(MyCamera.MV_GIGE_DEVICE_INFO));
                 devName = gigeInfo.chUserDefinedName;
                 if (!IsConfiguredCameraName(devName)) return false;
-                nameMatched = true;
+                // ★2026-11-24：nameMatched 移到 slot 解析成功之后——原置 true 后若解析失败返回，
+                //   外层据 nameMatched 做 i_temp++ 会造成 device1[] 索引错位、后续错绑槽位。
                 if (!TryResolveCameraSlotByName(devName, deviceArrayIndex, out slot)) return false;
+                nameMatched = true;
             }
             else if (devInfo.nTLayerType == MyCamera.MV_USB_DEVICE)
             {
                 MyCamera.MV_USB3_DEVICE_INFO usbInfo = (MyCamera.MV_USB3_DEVICE_INFO)MyCamera.ByteToStruct(devInfo.SpecialInfo.stGigEInfo, typeof(MyCamera.MV_USB3_DEVICE_INFO));
                 devName = usbInfo.chUserDefinedName;
                 if (!IsConfiguredCameraName(devName)) return false;
-                nameMatched = true;
+                // ★2026-11-24：同上，nameMatched 移到 slot 解析成功之后
                 if (!TryResolveCameraSlotByName(devName, deviceArrayIndex, out slot)) return false;
+                nameMatched = true;
             }
             else
             {

@@ -82,7 +82,13 @@ namespace WindowsFormsApplication1.Core.Camera
             return map;
         }
 
-        private static string Normalize(string value)
+        /// <summary>
+        /// 设备名归一化：去掉残留 '\0' 与首尾空白，供映射/匹配共用。
+        /// ★2026-11-24：由 private 改 public——Form1 的按名重扫(IsConfiguredCameraName /
+        ///   TryResolveCameraSlotByName)也复用同一口径，避免 bnOpen 用归一化、重连用精确 == 的
+        ///   两套实现（重上电后名称大小写/尾随空格漂移时，会出现"开相机能绑、断线连不回"）。
+        /// </summary>
+        public static string Normalize(string value)
         {
             if (string.IsNullOrEmpty(value)) return string.Empty;
             return value.Replace("\0", string.Empty).Trim();
