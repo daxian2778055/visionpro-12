@@ -57,7 +57,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/BuildInfo.cs",
-        "sha256":  "2B23207816CC1DD4278C93D84BB608B392A3A017839FF8DB5C698BA6CA6E25DD"
+        "sha256":  "2189697F7CFC573F762F4BBAE1F3DFC6A2612EA1376EBADB046D86B7AAEC129E"
     },
     {
         "path":  "WindowsFormsApplication1/ClassIni.cs",
@@ -77,7 +77,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/CommTriggerHelper.cs",
-        "sha256":  "E154F5B44EE0454C102BE7B43C846C4A814E0F3A89DFCF77D0DB8030068C874C"
+        "sha256":  "1CE63B5CC01C1EAB05F01139FA08D062A9B1AC27C40E53859B5B1586ACC108D0"
     },
     {
         "path":  "WindowsFormsApplication1/CommTriggerSource.cs",
@@ -121,7 +121,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/Form1.Designer.cs",
-        "sha256":  "57F7DBFDD7828E334CFC1EE0F6CFBF006BE49A147E6A81B264C818A24E55977E"
+        "sha256":  "37E724F3C134A474E77A85E453D0DB9807F9738204B8F83F78E62491394CAC74"
     },
     {
         "path":  "WindowsFormsApplication1/Form1.DisplaySettings.cs",
@@ -221,7 +221,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/FormModbus.cs",
-        "sha256":  "812E35C9C785CD4E0A272078B689B86B88ED34955D4D7FAB475076F358A11C9E"
+        "sha256":  "6BB1F48442E5C216EAF7E44CEB42487DE5C8348D83A26969831DF3268BA17AFF"
     },
     {
         "path":  "WindowsFormsApplication1/FormModbus.Designer.cs",
@@ -229,7 +229,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/FormModbusRtu.cs",
-        "sha256":  "F98CAD0832E8380E4ACC2F59E8D0137144220E551EF4BB6E8569E41F92EEE40D"
+        "sha256":  "6DFD36299B5C8BFC135EF6BFC94C7EB45C6400C5BA3E43BDCDB064B25B18F9CA"
     },
     {
         "path":  "WindowsFormsApplication1/FormModbusRtu.designer.cs",
@@ -245,7 +245,7 @@
     },
     {
         "path":  "WindowsFormsApplication1/FormOmron.cs",
-        "sha256":  "CD12E5EE86DB8E1BB2E57AAF4D807AF1C641681387FA5EEC2DE584AEDC721D9A"
+        "sha256":  "F22ADEDC7EF3B955BB1DF2D54421B3CCB9F836611F87BE5C6CA77CA2BF94D658"
     },
     {
         "path":  "WindowsFormsApplication1/FormOmron.Designer.cs",
@@ -590,6 +590,10 @@
     {
         "path":  "WindowsFormsApplication1.Tests/CommGridHelperTests.cs",
         "sha256":  "3E7A991FD845D2DD025169A9AFF631781966D6513D36E9B45B340E0E0BE40C09"
+    },
+    {
+        "path":  "WindowsFormsApplication1.Tests/CommTriggerHelperTests.cs",
+        "sha256":  "A5B50979F00390A1E34D51055A7B45F1DC89ED3CD92D07E420DAD5257C5F507D"
     },
     {
         "path":  "WindowsFormsApplication1.Tests/DeadImageScanTests.cs",
