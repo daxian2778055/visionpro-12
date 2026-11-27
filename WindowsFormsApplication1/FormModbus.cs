@@ -600,7 +600,7 @@ namespace WindowsFormsApplication1
                 {
                     camera_dic[capturedCam][6] = modeBox.Text;
                     wdini.WriteString(ModbusTcpIniStore.CameraSection(_linkId, capturedCam), "chukufangshi", modeBox.Text);
-                    _triggerLatch[capturedCam] = false;
+                    SaveModbusTrigVal(capturedCam, valBox);
                 };
                 modeBox.SelectedIndexChanged += (s, ev) => applyTrigMode();
                 modeBox.TextChanged += (s, ev) => applyTrigMode();

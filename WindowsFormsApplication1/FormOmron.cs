@@ -618,7 +618,7 @@ namespace WindowsFormsApplication1
                 {
                     camera_dic[capturedCam][6] = modeBox.Text;
                     wdini.WriteString(FinsIniStore.CameraSection(_linkId, capturedCam), "chukufangshi", modeBox.Text);
-                    _triggerLatch[capturedCam] = false;
+                    SaveOmronTrigVal(capturedCam, valBox);
                 };
                 modeBox.SelectedIndexChanged += (s, ev) => applyTrigMode();
                 modeBox.TextChanged += (s, ev) => applyTrigMode();
